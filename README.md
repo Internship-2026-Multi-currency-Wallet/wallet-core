@@ -14,15 +14,13 @@ Node.js 26 (ES modules, TypeScript 6).
 
 ## Run locally
 
-Prerequisites: Node.js 26 (`nvm use`), Docker. MySQL and Redis come from the `ops` repository:
+Prerequisites: Node.js 26 (`nvm use`), Docker, and the `ops` repository cloned next to this one (`../ops`).
+MySQL and Redis come from `ops`; `npm run infra` calls `../ops/dev.sh` from here:
 
 ```sh
-# in ../ops — start only the databases
-docker compose up -d mysql redis
-
-# here
+npm run infra:up              # MySQL (all databases) + Redis only — no application services
 npm install
-cp .env.example .env          # optional: the defaults match the compose stack
+cp .env.example .env          # optional: the defaults match the ops stack
 npm run migrate
 DEV_AUTH=true npm run start:dev
 ```
@@ -30,7 +28,21 @@ DEV_AUTH=true npm run start:dev
 - GraphQL: <http://localhost:3000/graphql> (Apollo Sandbox in the browser)
 - Health: <http://localhost:3000/health>
 
-To run the whole system (all services + frontends), see the `ops` repository README.
+Need another service as well? Run it in Docker next to yours, e.g. `npm run infra -- up rates-service`
+(several names allowed, `all` = the whole system). Containers reach this service at
+`http://host.docker.internal:3000`; it reaches them at `localhost:<port>`. Do not start this service in Docker
+while you run it from source (same port).
+
+| Script                             | What it does                                                         |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| `npm run infra:up`                 | `../ops/dev.sh up`: infrastructure only                              |
+| `npm run infra -- up <service...>` | Infrastructure + these services in containers (`all` = everything)   |
+| `npm run infra:ps` / `infra:down`  | Status / stop the stack (data is kept)                               |
+| `npm run infra -- <command>`       | Any `dev.sh` command: `logs <service>`, `build <service>`, `info`, … |
+
+`./dev.sh up` prints the ports and the env values (`DATABASE_URL`, `REDIS_URL`, URLs of the other services). Docker
+needs little memory for the infrastructure; images are built one at a time — give Docker at least 4 GiB if you
+run the whole stack. Details: the `ops` README.
 
 ```sh
 curl -s localhost:3000/graphql -H 'content-type: application/json' \

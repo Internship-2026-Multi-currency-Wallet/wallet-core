@@ -27,7 +27,11 @@
     "migrate": "node scripts/migrate.ts latest",
     "migrate:rollback": "node scripts/migrate.ts rollback",
     "migrate:status": "node scripts/migrate.ts status",
-    "migrate:make": "node scripts/migrate.ts make"
+    "migrate:make": "node scripts/migrate.ts make",
+    "infra": "sh -c 'if [ ! -x ../ops/dev.sh ]; then echo \"infra: ../ops/dev.sh not found. Clone the ops repository next to this one: git clone git@github.com:Internship-2026-Multi-currency-Wallet/ops.git ../ops\" >&2; exit 1; fi; exec ../ops/dev.sh \"$@\"' infra",
+    "infra:up": "npm run infra -- up",
+    "infra:down": "npm run infra -- down",
+    "infra:ps": "npm run infra -- ps"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",

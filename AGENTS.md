@@ -24,7 +24,7 @@ TypeScript 6, Node 26. Read `README.md` first.
 - **Imports:** relative ESM imports with a `.js` extension (`./foo.service.js`).
 - **Tests are required:** unit tests next to the code (`*.spec.ts`, import `jest` from `@jest/globals`);
   e2e tests in `test/` for API behaviour. Run before finishing:
-  `npm run lint && npm run typecheck && npm test && npm run test:e2e` (e2e needs MySQL + Redis from `ops`).
+  `npm run lint && npm run typecheck && npm test && npm run test:e2e` (e2e needs MySQL + Redis: `npm run infra:up`, which runs `../ops/dev.sh up`).
 - **No secrets.** This repository is public. No tokens, keys, passwords (other than the local-only placeholders
   in `.env.example`), personal data or machine-specific paths.
 - English only. Conventional Commits (`feat(ledger): ...`). Small PRs using `.github/pull_request_template.md`.
