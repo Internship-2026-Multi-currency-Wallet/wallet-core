@@ -1,0 +1,19 @@
+# Platform defaults for client settings.
+# Read by ClientSettingsService (src/settings). Every key must also be declared in
+# src/settings/settings.schema.ts — unknown or mistyped values fail at startup.
+#
+# These are the platform defaults and they live in the code repository. A later task adds
+# a settings store in the database that holds ONLY overrides: a row exists only when the
+# client changed a value; delete it and the default here applies again. Each environment
+# serves one client and has its own database, so there is no "all clients" table.
+
+auth:
+  # When a phone number becomes mandatory: signup | firstTransfer | never
+  phoneRequiredAt: never
+  # Whether "Sign in with Google" is available
+  googleLogin: true
+
+products:
+  # Products/pages enabled for the client app
+  enabled:
+    - wallet

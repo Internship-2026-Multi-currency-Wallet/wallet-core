@@ -1,0 +1,68 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { type ClientCode, type Env, validateEnv } from './env.schema.js';
+
+export const SERVICE_NAME = 'wallet-core';
+
+function readPackageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
+      version?: string;
+    };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+/**
+ * Typed, validated application config. Inject `AppConfig` instead of reading `process.env`.
+ */
+export class AppConfig {
+  readonly serviceName = SERVICE_NAME;
+  readonly version: string;
+  readonly nodeEnv: Env['NODE_ENV'];
+  readonly port: number;
+  readonly databaseUrl: string;
+  readonly redisUrl: string;
+  /** The client this deployment serves (`CLIENT` env). */
+  readonly client: ClientCode;
+  /** `DEV_AUTH=true` enables the `Authorization: Dev <userId>:<permissions>` header. */
+  readonly devAuth: boolean;
+  readonly corsOrigins: string[];
+  readonly jwt: {
+    issuer: string;
+    publicKey?: string;
+    privateKey?: string;
+    accessTtl: string;
+    refreshTtl: string;
+  };
+
+  constructor(env: Env) {
+    this.version = env.APP_VERSION ?? readPackageVersion();
+    this.nodeEnv = env.NODE_ENV;
+    this.port = env.PORT;
+    this.databaseUrl = env.DATABASE_URL;
+    this.redisUrl = env.REDIS_URL;
+    this.client = env.CLIENT;
+    this.devAuth = env.DEV_AUTH;
+    this.corsOrigins = env.CORS_ORIGINS.split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+    this.jwt = {
+      issuer: env.JWT_ISSUER,
+      publicKey: env.JWT_PUBLIC_KEY,
+      privateKey: env.JWT_PRIVATE_KEY,
+      accessTtl: env.JWT_ACCESS_TTL,
+      refreshTtl: env.JWT_REFRESH_TTL,
+    };
+  }
+
+  get isProduction(): boolean {
+    return this.nodeEnv === 'production';
+  }
+
+  static fromEnv(env: NodeJS.ProcessEnv = process.env): AppConfig {
+    return new AppConfig(validateEnv(env));
+  }
+}

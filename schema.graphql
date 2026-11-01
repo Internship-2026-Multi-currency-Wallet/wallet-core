@@ -1,0 +1,42 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+"""Whether a dependency (database, Redis) answers."""
+enum DependencyStatus {
+  DOWN
+  UP
+}
+
+"""Service health and identity."""
+type Health {
+  """Client this deployment serves (CLIENT env): demo, kvitka, wisla."""
+  client: String!
+  db: DependencyStatus!
+  redis: DependencyStatus!
+
+  """Service name, e.g. "wallet-core"."""
+  service: String!
+
+  """Service version (package.json or APP_VERSION)."""
+  version: String!
+}
+
+"""The authenticated caller."""
+type Me {
+  id: ID!
+
+  """Permission strings, e.g. "bo:users:modify"."""
+  permissions: [String!]!
+
+  """Strategy that authenticated the request, e.g. "dev" or "jwt"."""
+  strategy: String!
+}
+
+type Query {
+  """Service health. Does not require authentication."""
+  health: Health!
+
+  """The current user. Requires authentication."""
+  me: Me!
+}
