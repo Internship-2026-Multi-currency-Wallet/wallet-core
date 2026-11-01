@@ -1,4 +1,5 @@
-import { Global, Inject, Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Redis } from 'ioredis';
 import { AppConfig } from '../config/app-config.js';
 
@@ -22,14 +23,15 @@ export function createRedis(url: string): Redis {
   exports: [REDIS],
 })
 export class RedisModule implements OnApplicationShutdown {
-  private readonly logger = new Logger(RedisModule.name);
-
-  constructor(@Inject(REDIS) private readonly redis: Redis) {}
+  constructor(
+    @Inject(REDIS) private readonly redis: Redis,
+    @InjectPinoLogger(RedisModule.name) private readonly logger: PinoLogger,
+  ) {}
 
   async onApplicationShutdown(): Promise<void> {
     if (this.redis.status !== 'end' && this.redis.status !== 'wait') {
       await this.redis.quit();
-      this.logger.log('Redis connection closed');
+      this.logger.info('Redis connection closed');
     } else {
       this.redis.disconnect();
     }

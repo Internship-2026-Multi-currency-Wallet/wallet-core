@@ -47,10 +47,30 @@ export interface ConversionCompletedEvent {
   occurredAt: string;
 }
 
+/** Diagnostics: a backend says "hello" to the others (used to trace a requestId across services). */
+export interface SystemPingEvent {
+  v: 1;
+  /** Service that published the ping, e.g. `wallet-core`. */
+  from: string;
+  ts: string;
+}
+
 /** Event name → payload type. */
 export interface EventPayloads {
   'rate.tick': RateTickEvent;
   'conversion.completed': ConversionCompletedEvent;
+  'system.ping': SystemPingEvent;
+}
+
+/**
+ * Metadata sent next to every payload (not part of it). Filled in by the publisher helpers:
+ * `requestId` of the request that caused the event, so the consumer logs the same id.
+ */
+export interface EventMeta {
+  requestId?: string;
+  /** Service that published the event. */
+  publisher?: string;
+  publishedAt?: string;
 }
 
 export type EventName = keyof EventPayloads;
@@ -71,6 +91,7 @@ export const EVENTS = {
     stream: 'conversion.completed',
     maxLen: 100_000,
   },
+  'system.ping': { transport: 'pubsub', channel: 'system.ping' },
 } as const satisfies Record<EventName, EventDefinition>;
 
 export type PubSubEventName = {
@@ -83,3 +104,11 @@ export type StreamEventName = {
 
 /** Field name under which a stream entry stores the JSON payload. */
 export const STREAM_PAYLOAD_FIELD = 'payload';
+/** Field name under which a stream entry stores the JSON `EventMeta`. */
+export const STREAM_META_FIELD = 'meta';
+
+/** A pub/sub message: `{ "meta": {...}, "payload": {...} }`. */
+export interface PubSubEnvelope<P = unknown> {
+  meta: EventMeta;
+  payload: P;
+}

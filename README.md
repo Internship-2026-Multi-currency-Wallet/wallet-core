@@ -81,6 +81,7 @@ See `.env.example`.
 | `DEV_AUTH`     | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                              |
 | `APP_VERSION`  | from `package.json`                                | Version reported by `health`                                                                         |
+| `LOG_LEVEL`    | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                              |
 | `JWT_*`        | —                                                  | Placeholders for the real auth strategy (not used yet)                                               |
 
 ## GraphQL contract
@@ -93,6 +94,34 @@ The schema is **code-first**: resolvers and `@ObjectType`s are the source of tru
 - A PR that changes the API must include the regenerated `schema.graphql`. That diff is what consumers review.
 
 Current API: `health { service version appEnv client db redis }` (public) and `me { id permissions strategy }`.
+
+## Logging
+
+Structured JSON logs via [`nestjs-pino`](https://github.com/iamolegga/nestjs-pino) (`src/logging/`). One line per
+event with `time`, `level`, `service`, `appEnv`, `client`, `context` (class) and `msg`; inside an HTTP request, a
+GraphQL operation or an event handler also `requestId`. Locally (`npm run start:dev`, `NODE_ENV=development`) the
+output is pretty-printed; deployed it is JSON and goes to Grafana (<https://logs.wallet.shatori.com>, see the
+handbook's `logging.md`).
+
+```ts
+constructor(@InjectPinoLogger(LedgerService.name) private readonly logger: PinoLogger) {}
+
+this.logger.info({ userId, conversionId, amount }, 'conversion booked'); // fields first, then a message
+this.logger.error({ err, conversionId }, 'conversion failed'); // pass errors as `err`
+```
+
+- **`requestId`**: taken from the incoming `x-request-id` header (or generated) and returned in the response
+  header. GraphQL subscriptions get one per websocket connection (`x-request-id` in `connectionParams`).
+  `EventPublisher` puts it into the event meta and `EventSubscriber` handlers log with the same id, so one search
+  shows a request across services. `POST /diagnostics/ping` (authenticated) publishes `system.ping`, which every
+  backend logs — a quick end-to-end trace check.
+- **Access log**: one line per HTTP request — method, path, GraphQL operation (`query Me`), status, `durationMs`.
+  No bodies, no headers. `/health` probes are logged at `debug`.
+- **Secrets are redacted** (`authorization`, `cookie`, `password`, `token`, `secret`, `apiKey`, … at any of the
+  first four levels; see `SECRET_KEYS` in `src/logging/logger.options.ts`). Still: never log secrets or whole
+  request objects on purpose.
+- **`LOG_LEVEL`**: `fatal`, `error`, `warn`, `info` (default), `debug`, `trace`, `silent` (e2e tests default to `silent`).
+- Do not use `console.*` or `new Logger()` from `@nestjs/common` in application code.
 
 ## Seams
 
@@ -176,10 +205,11 @@ is live, bind the real client in `RatesModule`.
 | ---------------------- | ------------------------------- | ----------------------------- |
 | `rate.tick`            | Redis pub/sub (fire-and-forget) | channel `rate.tick`           |
 | `conversion.completed` | Redis Stream (must not be lost) | stream `conversion.completed` |
+| `system.ping`          | Redis pub/sub (diagnostics)     | channel `system.ping`         |
 
 ```ts
 await publisher.publish('conversion.completed', event); // XADD
-const off = await subscriber.subscribe('rate.tick', (tick) => ...); // SUBSCRIBE
+const off = await subscriber.subscribe('rate.tick', (tick, meta) => ...); // SUBSCRIBE; meta.requestId
 ```
 
 Stream consumers use consumer groups (`XREADGROUP` + `XACK`) and `decodeStreamEntry()`.

@@ -12,4 +12,4 @@ process.env.NODE_ENV = 'development';
 const app = await NestFactory.create(AppModule, { logger: ['error', 'warn'] });
 await app.init();
 await app.close();
-console.log('schema.graphql written');
+process.stdout.write('schema.graphql written\n');

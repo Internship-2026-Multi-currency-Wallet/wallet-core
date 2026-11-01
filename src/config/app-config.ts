@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { LogLevel } from '../logging/logger.options.js';
 import { type AppEnv, type ClientCode, type Env, validateEnv } from './env.schema.js';
 
 export const SERVICE_NAME = 'wallet-core';
@@ -32,6 +33,8 @@ export class AppConfig {
   /** `DEV_AUTH=true` enables the `Authorization: Dev <userId>:<permissions>` header. */
   readonly devAuth: boolean;
   readonly corsOrigins: string[];
+  /** `LOG_LEVEL`: fatal, error, warn, info (default), debug, trace, silent. */
+  readonly logLevel: LogLevel;
   readonly jwt: {
     issuer: string;
     publicKey?: string;
@@ -49,6 +52,7 @@ export class AppConfig {
     this.redisUrl = env.REDIS_URL;
     this.client = env.CLIENT;
     this.devAuth = env.DEV_AUTH;
+    this.logLevel = env.LOG_LEVEL;
     this.corsOrigins = env.CORS_ORIGINS.split(',')
       .map((origin) => origin.trim())
       .filter(Boolean);

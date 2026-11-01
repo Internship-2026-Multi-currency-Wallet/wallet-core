@@ -1,4 +1,5 @@
-import { Global, Inject, Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import knex, { type Knex } from 'knex';
 import { AppConfig } from '../config/app-config.js';
 
@@ -25,12 +26,13 @@ export function createKnex(databaseUrl: string): Knex {
   exports: [KNEX],
 })
 export class DatabaseModule implements OnApplicationShutdown {
-  private readonly logger = new Logger(DatabaseModule.name);
-
-  constructor(@Inject(KNEX) private readonly db: Knex) {}
+  constructor(
+    @Inject(KNEX) private readonly db: Knex,
+    @InjectPinoLogger(DatabaseModule.name) private readonly logger: PinoLogger,
+  ) {}
 
   async onApplicationShutdown(): Promise<void> {
     await this.db.destroy();
-    this.logger.log('Database pool closed');
+    this.logger.info('Database pool closed');
   }
 }

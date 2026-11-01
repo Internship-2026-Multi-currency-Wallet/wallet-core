@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LOG_LEVELS } from '../logging/logger.options.js';
 
 /** Clients this codebase knows about. Each deployment serves exactly one of them. */
 export const KNOWN_CLIENTS = ['demo', 'kvitka', 'wisla'] as const;
@@ -37,6 +38,7 @@ export const envSchema = z
     DEV_AUTH: booleanFromString,
     CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174'),
     APP_VERSION: z.string().optional(),
+    LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
     // Placeholders for the real JWT strategy (not used yet).
     JWT_ISSUER: z.string().default('wallet-core'),
     JWT_PUBLIC_KEY: z.string().optional(),

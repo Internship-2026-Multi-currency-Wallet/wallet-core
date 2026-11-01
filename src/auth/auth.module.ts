@@ -1,5 +1,6 @@
-import { Logger, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { AUTH_STRATEGIES, type AuthStrategy } from './auth-strategy.js';
 import { AuthGuard } from './auth.guard.js';
@@ -19,12 +20,13 @@ import { PermissionGuard } from '../permissions/permission.guard.js';
     DevAuthStrategy,
     {
       provide: AUTH_STRATEGIES,
-      inject: [AppConfig, DevAuthStrategy],
-      useFactory: (config: AppConfig, dev: DevAuthStrategy): AuthStrategy[] => {
+      inject: [AppConfig, DevAuthStrategy, PinoLogger],
+      useFactory: (config: AppConfig, dev: DevAuthStrategy, logger: PinoLogger): AuthStrategy[] => {
         const strategies: AuthStrategy[] = [];
         if (config.devAuth) {
           if (config.isProduction) {
-            new Logger('AuthModule').warn('DEV_AUTH is enabled in production mode');
+            logger.setContext('AuthModule');
+            logger.warn('DEV_AUTH is enabled in production mode');
           }
           strategies.push(dev);
         }
