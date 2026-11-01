@@ -1,0 +1,23 @@
+# Deploy: a push to main (→ staging) or client/<c>-uat (→ <c>-uat) builds the image in GitHub Actions,
+# pushes it to GHCR and redeploys the matching Dokploy application. Logic: ops/.github/workflows/deploy-service.yml
+name: Deploy
+
+on:
+  push:
+    branches: [main, client/kvitka-uat, client/wisla-uat]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    uses: Internship-2026-Multi-currency-Wallet/ops/.github/workflows/deploy-service.yml@main
+    with:
+      subdomain: wallet-core # https://<env>-wallet-core.wallet.shatori.com/health
+    secrets: inherit

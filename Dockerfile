@@ -26,9 +26,13 @@ COPY --chown=node:node package.json ./
 COPY --chown=node:node config ./config
 COPY --chown=node:node migrations ./migrations
 COPY --chown=node:node scripts ./scripts
+# Version reported by /health (CI passes the git SHA; empty = package.json version).
+ARG APP_VERSION=
+ENV APP_VERSION=${APP_VERSION}
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=5 \
   CMD wget -q -O /dev/null "http://127.0.0.1:${PORT:-3000}/health" || exit 1
-# Run migrations separately (`npm run migrate`) or via the compose command.
+# Run migrations separately (`npm run migrate`) or via the container command
+# (compose and Dokploy use: npm run migrate && node dist/main.js).
 CMD ["node", "dist/main.js"]
