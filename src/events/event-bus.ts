@@ -1,6 +1,10 @@
 /**
  * Thin typed helpers on top of ioredis for the events in `catalog.ts`.
  * Identical in all backend services.
+ *
+ * Every Redis name is prefixed with the environment (`APP_ENV`), e.g. `kvitka-uat:rate.tick`,
+ * so several environments can share one Redis. Always go through these helpers (or
+ * `redisName`) instead of using the raw names from the catalog.
  */
 import type { Redis } from 'ioredis';
 import {
@@ -14,20 +18,40 @@ import {
 
 export type Unsubscribe = () => Promise<void>;
 
+/** `<prefix>:<name>`, e.g. `staging:conversion.completed`. The prefix is the environment (`APP_ENV`). */
+export function redisName(prefix: string, name: string): string {
+  if (!prefix || prefix.includes(':')) throw new Error(`Invalid Redis prefix "${prefix}"`);
+  return `${prefix}:${name}`;
+}
+
+/** Prefixed pub/sub channel of an event. */
+export function eventChannel(prefix: string, name: PubSubEventName): string {
+  return redisName(prefix, EVENTS[name].channel);
+}
+
+/** Prefixed stream key of an event (for XREADGROUP / XACK in consumers). */
+export function eventStream(prefix: string, name: StreamEventName): string {
+  return redisName(prefix, EVENTS[name].stream);
+}
+
 /** Publishes events: pub/sub events with PUBLISH, stream events with XADD. */
 export class EventPublisher {
-  constructor(private readonly redis: Redis) {}
+  constructor(
+    private readonly redis: Redis,
+    /** Environment prefix (`APP_ENV`). */
+    private readonly prefix: string,
+  ) {}
 
   /** Returns the stream entry id for stream events, `null` for pub/sub events. */
   async publish<N extends EventName>(name: N, payload: EventPayloads[N]): Promise<string | null> {
     const definition = EVENTS[name];
     const data = JSON.stringify(payload);
     if (definition.transport === 'pubsub') {
-      await this.redis.publish(definition.channel, data);
+      await this.redis.publish(redisName(this.prefix, definition.channel), data);
       return null;
     }
     return this.redis.xadd(
-      definition.stream,
+      redisName(this.prefix, definition.stream),
       'MAXLEN',
       '~',
       String(definition.maxLen),
@@ -42,8 +66,8 @@ export class EventPublisher {
  * Subscribes to pub/sub events. Uses its own Redis connection (a connection in subscriber
  * mode cannot run other commands). Call `close()` on shutdown.
  *
- * Stream events are read with consumer groups (XREADGROUP + XACK); use `decodeStreamEntry`
- * to turn a raw entry into a typed payload.
+ * Stream events are read with consumer groups (XREADGROUP + XACK) on `eventStream(prefix, name)`;
+ * use `decodeStreamEntry` to turn a raw entry into a typed payload.
  */
 export class EventSubscriber {
   private readonly handlers = new Map<string, Set<(payload: unknown) => void | Promise<void>>>();
@@ -51,6 +75,8 @@ export class EventSubscriber {
 
   constructor(
     private readonly connection: Redis,
+    /** Environment prefix (`APP_ENV`). */
+    private readonly prefix: string,
     private readonly onError: (error: unknown, channel: string) => void = () => undefined,
   ) {}
 
@@ -58,7 +84,7 @@ export class EventSubscriber {
     name: N,
     handler: (payload: EventPayloads[N]) => void | Promise<void>,
   ): Promise<Unsubscribe> {
-    const { channel } = EVENTS[name];
+    const channel = eventChannel(this.prefix, name);
     this.listen();
     let set = this.handlers.get(channel);
     if (!set) {

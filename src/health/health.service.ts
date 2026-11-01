@@ -30,6 +30,7 @@ export class HealthService {
     return {
       service: this.config.serviceName,
       version: this.config.version,
+      appEnv: this.config.appEnv,
       client: this.config.client,
       db,
       redis,

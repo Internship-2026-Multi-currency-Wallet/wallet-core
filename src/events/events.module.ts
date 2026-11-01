@@ -1,10 +1,12 @@
 import { Global, Inject, Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
 import type { Redis } from 'ioredis';
+import { AppConfig } from '../config/app-config.js';
 import { REDIS } from '../redis/redis.module.js';
 import { EventPublisher, EventSubscriber } from './event-bus.js';
 
 /**
- * Provides `EventPublisher` and `EventSubscriber` for the events in `catalog.ts`.
+ * Provides `EventPublisher` and `EventSubscriber` for the events in `catalog.ts`,
+ * prefixed with the environment (`APP_ENV`), e.g. `staging:rate.tick`.
  *
  *   await publisher.publish('rate.tick', tick);
  *   const off = await subscriber.subscribe('rate.tick', (tick) => ...);
@@ -14,15 +16,15 @@ import { EventPublisher, EventSubscriber } from './event-bus.js';
   providers: [
     {
       provide: EventPublisher,
-      inject: [REDIS],
-      useFactory: (redis: Redis) => new EventPublisher(redis),
+      inject: [REDIS, AppConfig],
+      useFactory: (redis: Redis, config: AppConfig) => new EventPublisher(redis, config.appEnv),
     },
     {
       provide: EventSubscriber,
-      inject: [REDIS],
-      useFactory: (redis: Redis) => {
+      inject: [REDIS, AppConfig],
+      useFactory: (redis: Redis, config: AppConfig) => {
         const logger = new Logger('EventSubscriber');
-        return new EventSubscriber(redis.duplicate(), (error, channel) =>
+        return new EventSubscriber(redis.duplicate(), config.appEnv, (error, channel) =>
           logger.error(`Handler for "${channel}" failed: ${String(error)}`),
         );
       },

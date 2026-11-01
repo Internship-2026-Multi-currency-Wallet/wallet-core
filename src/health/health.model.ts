@@ -18,6 +18,9 @@ export class Health {
   @Field({ description: 'Service version (package.json or APP_VERSION).' })
   version: string;
 
+  @Field({ description: 'Environment (APP_ENV): local, staging, kvitka-uat, wisla-uat.' })
+  appEnv: string;
+
   @Field({ description: 'Client this deployment serves (CLIENT env): demo, kvitka, wisla.' })
   client: string;
 

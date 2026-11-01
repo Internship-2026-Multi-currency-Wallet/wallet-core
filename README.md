@@ -58,17 +58,18 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
 Validated at startup (`src/config/env.schema.ts`); an invalid value stops the service with a clear message.
 See `.env.example`.
 
-| Variable       | Default                                            | Meaning                                                                         |
-| -------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `PORT`         | `3000`                                             | HTTP port                                                                       |
-| `NODE_ENV`     | `development`                                      | `production` disables writing `schema.graphql`                                  |
-| `DATABASE_URL` | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                  |
-| `REDIS_URL`    | `redis://localhost:6379`                           | Redis for events                                                                |
-| `CLIENT`       | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                        |
-| `DEV_AUTH`     | `false`                                            | Accept `Authorization: Dev …` headers (see below). Never in client environments |
-| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                         |
-| `APP_VERSION`  | from `package.json`                                | Version reported by `health`                                                    |
-| `JWT_*`        | —                                                  | Placeholders for the real auth strategy (not used yet)                          |
+| Variable       | Default                                            | Meaning                                                                                              |
+| -------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `PORT`         | `3000`                                             | HTTP port                                                                                            |
+| `NODE_ENV`     | `development`                                      | `production` disables writing `schema.graphql`                                                       |
+| `APP_ENV`      | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                 |
+| `DATABASE_URL` | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                       |
+| `REDIS_URL`    | `redis://localhost:6379`                           | Redis for events                                                                                     |
+| `CLIENT`       | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                             |
+| `DEV_AUTH`     | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT |
+| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                              |
+| `APP_VERSION`  | from `package.json`                                | Version reported by `health`                                                                         |
+| `JWT_*`        | —                                                  | Placeholders for the real auth strategy (not used yet)                                               |
 
 ## GraphQL contract
 
@@ -79,7 +80,7 @@ The schema is **code-first**: resolvers and `@ObjectType`s are the source of tru
 - `npm run start:dev` and the e2e tests regenerate it; `npm run schema:generate` does it without a database.
 - A PR that changes the API must include the regenerated `schema.graphql`. That diff is what consumers review.
 
-Current API: `health { service version client db redis }` (public) and `me { id permissions strategy }`.
+Current API: `health { service version appEnv client db redis }` (public) and `me { id permissions strategy }`.
 
 ## Seams
 
@@ -100,6 +101,8 @@ Authorization: Dev 100:bo:users,bo:users:modify
 
 It works for HTTP, GraphQL queries/mutations and GraphQL subscriptions (send `{ "Authorization": "Dev 1:wallet" }`
 as graphql-ws `connectionParams`). With `DEV_AUTH=false` and no real strategy registered, every non-public request is **401**.
+
+`DEV_AUTH=true` is allowed only with `APP_ENV=local` or `staging`; in a client UAT (`*-uat`) the service refuses to start.
 
 ```ts
 @Query(() => Balance)
@@ -169,6 +172,10 @@ const off = await subscriber.subscribe('rate.tick', (tick) => ...); // SUBSCRIBE
 
 Stream consumers use consumer groups (`XREADGROUP` + `XACK`) and `decodeStreamEntry()`.
 Change the catalog only via a contract PR in all three repositories.
+
+**Environment prefix.** Several environments may share one Redis, so every channel and stream is prefixed with
+`APP_ENV`: `staging:rate.tick`, `kvitka-uat:conversion.completed`. The helpers add the prefix; when you need a raw
+name (e.g. a stream consumer) use `eventStream(appConfig.appEnv, 'conversion.completed')` / `eventChannel(...)`.
 
 ## Project layout
 

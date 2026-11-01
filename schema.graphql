@@ -10,6 +10,9 @@ enum DependencyStatus {
 
 """Service health and identity."""
 type Health {
+  """Environment (APP_ENV): local, staging, kvitka-uat, wisla-uat."""
+  appEnv: String!
+
   """Client this deployment serves (CLIENT env): demo, kvitka, wisla."""
   client: String!
   db: DependencyStatus!

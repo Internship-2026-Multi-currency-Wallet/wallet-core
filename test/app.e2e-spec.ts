@@ -26,6 +26,7 @@ describe('wallet-core (e2e, DEV_AUTH=true)', () => {
       .expect(200);
     expect(res.body).toMatchObject({
       status: 'ok',
+      appEnv: 'local',
       service: 'wallet-core',
       client: 'demo',
       db: 'UP',
