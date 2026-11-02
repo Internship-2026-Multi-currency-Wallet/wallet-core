@@ -2,6 +2,11 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
 # ------------------------------------------------------
 
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
 """Whether a dependency (database, Redis) answers."""
 enum DependencyStatus {
   DOWN
@@ -36,10 +41,97 @@ type Me {
   strategy: String!
 }
 
+type Mutation {
+  """
+  Removes the override so the default applies again; recorded in history. Requires settings:modify. Errors: UNKNOWN_KEY, FORBIDDEN.
+  """
+  resetSetting(key: String!): Setting!
+
+  """
+  Sets an override; value is JSON-encoded. Requires settings:modify. Errors: UNKNOWN_KEY, INVALID_VALUE, FORBIDDEN.
+  """
+  updateSetting(key: String!, value: String!): Setting!
+}
+
+"""A setting the client apps may read (public flag set in the catalog)."""
+type PublicSetting {
+  """Dotted key, e.g. "auth.googleLogin"."""
+  key: String!
+
+  """Effective value, JSON-encoded, e.g. "true" or "[\"wallet\"]"."""
+  value: String!
+}
+
 type Query {
   """Service health. Does not require authentication."""
   health: Health!
 
   """The current user. Requires authentication."""
   me: Me!
+
+  """
+  Effective public settings of this client. Does not require authentication.
+  """
+  publicSettings: [PublicSetting!]!
+
+  """
+  Change history, newest first, optionally for one key. Requires settings:modify. Errors: UNKNOWN_KEY, FORBIDDEN.
+  """
+  settingHistory(key: String, limit: Int! = 50): [SettingChange!]!
+
+  """
+  All settings with defaults and overrides. Requires settings:modify (else FORBIDDEN).
+  """
+  staffSettings: [Setting!]!
+}
+
+"""A setting with its catalog metadata, for staff."""
+type Setting {
+  """Allowed values; only for type ENUM."""
+  allowedValues: [String!]
+
+  """Platform default from the catalog, JSON-encoded."""
+  defaultValue: String!
+
+  """Dotted key, e.g. "auth.googleLogin"."""
+  key: String!
+
+  """Whether the client has an override for this setting."""
+  overridden: Boolean!
+
+  """Whether client apps receive this setting (publicSettings)."""
+  public: Boolean!
+  type: SettingType!
+
+  """Effective value (override if any, else default), JSON-encoded."""
+  value: String!
+}
+
+"""One recorded change of a setting (an update or a reset)."""
+type SettingChange {
+  """When the change was made."""
+  changedAt: DateTime!
+
+  """Id of the staff user who made the change."""
+  changedBy: ID!
+
+  """Dotted key, e.g. "auth.googleLogin"."""
+  key: String!
+
+  """Value after the change, JSON-encoded (the default after a reset)."""
+  newValue: String!
+
+  """
+  Value before the change, JSON-encoded (the default if there was no override).
+  """
+  oldValue: String!
+}
+
+"""
+Value type of a setting; tells the client how to parse the JSON-encoded value.
+"""
+enum SettingType {
+  BOOLEAN
+  ENUM
+  STRING_LIST
 }
