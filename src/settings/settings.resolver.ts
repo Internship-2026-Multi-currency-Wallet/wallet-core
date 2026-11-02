@@ -1,6 +1,7 @@
-import { NotImplementedException } from '@nestjs/common';
 import { Args, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
+import type { AuthUser } from '../auth/auth-user.js';
+import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Public } from '../auth/public.decorator.js';
 import { RequirePermission } from '../permissions/require-permission.decorator.js';
 import { ClientSettingsService, type EffectiveSetting } from './client-settings.service.js';
@@ -41,11 +42,16 @@ export class SettingsResolver {
       'Change history, newest first, optionally for one key. Cursor: `before` returns only changes strictly older than this time. `limit` is at most 200. Requires bo:settings. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.',
   })
   settingHistory(
-    @Args('key', { nullable: true }) _key?: string,
-    @Args('limit', { type: () => Int, defaultValue: 50 }) _limit?: number,
-    @Args('before', { type: () => Date, nullable: true }) _before?: Date,
-  ): SettingChange[] {
-    throw new NotImplementedException();
+    // GraphQL passes an explicit `null` for these; the service treats only `undefined` as "not set".
+    @Args('key', { type: () => String, nullable: true }) key: string | null | undefined,
+    @Args('limit', { type: () => Int, defaultValue: 50 }) limit: number,
+    @Args('before', { type: () => Date, nullable: true }) before: Date | null | undefined,
+  ): Promise<SettingChange[]> {
+    return this.settings.history({
+      key: key ?? undefined,
+      limit,
+      before: before ?? undefined,
+    });
   }
 
   @RequirePermission('bo:settings:modify')
@@ -53,11 +59,12 @@ export class SettingsResolver {
     description:
       'Sets an override. Requires bo:settings:modify. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.',
   })
-  updateSetting(
-    @Args('key') _key: string,
-    @Args('value', { type: () => GraphQLJSON }) _value: unknown,
-  ): Setting {
-    throw new NotImplementedException();
+  async updateSetting(
+    @CurrentUser() user: AuthUser,
+    @Args('key') key: string,
+    @Args('value', { type: () => GraphQLJSON }) value: unknown,
+  ): Promise<Setting> {
+    return toSetting(await this.settings.update(key, value, user.id));
   }
 
   @RequirePermission('bo:settings:modify')
@@ -65,8 +72,8 @@ export class SettingsResolver {
     description:
       'Removes the override so the default applies again; recorded in history. Requires bo:settings:modify. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY.',
   })
-  resetSetting(@Args('key') _key: string): Setting {
-    throw new NotImplementedException();
+  async resetSetting(@CurrentUser() user: AuthUser, @Args('key') key: string): Promise<Setting> {
+    return toSetting(await this.settings.reset(key, user.id));
   }
 }
 
