@@ -3,20 +3,27 @@ import { Args, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
 import { Public } from '../auth/public.decorator.js';
 import { RequirePermission } from '../permissions/require-permission.decorator.js';
+import { ClientSettingsService, type EffectiveSetting } from './client-settings.service.js';
 import { PublicSetting, Setting, SettingChange } from './settings.model.js';
+import { settingsCatalog, settingTypeOf } from './settings.schema.js';
 
 /**
- * GraphQL contract for client settings. Contract-first: the bodies are stubs until the
- * settings store is implemented. Errors are reported as `extensions.code`.
+ * GraphQL API of client settings. Values come from `ClientSettingsService` (override, else the
+ * catalog default); whether a setting is public is decided by the catalog only.
+ * Errors are reported as `extensions.code`.
  */
 @Resolver(() => Setting)
 export class SettingsResolver {
+  constructor(private readonly settings: ClientSettingsService) {}
+
   @Public()
   @Query(() => [PublicSetting], {
     description: 'Effective public settings of this client. Does not require authentication.',
   })
-  publicSettings(): PublicSetting[] {
-    throw new NotImplementedException();
+  async publicSettings(): Promise<PublicSetting[]> {
+    return (await this.settings.getAll())
+      .filter(({ key }) => settingsCatalog[key].public)
+      .map(({ key, value }) => ({ key, value }));
   }
 
   @RequirePermission('bo:settings')
@@ -24,8 +31,8 @@ export class SettingsResolver {
     description:
       'All settings with defaults and overrides. Requires bo:settings. Errors: UNAUTHENTICATED, FORBIDDEN.',
   })
-  staffSettings(): Setting[] {
-    throw new NotImplementedException();
+  async staffSettings(): Promise<Setting[]> {
+    return (await this.settings.getAll()).map(toSetting);
   }
 
   @RequirePermission('bo:settings')
@@ -61,4 +68,17 @@ export class SettingsResolver {
   resetSetting(@Args('key') _key: string): Setting {
     throw new NotImplementedException();
   }
+}
+
+/** Staff view of one setting: its effective value plus the catalog metadata. */
+function toSetting({ key, value, overridden }: EffectiveSetting): Setting {
+  const { schema, default: defaultValue, public: isPublic } = settingsCatalog[key];
+  return {
+    key,
+    ...settingTypeOf(schema),
+    public: isPublic,
+    value,
+    defaultValue: structuredClone(defaultValue),
+    overridden,
+  };
 }
