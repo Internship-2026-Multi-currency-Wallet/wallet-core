@@ -42,19 +42,3 @@ export function settingTypeOf(schema: z.ZodType): { type: SettingType; allowedVa
   }
   throw new Error(`Unsupported setting schema: ${schema.def.type}`);
 }
-
-/**
- * Shape of `config/settings.defaults.yaml`, still read by `ClientSettingsService`.
- * Removed together with the YAML file when the service switches to `settingsCatalog`.
- */
-export const settingsSchema = z.object({
-  auth: z.object({
-    phoneRequiredAt: settingsCatalog['auth.phoneRequiredAt'].schema,
-    googleLogin: settingsCatalog['auth.googleLogin'].schema,
-  }),
-  products: z.object({
-    enabled: settingsCatalog['products.enabled'].schema,
-  }),
-});
-
-export type SettingsTree = z.infer<typeof settingsSchema>;
