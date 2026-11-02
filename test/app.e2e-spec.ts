@@ -50,9 +50,25 @@ describe('wallet-core (e2e, DEV_AUTH=true)', () => {
     expect(res.body.errors[0].extensions.code).toBe('UNAUTHENTICATED');
   });
 
-  it('query staffSettings without settings:modify is FORBIDDEN', async () => {
-    const res = await gql(app, '{ staffSettings { key } }', 'Dev 7:bo:users');
+  it.each([
+    '{ staffSettings { key } }',
+    '{ settingHistory { key } }',
+    'mutation { updateSetting(key: "auth.googleLogin", value: false) { key } }',
+    'mutation { resetSetting(key: "auth.googleLogin") { key } }',
+  ])('settings operation without bo:settings is FORBIDDEN: %s', async (query) => {
+    const res = await gql(app, query, 'Dev 7:bo:users');
     expect(res.body.errors[0].extensions.code).toBe('FORBIDDEN');
+  });
+
+  it('bo:settings can read staffSettings but not modify', async () => {
+    const read = await gql(app, '{ staffSettings { key } }', 'Dev 7:bo:settings');
+    expect(read.body.errors[0].extensions.code).not.toBe('FORBIDDEN');
+    const write = await gql(
+      app,
+      'mutation { updateSetting(key: "auth.googleLogin", value: false) { key } }',
+      'Dev 7:bo:settings',
+    );
+    expect(write.body.errors[0].extensions.code).toBe('FORBIDDEN');
   });
 
   it('HTTP endpoints use the same seams', async () => {
