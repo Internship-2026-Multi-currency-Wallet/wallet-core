@@ -62,7 +62,12 @@ describe('wallet-core (e2e, DEV_AUTH=true)', () => {
 
   it('bo:settings can read staffSettings but not modify', async () => {
     const read = await gql(app, '{ staffSettings { key } }', 'Dev 7:bo:settings');
-    expect(read.body.errors[0].extensions.code).not.toBe('FORBIDDEN');
+    expect(read.body.errors).toBeUndefined();
+    expect(read.body.data.staffSettings).toEqual([
+      { key: 'auth.googleLogin' },
+      { key: 'auth.phoneRequiredAt' },
+      { key: 'products.enabled' },
+    ]);
     const write = await gql(
       app,
       'mutation { updateSetting(key: "auth.googleLogin", value: false) { key } }',
