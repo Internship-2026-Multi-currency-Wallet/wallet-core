@@ -1,12 +1,29 @@
 import { jest } from '@jest/globals';
+import { GraphQLError } from 'graphql';
 import { z } from 'zod';
+import type { AuthUser } from '../auth/auth-user.js';
 import type { ClientSettingsService, EffectiveSetting } from './client-settings.service.js';
 import { SettingType } from './settings.model.js';
 import { SettingsResolver } from './settings.resolver.js';
 import { settingsCatalog } from './settings.schema.js';
 
-function setup(settings: EffectiveSetting[]) {
-  const service = { getAll: jest.fn(() => Promise.resolve(settings)) };
+function setup(settings: EffectiveSetting[] = []) {
+  const service = {
+    getAll: jest.fn(() => Promise.resolve(settings)),
+    update: jest.fn((key: string, value: unknown, _changedBy: string) =>
+      Promise.resolve({ key, value, overridden: true } as EffectiveSetting),
+    ),
+    reset: jest.fn((key: string, _changedBy: string) =>
+      Promise.resolve({
+        key,
+        value: settingsCatalog[key as EffectiveSetting['key']].default,
+        overridden: false,
+      } as EffectiveSetting),
+    ),
+    history: jest.fn((_query: { key?: string; before?: Date; limit: number }) =>
+      Promise.resolve([] as unknown[]),
+    ),
+  };
   const resolver = new SettingsResolver(service as unknown as ClientSettingsService);
   return { resolver, service };
 }
@@ -84,6 +101,76 @@ describe('SettingsResolver (reads)', () => {
       } finally {
         delete catalog['test.private'];
       }
+    });
+  });
+});
+
+describe('SettingsResolver (writes and history)', () => {
+  const staff: AuthUser = { id: '42', permissions: ['bo:settings:modify'], strategy: 'dev' };
+
+  describe('updateSetting', () => {
+    it('updates as the current staff user and returns the staff view of the setting', async () => {
+      const { resolver, service } = setup();
+      await expect(resolver.updateSetting(staff, 'auth.googleLogin', false)).resolves.toEqual({
+        key: 'auth.googleLogin',
+        type: SettingType.BOOLEAN,
+        public: true,
+        value: false,
+        defaultValue: true,
+        overridden: true,
+      });
+      expect(service.update).toHaveBeenCalledWith('auth.googleLogin', false, '42');
+    });
+
+    it('passes service errors (UNKNOWN_KEY, INVALID_VALUE) through unchanged', async () => {
+      const { resolver, service } = setup();
+      const error = new GraphQLError('Invalid value', { extensions: { code: 'INVALID_VALUE' } });
+      service.update.mockRejectedValueOnce(error);
+      await expect(resolver.updateSetting(staff, 'auth.googleLogin', 'yes')).rejects.toBe(error);
+    });
+  });
+
+  describe('resetSetting', () => {
+    it('resets as the current staff user and returns the default', async () => {
+      const { resolver, service } = setup();
+      await expect(resolver.resetSetting(staff, 'auth.phoneRequiredAt')).resolves.toEqual({
+        key: 'auth.phoneRequiredAt',
+        type: SettingType.ENUM,
+        allowedValues: ['signup', 'firstTransfer', 'never'],
+        public: true,
+        value: 'never',
+        defaultValue: 'never',
+        overridden: false,
+      });
+      expect(service.reset).toHaveBeenCalledWith('auth.phoneRequiredAt', '42');
+    });
+  });
+
+  describe('settingHistory', () => {
+    const row = {
+      key: 'auth.googleLogin',
+      oldValue: true,
+      newValue: false,
+      changedBy: '42',
+      changedAt: new Date('2026-11-02T10:00:00.000Z'),
+    };
+
+    it('returns the service rows as SettingChange, passing the arguments through', async () => {
+      const { resolver, service } = setup();
+      service.history.mockResolvedValueOnce([row]);
+      const before = new Date('2026-11-02T12:00:00.000Z');
+      await expect(resolver.settingHistory('auth.googleLogin', 20, before)).resolves.toEqual([row]);
+      expect(service.history).toHaveBeenCalledWith({ key: 'auth.googleLogin', limit: 20, before });
+    });
+
+    it('treats explicit null arguments like omitted ones', async () => {
+      const { resolver, service } = setup();
+      await resolver.settingHistory(null, 50, null);
+      expect(service.history).toHaveBeenCalledWith({
+        key: undefined,
+        limit: 50,
+        before: undefined,
+      });
     });
   });
 });
