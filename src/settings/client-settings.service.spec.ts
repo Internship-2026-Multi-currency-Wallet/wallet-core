@@ -228,6 +228,54 @@ describe('ClientSettingsService', () => {
     });
   });
 
+  describe('history', () => {
+    const row = {
+      key: 'auth.googleLogin',
+      oldValue: true,
+      newValue: false,
+      changedBy: '7',
+      changedAt: new Date('2026-11-02T10:00:00.000Z'),
+    };
+
+    function withHistory(rows = [row]) {
+      const ctx = setup();
+      const history = jest.fn(() => Promise.resolve(rows));
+      Object.assign(ctx.repository, { history });
+      return { ...ctx, history };
+    }
+
+    it('returns the repository rows, passing key, before and limit through', async () => {
+      const { service, history } = withHistory();
+      const before = new Date('2026-11-02T12:00:00.000Z');
+      await expect(
+        service.history({ key: 'auth.googleLogin', before, limit: 50 }),
+      ).resolves.toEqual([row]);
+      expect(history).toHaveBeenCalledWith({ key: 'auth.googleLogin', before, limit: 50 });
+    });
+
+    it('works without key and before (all keys, newest first)', async () => {
+      const { service, history } = withHistory();
+      await service.history({ limit: 200 });
+      expect(history).toHaveBeenCalledWith({ key: undefined, before: undefined, limit: 200 });
+    });
+
+    it('rejects an unknown key filter with UNKNOWN_KEY', async () => {
+      const { service, history } = withHistory();
+      const error = await graphqlErrorOf(service.history({ key: 'nope.nothing', limit: 50 }));
+      expect(error.extensions.code).toBe('UNKNOWN_KEY');
+      expect(error.message).toBe('Unknown setting "nope.nothing"');
+      expect(history).not.toHaveBeenCalled();
+    });
+
+    it.each([0, -1, 201])('rejects limit %d with INVALID_VALUE', async (limit) => {
+      const { service, history } = withHistory();
+      const error = await graphqlErrorOf(service.history({ limit }));
+      expect(error.extensions.code).toBe('INVALID_VALUE');
+      expect(error.message).toBe(`Invalid limit ${limit}: must be between 1 and 200`);
+      expect(history).not.toHaveBeenCalled();
+    });
+  });
+
   it('knows the current client', () => {
     expect(setup().service.client).toBe('kvitka');
   });

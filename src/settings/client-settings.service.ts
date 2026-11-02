@@ -3,7 +3,7 @@ import { GraphQLError } from 'graphql';
 import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import type { ClientCode } from '../config/env.schema.js';
-import { SettingsRepository } from './settings.repository.js';
+import { type SettingChangeRow, SettingsRepository } from './settings.repository.js';
 import { type ClientSettings, type SettingKey, settingsCatalog } from './settings.schema.js';
 
 /** A catalog key with its effective value: the client's override, else the default. */
@@ -63,7 +63,7 @@ export class ClientSettingsService {
    * Errors: `UNKNOWN_KEY`, `INVALID_VALUE` (GraphQL `extensions.code`).
    */
   async update(key: string, value: unknown, changedBy: string): Promise<EffectiveSetting> {
-    if (!isSettingKey(key)) throw settingsError('UNKNOWN_KEY', `Unknown setting "${key}"`);
+    assertKnownKey(key);
     const { schema, default: fallback } = settingsCatalog[key];
     const parsed = schema.safeParse(value);
     if (!parsed.success) {
@@ -94,7 +94,7 @@ export class ClientSettingsService {
    * Errors: `UNKNOWN_KEY` (GraphQL `extensions.code`).
    */
   async reset(key: string, changedBy: string): Promise<EffectiveSetting> {
-    if (!isSettingKey(key)) throw settingsError('UNKNOWN_KEY', `Unknown setting "${key}"`);
+    assertKnownKey(key);
     const fallback = settingsCatalog[key].default;
     const change = await this.repository.applyChange({
       key,
@@ -110,6 +110,28 @@ export class ClientSettingsService {
       );
     }
     return { key, value: structuredClone(fallback), overridden: false };
+  }
+
+  /**
+   * Change history (staff), newest first: optionally one key, only changes strictly older than
+   * `before`, at most `limit` (1..200) rows.
+   *
+   * Errors: `UNKNOWN_KEY`, `INVALID_VALUE` (GraphQL `extensions.code`).
+   */
+  async history(query: {
+    key?: string;
+    before?: Date;
+    limit: number;
+  }): Promise<SettingChangeRow[]> {
+    const { key, before, limit } = query;
+    if (key !== undefined) assertKnownKey(key);
+    if (!Number.isInteger(limit) || limit < 1 || limit > HISTORY_MAX_LIMIT) {
+      throw settingsError(
+        'INVALID_VALUE',
+        `Invalid limit ${limit}: must be between 1 and ${HISTORY_MAX_LIMIT}`,
+      );
+    }
+    return this.repository.history({ key, before, limit });
   }
 
   private effective(key: SettingKey, override?: { value: unknown }): EffectiveSetting {
@@ -130,10 +152,18 @@ function isSettingKey(key: string): key is SettingKey {
   return Object.hasOwn(settingsCatalog, key);
 }
 
+/** API input check: an unknown key is the caller's error → `UNKNOWN_KEY`. */
+function assertKnownKey(key: string): asserts key is SettingKey {
+  if (!isSettingKey(key)) throw settingsError('UNKNOWN_KEY', `Unknown setting "${key}"`);
+}
+
 /** Error codes of the settings API, reported as GraphQL `extensions.code`. */
 function settingsError(code: 'UNKNOWN_KEY' | 'INVALID_VALUE', message: string): GraphQLError {
   return new GraphQLError(message, { extensions: { code } });
 }
+
+/** Upper bound of `settingHistory(limit)`, as documented in the GraphQL contract. */
+const HISTORY_MAX_LIMIT = 200;
 
 const DEADLOCK_ATTEMPTS = 3;
 
