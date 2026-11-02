@@ -42,6 +42,7 @@
     "@nestjs/graphql": "^14.1.0",
     "@nestjs/platform-express": "^12.3.2",
     "graphql": "^16.14.2",
+    "graphql-scalars": "^2.0.1",
     "graphql-ws": "^6.4.1",
     "ioredis": "^6.0.0",
     "knex": "^3.3.0",
