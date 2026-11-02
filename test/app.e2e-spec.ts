@@ -50,6 +50,11 @@ describe('wallet-core (e2e, DEV_AUTH=true)', () => {
     expect(res.body.errors[0].extensions.code).toBe('UNAUTHENTICATED');
   });
 
+  it('query staffSettings without settings:modify is FORBIDDEN', async () => {
+    const res = await gql(app, '{ staffSettings { key } }', 'Dev 7:bo:users');
+    expect(res.body.errors[0].extensions.code).toBe('FORBIDDEN');
+  });
+
   it('HTTP endpoints use the same seams', async () => {
     const server = app.getHttpServer() as App;
     await request(server).get('/__test/whoami').expect(401);
