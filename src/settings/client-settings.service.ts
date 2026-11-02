@@ -86,6 +86,32 @@ export class ClientSettingsService {
     return { key, value: parsed.data, overridden: true };
   }
 
+  /**
+   * Removes the override (staff), so the default applies again. Recorded in history as
+   * old → default. Without an override nothing changes and nothing is recorded.
+   * No deadlock retry needed: a reset never inserts a row.
+   *
+   * Errors: `UNKNOWN_KEY` (GraphQL `extensions.code`).
+   */
+  async reset(key: string, changedBy: string): Promise<EffectiveSetting> {
+    if (!isSettingKey(key)) throw settingsError('UNKNOWN_KEY', `Unknown setting "${key}"`);
+    const fallback = settingsCatalog[key].default;
+    const change = await this.repository.applyChange({
+      key,
+      next: null,
+      fallback,
+      changedBy,
+      at: new Date(),
+    });
+    if (change) {
+      this.logger.info(
+        { key, changedBy, oldValue: change.oldValue, newValue: change.newValue },
+        'setting reset',
+      );
+    }
+    return { key, value: structuredClone(fallback), overridden: false };
+  }
+
   private effective(key: SettingKey, override?: { value: unknown }): EffectiveSetting {
     const { schema, default: fallback } = settingsCatalog[key];
     if (override) {
