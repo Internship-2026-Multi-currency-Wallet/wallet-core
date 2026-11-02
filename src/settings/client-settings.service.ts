@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { GraphQLError } from 'graphql';
 import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import type { ClientCode } from '../config/env.schema.js';
@@ -55,6 +56,36 @@ export class ClientSettingsService {
     );
   }
 
+  /**
+   * Stores an override (staff). The value must pass the catalog schema. The change and its
+   * history row (old → new) are written in one transaction.
+   *
+   * Errors: `UNKNOWN_KEY`, `INVALID_VALUE` (GraphQL `extensions.code`).
+   */
+  async update(key: string, value: unknown, changedBy: string): Promise<EffectiveSetting> {
+    if (!isSettingKey(key)) throw settingsError('UNKNOWN_KEY', `Unknown setting "${key}"`);
+    const { schema, default: fallback } = settingsCatalog[key];
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? 'invalid value';
+      throw settingsError('INVALID_VALUE', `Invalid value for "${key}": ${reason}`);
+    }
+    const change = await retryOnDeadlock(() =>
+      this.repository.applyChange({
+        key,
+        next: { value: parsed.data },
+        fallback,
+        changedBy,
+        at: new Date(),
+      }),
+    );
+    this.logger.info(
+      { key, changedBy, oldValue: change?.oldValue, newValue: change?.newValue },
+      'setting updated',
+    );
+    return { key, value: parsed.data, overridden: true };
+  }
+
   private effective(key: SettingKey, override?: { value: unknown }): EffectiveSetting {
     const { schema, default: fallback } = settingsCatalog[key];
     if (override) {
@@ -71,4 +102,27 @@ export class ClientSettingsService {
 
 function isSettingKey(key: string): key is SettingKey {
   return Object.hasOwn(settingsCatalog, key);
+}
+
+/** Error codes of the settings API, reported as GraphQL `extensions.code`. */
+function settingsError(code: 'UNKNOWN_KEY' | 'INVALID_VALUE', message: string): GraphQLError {
+  return new GraphQLError(message, { extensions: { code } });
+}
+
+const DEADLOCK_ATTEMPTS = 3;
+
+/**
+ * Re-runs a transaction that MySQL rolled back to break a deadlock. It happens when two staff
+ * members change the same key at once while it has no override yet: the row lock has no row
+ * to lock, so both inserts collide. The retry then sees the other change's row.
+ */
+async function retryOnDeadlock<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      const deadlock = (err as { code?: unknown }).code === 'ER_LOCK_DEADLOCK';
+      if (!deadlock || attempt >= DEADLOCK_ATTEMPTS) throw err;
+    }
+  }
 }

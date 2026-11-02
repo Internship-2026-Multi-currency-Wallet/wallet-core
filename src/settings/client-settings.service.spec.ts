@@ -1,8 +1,13 @@
 import { jest } from '@jest/globals';
+import { GraphQLError } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { ClientSettingsService } from './client-settings.service.js';
-import type { SettingOverride, SettingsRepository } from './settings.repository.js';
+import type {
+  ApplyChangeInput,
+  SettingOverride,
+  SettingsRepository,
+} from './settings.repository.js';
 import { type SettingKey, settingsCatalog } from './settings.schema.js';
 
 /** In-memory stand-in for the overrides table. */
@@ -10,12 +15,30 @@ function fakeRepository(rows: SettingOverride[] = []) {
   return {
     find: jest.fn((key: string) => Promise.resolve(rows.find((row) => row.key === key))),
     findAll: jest.fn(() => Promise.resolve(rows)),
+    applyChange: jest.fn((input: ApplyChangeInput) =>
+      Promise.resolve<{ oldValue: unknown; newValue: unknown } | null>({
+        oldValue: input.fallback,
+        newValue: input.next ? input.next.value : input.fallback,
+      }),
+    ),
   };
+}
+
+/** What MySQL (mysql2) throws when it rolls a transaction back to break a deadlock. */
+const deadlock = () => Object.assign(new Error('Deadlock found'), { code: 'ER_LOCK_DEADLOCK' });
+
+async function graphqlErrorOf(promise: Promise<unknown>): Promise<GraphQLError> {
+  const error = await promise.then(
+    () => undefined,
+    (err: unknown) => err,
+  );
+  expect(error).toBeInstanceOf(GraphQLError);
+  return error as GraphQLError;
 }
 
 function setup(rows: SettingOverride[] = []) {
   const repository = fakeRepository(rows);
-  const logger = { warn: jest.fn(), setContext: jest.fn() };
+  const logger = { info: jest.fn(), warn: jest.fn(), setContext: jest.fn() };
   const service = new ClientSettingsService(
     AppConfig.fromEnv({ CLIENT: 'kvitka' }),
     repository as unknown as SettingsRepository,
@@ -86,6 +109,73 @@ describe('ClientSettingsService', () => {
       ]);
       expect(repository.findAll).toHaveBeenCalledTimes(1);
       expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('update', () => {
+    it('rejects an unknown key with UNKNOWN_KEY and writes nothing', async () => {
+      const { service, repository } = setup();
+      const error = await graphqlErrorOf(service.update('nope.nothing', true, '7'));
+      expect(error.extensions.code).toBe('UNKNOWN_KEY');
+      expect(error.message).toBe('Unknown setting "nope.nothing"');
+      expect(repository.applyChange).not.toHaveBeenCalled();
+    });
+
+    it('rejects a value that fails the catalog schema with INVALID_VALUE and writes nothing', async () => {
+      const { service, repository } = setup();
+      const { error: zodError } =
+        settingsCatalog['auth.phoneRequiredAt'].schema.safeParse('sometimes');
+      const error = await graphqlErrorOf(service.update('auth.phoneRequiredAt', 'sometimes', '7'));
+      expect(error.extensions.code).toBe('INVALID_VALUE');
+      expect(error.message).toBe(
+        `Invalid value for "auth.phoneRequiredAt": ${zodError?.issues[0].message}`,
+      );
+      expect(repository.applyChange).not.toHaveBeenCalled();
+    });
+
+    it('stores the override with the default as fallback and returns the new setting', async () => {
+      const { service, repository, logger } = setup();
+      await expect(service.update('auth.phoneRequiredAt', 'signup', '7')).resolves.toEqual({
+        key: 'auth.phoneRequiredAt',
+        value: 'signup',
+        overridden: true,
+      });
+      expect(repository.applyChange).toHaveBeenCalledWith({
+        key: 'auth.phoneRequiredAt',
+        next: { value: 'signup' },
+        fallback: 'never',
+        changedBy: '7',
+        at: expect.any(Date),
+      });
+      expect(logger.info).toHaveBeenCalledWith(
+        { key: 'auth.phoneRequiredAt', changedBy: '7', oldValue: 'never', newValue: 'signup' },
+        'setting updated',
+      );
+    });
+
+    it('retries the change when MySQL breaks a deadlock', async () => {
+      const { service, repository } = setup();
+      repository.applyChange.mockRejectedValueOnce(deadlock());
+      await expect(service.update('auth.googleLogin', false, '7')).resolves.toMatchObject({
+        value: false,
+      });
+      expect(repository.applyChange).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives up after 3 deadlocks and rethrows', async () => {
+      const { service, repository } = setup();
+      repository.applyChange.mockRejectedValue(deadlock());
+      await expect(service.update('auth.googleLogin', false, '7')).rejects.toThrow('Deadlock');
+      expect(repository.applyChange).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not retry other database errors', async () => {
+      const { service, repository } = setup();
+      repository.applyChange.mockRejectedValue(new Error('connection lost'));
+      await expect(service.update('auth.googleLogin', false, '7')).rejects.toThrow(
+        'connection lost',
+      );
+      expect(repository.applyChange).toHaveBeenCalledTimes(1);
     });
   });
 
