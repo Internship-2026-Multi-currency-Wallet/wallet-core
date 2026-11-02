@@ -12,7 +12,7 @@ TypeScript 6, Node 26. Read `README.md` first.
 - **Use the seams, never bypass them.**
   - Who is calling: `@CurrentUser() user: AuthUser`. Anonymous access: `@Public()`. Never parse `Authorization` yourself.
   - Permissions: `@RequirePermission('bo:<area>[:modify]')`.
-  - Settings: `ClientSettingsService.get('<key>')`; add keys to `src/settings/settings.schema.ts` + `config/settings.defaults.yaml`.
+  - Settings: `ClientSettingsService.get('<key>')`; add a key with one line in `settingsCatalog` (`src/settings/settings.schema.ts`: `schema`, `default`, `public`).
   - Current client: `AppConfig.client`. No `if (client === 'kvitka')` in core code.
   - Rates: inject `RATES_CLIENT`. Events: `EventPublisher` / `EventSubscriber` with names from `src/events/catalog.ts`.
   - Config: inject `AppConfig`; add new env vars to `env.schema.ts` **and** `.env.example`.

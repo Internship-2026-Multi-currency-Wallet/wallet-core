@@ -175,12 +175,15 @@ const phone = await settings.get('auth.phoneRequiredAt'); // 'signup' | 'firstTr
 const google = await settings.get('auth.googleLogin'); // boolean
 ```
 
-`ClientSettingsService.get(key)` is typed by the catalog in `src/settings/settings.schema.ts`. **Defaults live in
-the code** (`config/settings.defaults.yaml`, validated at startup), so a fresh environment works with an empty database.
-The real settings store is a later task: it keeps **only overrides** in this service's database (one environment =
-one client = one database) and falls back to these defaults. Callers do not change.
+`ClientSettingsService.get(key)` is typed by `settingsCatalog` in `src/settings/settings.schema.ts`. **Defaults live in
+the code**: each setting has a zod schema, a default and a `public` flag, so a fresh environment works with an empty
+database. The database keeps **only overrides** (`client_settings`; one environment = one client = one database) and
+every change in `client_setting_changes` (who, when, old → new). No override → the default applies; a stored value
+that fails the schema is ignored with a warning. Every read goes to the database, so a change applies without a redeploy.
 
-To add a setting: declare it in `settings.schema.ts` and give it a default in `settings.defaults.yaml`.
+To add a setting: add one line to `settingsCatalog` (`schema`, `default`, `public`). Public settings reach the client
+apps (`publicSettings`); staff read and change all of them (`staffSettings`, `updateSetting`, `resetSetting`,
+`settingHistory`) with `bo:settings` / `bo:settings:modify`.
 
 ### Current client — `AppConfig`
 
@@ -225,7 +228,7 @@ name (e.g. a stream consumer) use `eventStream(appConfig.appEnv, 'conversion.com
 src/
   auth/          dev auth seam: AuthGuard, AuthStrategy, @CurrentUser, @Public, `me`
   permissions/   @RequirePermission + guard
-  settings/      ClientSettingsService (defaults from config/settings.defaults.yaml)
+  settings/      ClientSettingsService (settingsCatalog defaults + DB overrides) and the settings API
   rates/         RatesClient + FixedRatesClient
   events/        event catalog + publisher/subscriber
   health/        GET /health and `health` query
