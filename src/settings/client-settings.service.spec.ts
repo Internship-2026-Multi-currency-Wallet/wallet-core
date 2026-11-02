@@ -179,6 +179,55 @@ describe('ClientSettingsService', () => {
     });
   });
 
+  describe('reset', () => {
+    it('rejects an unknown key with UNKNOWN_KEY and writes nothing', async () => {
+      const { service, repository } = setup();
+      const error = await graphqlErrorOf(service.reset('nope.nothing', '7'));
+      expect(error.extensions.code).toBe('UNKNOWN_KEY');
+      expect(error.message).toBe('Unknown setting "nope.nothing"');
+      expect(repository.applyChange).not.toHaveBeenCalled();
+    });
+
+    it('removes the override, records old → default and returns the default', async () => {
+      const { service, repository, logger } = setup();
+      repository.applyChange.mockResolvedValueOnce({ oldValue: 'signup', newValue: 'never' });
+      await expect(service.reset('auth.phoneRequiredAt', '7')).resolves.toEqual({
+        key: 'auth.phoneRequiredAt',
+        value: 'never',
+        overridden: false,
+      });
+      expect(repository.applyChange).toHaveBeenCalledWith({
+        key: 'auth.phoneRequiredAt',
+        next: null,
+        fallback: 'never',
+        changedBy: '7',
+        at: expect.any(Date),
+      });
+      expect(logger.info).toHaveBeenCalledWith(
+        { key: 'auth.phoneRequiredAt', changedBy: '7', oldValue: 'signup', newValue: 'never' },
+        'setting reset',
+      );
+    });
+
+    it('is a no-op without an override: returns the default and logs no change', async () => {
+      const { service, repository, logger } = setup();
+      repository.applyChange.mockResolvedValueOnce(null);
+      await expect(service.reset('products.enabled', '7')).resolves.toEqual({
+        key: 'products.enabled',
+        value: ['wallet'],
+        overridden: false,
+      });
+      expect(logger.info).not.toHaveBeenCalled();
+    });
+
+    it('returns a copy of the default', async () => {
+      const { service } = setup();
+      const result = await service.reset('products.enabled', '7');
+      (result.value as string[]).push('hacked');
+      expect(settingsCatalog['products.enabled'].default).toEqual(['wallet']);
+    });
+  });
+
   it('knows the current client', () => {
     expect(setup().service.client).toBe('kvitka');
   });
