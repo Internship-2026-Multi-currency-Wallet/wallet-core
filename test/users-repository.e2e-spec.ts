@@ -1,6 +1,6 @@
 import type { Knex } from 'knex';
-import { type NewUser, UsersRepository } from '../../src/auth/users.repository.js';
-import { createKnex } from '../../src/database/database.module.js';
+import { type NewUser, UsersRepository } from '../src/auth/users.repository.js';
+import { createKnex } from '../src/database/database.module.js';
 
 /** Needs MySQL with migrations applied (`npm run infra:up && npm run migrate`). */
 describe('UsersRepository (e2e, real MySQL)', () => {
