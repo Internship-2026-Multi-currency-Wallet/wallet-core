@@ -8,14 +8,19 @@ export const INTERNAL_ERROR_MESSAGE = 'Internal server error';
  * Apollo `formatError`: hides unexpected errors from the client. Errors thrown on purpose (a
  * `GraphQLError` with a code, or a Nest `HttpException`) pass unchanged; anything else (a database
  * error, a bug) becomes a bare `INTERNAL_SERVER_ERROR`, because its message can carry SQL or
- * internals. The original is still logged in full by `graphqlLoggingPlugin`, which runs first.
+ * internals. A `GraphQLError` without a code is unexpected too: GraphQL itself throws one when a
+ * resolver returns a wrong value, with that value in the message. The original is still logged by
+ * `graphqlLoggingPlugin`, which runs first.
  */
 export function formatError(
   formatted: GraphQLFormattedError,
   error: unknown,
 ): GraphQLFormattedError {
   const original = unwrapResolverError(error);
-  if (original instanceof GraphQLError || original instanceof HttpException) return formatted;
+  if (original instanceof HttpException) return formatted;
+  if (original instanceof GraphQLError && typeof original.extensions.code === 'string') {
+    return formatted;
+  }
   return {
     message: INTERNAL_ERROR_MESSAGE,
     locations: formatted.locations,
