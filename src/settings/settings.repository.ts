@@ -70,9 +70,17 @@ export class SettingsRepository {
       const newValue = next ? next.value : fallback;
       if (next) {
         await trx(OVERRIDES)
-          .insert({ key, value: JSON.stringify(newValue), updated_by: changedBy, updated_at: at })
+          .insert({
+            key,
+            value: JSON.stringify(newValue),
+            creator: changedBy,
+            created_at: at,
+            updated_by: changedBy,
+            updated_at: at,
+          })
           .onConflict('key')
-          .merge();
+          // Keep the original creator / created_at on update.
+          .merge(['value', 'updated_by', 'updated_at']);
       } else {
         await trx(OVERRIDES).where({ key }).delete();
       }
@@ -80,15 +88,16 @@ export class SettingsRepository {
         key,
         old_value: JSON.stringify(oldValue),
         new_value: JSON.stringify(newValue),
-        changed_by: changedBy,
-        changed_at: at,
+        creator: changedBy,
+        created_at: at,
+        updated_at: at,
       });
       return { oldValue, newValue };
     });
   }
 
   /**
-   * Changes, newest first (`changed_at`, then `id`); optionally one key. Paging: `before` alone
+   * Changes, newest first (`created_at`, then `id`); optionally one key. Paging: `before` alone
    * returns changes strictly older than that time; `before` + `beforeId` (the last row of the
    * previous page) continue after that row, so rows with the same timestamp are not skipped.
    */
@@ -100,22 +109,22 @@ export class SettingsRepository {
   }): Promise<SettingChangeRow[]> {
     const { before, beforeId } = query;
     const rows = (await this.db(CHANGES)
-      .select('id', 'key', 'old_value', 'new_value', 'changed_by', 'changed_at')
+      .select('id', 'key', 'old_value', 'new_value', 'creator', 'created_at')
       .modify((q) => {
         if (query.key !== undefined) void q.where({ key: query.key });
         if (before !== undefined && beforeId !== undefined) {
-          // Keyset: (changed_at, id) < (before, beforeId), matching the ORDER BY below.
+          // Keyset: (created_at, id) < (before, beforeId), matching the ORDER BY below.
           void q.where((w) => {
-            void w.where('changed_at', '<', before).orWhere((tie) => {
-              void tie.where('changed_at', '=', before).andWhere('id', '<', beforeId);
+            void w.where('created_at', '<', before).orWhere((tie) => {
+              void tie.where('created_at', '=', before).andWhere('id', '<', beforeId);
             });
           });
         } else if (before !== undefined) {
-          void q.where('changed_at', '<', before);
+          void q.where('created_at', '<', before);
         }
       })
       .orderBy([
-        { column: 'changed_at', order: 'desc' },
+        { column: 'created_at', order: 'desc' },
         { column: 'id', order: 'desc' },
       ])
       .limit(query.limit)) as {
@@ -123,16 +132,16 @@ export class SettingsRepository {
       key: string;
       old_value: unknown;
       new_value: unknown;
-      changed_by: string;
-      changed_at: Date;
+      creator: string;
+      created_at: Date;
     }[];
     return rows.map((row) => ({
       id: String(row.id),
       key: row.key,
       oldValue: row.old_value,
       newValue: row.new_value,
-      changedBy: row.changed_by,
-      changedAt: row.changed_at,
+      changedBy: row.creator,
+      changedAt: row.created_at,
     }));
   }
 }
