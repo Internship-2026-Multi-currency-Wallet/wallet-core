@@ -20,7 +20,7 @@ export class AuthService {
 
   /**
    * Creates an account; does not log in. Errors: `BAD_USER_INPUT` (first broken rule, or no
-   * phone while the client requires it at signup), `INVALID_CREDENTIALS` (email already taken).
+   * phone while the client requires it at signup), `EMAIL_ALREADY_REGISTERED`.
    */
   async register(input: RegisterInput): Promise<User> {
     const data = parseRegisterInput(input);
@@ -40,7 +40,10 @@ export class AuthService {
     if (result === 'emailTaken') {
       // No email in the log: it is personal data.
       this.logger.warn('registration rejected: email already registered');
-      throw authError(AuthErrorCode.InvalidCredentials, AUTH_ERROR_MESSAGES.invalidCredentials);
+      throw authError(
+        AuthErrorCode.EmailAlreadyRegistered,
+        AUTH_ERROR_MESSAGES.emailAlreadyRegistered,
+      );
     }
 
     this.logger.info({ userId: user.id }, 'user registered');

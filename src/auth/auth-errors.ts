@@ -3,6 +3,7 @@ import { GraphQLError } from 'graphql';
 /** Error codes of the auth API (see the contract), reported as GraphQL `extensions.code`. */
 export const AuthErrorCode = {
   BadUserInput: 'BAD_USER_INPUT',
+  EmailAlreadyRegistered: 'EMAIL_ALREADY_REGISTERED',
   InvalidCredentials: 'INVALID_CREDENTIALS',
   AccountLocked: 'ACCOUNT_LOCKED',
   InvalidRefreshToken: 'INVALID_REFRESH_TOKEN',
@@ -16,6 +17,7 @@ export type AuthErrorCode = (typeof AuthErrorCode)[keyof typeof AuthErrorCode];
  * `BAD_USER_INPUT` messages name the broken rule and live in the validation schema.
  */
 export const AUTH_ERROR_MESSAGES = {
+  emailAlreadyRegistered: 'Email is already registered',
   invalidCredentials: 'Invalid email or password',
   accountLocked: (lockedUntil: Date) => `Account is locked until ${lockedUntil.toISOString()}`,
   invalidRefreshToken: 'Session expired, please log in again',
