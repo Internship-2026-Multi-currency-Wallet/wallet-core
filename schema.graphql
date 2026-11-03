@@ -80,7 +80,7 @@ type Mutation {
   refreshSession: AuthPayload!
 
   """
-  Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT, EMAIL_ALREADY_REGISTERED.
+  Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT, INVALID_CREDENTIALS (also when the email is already registered).
   """
   register(input: RegisterInput!): User!
 
@@ -134,7 +134,7 @@ input RegisterInput {
   email: String!
 
   """
-  At least 8 characters, with at least one digit, one uppercase letter and one special character (not a letter or digit).
+  8 to 128 characters, with at least one digit, one uppercase letter and one special character (not a letter or digit).
   """
   password: String!
 
