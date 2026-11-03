@@ -81,7 +81,12 @@ describe('parseRegisterInput', () => {
   });
 
   describe('phone', () => {
-    it.each(['0501234567', '+0501234567', '+380 50 123 45 67', '+3805', '+3805012345678901'])(
+    // 7 digits (Niue) and 15 digits, the E.164 limits.
+    it.each(['+6834000', '+380501234567890'])('accepts %j', (phone) => {
+      expect(parseRegisterInput({ ...valid, phone })).toEqual({ ...valid, phone });
+    });
+
+    it.each(['0501234567', '+0501234567', '+380 50 123 45 67', '+683400', '+3805012345678901'])(
       'rejects %j',
       (phone) => {
         expectRejected({ ...valid, phone }, 'phone', REGISTER_INPUT_MESSAGES.phoneInvalid);

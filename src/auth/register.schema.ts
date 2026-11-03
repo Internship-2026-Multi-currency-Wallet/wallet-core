@@ -37,10 +37,10 @@ export const registerInputSchema = z.object({
     .regex(/\p{Lu}/u, REGISTER_INPUT_MESSAGES.passwordNoUppercase)
     // "Special" = anything that is not a letter or a digit.
     .regex(/[^\p{L}\p{N}]/u, REGISTER_INPUT_MESSAGES.passwordNoSpecial),
-  // E.164: "+", then 8–15 digits, the first one not 0.
+  // E.164: "+", then 7–15 digits, the first one not 0 (7 = the shortest plans, e.g. Niue).
   phone: z
     .string()
-    .regex(/^\+[1-9]\d{7,14}$/, REGISTER_INPUT_MESSAGES.phoneInvalid)
+    .regex(/^\+[1-9]\d{6,14}$/, REGISTER_INPUT_MESSAGES.phoneInvalid)
     .nullish(),
 });
 
