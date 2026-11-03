@@ -26,6 +26,11 @@ export interface ApplyChangeInput {
   next: { value: unknown } | null;
   /** Catalog default: the effective value whenever there is no override. */
   fallback: unknown;
+  /**
+   * Catalog schema check of the stored override. An invalid override was never in effect (readers
+   * get the default), so the history then records `fallback` as the old value.
+   */
+  isValid: (value: unknown) => boolean;
   changedBy: string;
   at: Date;
 }
@@ -55,13 +60,13 @@ export class SettingsRepository {
   async applyChange(
     input: ApplyChangeInput,
   ): Promise<{ oldValue: unknown; newValue: unknown } | null> {
-    const { key, next, fallback, changedBy, at } = input;
+    const { key, next, fallback, isValid, changedBy, at } = input;
     return this.db.transaction(async (trx) => {
       const current = (await trx(OVERRIDES).select('value').where({ key }).forUpdate().first()) as
         { value: unknown } | undefined;
       if (!next && !current) return null;
 
-      const oldValue = current ? current.value : fallback;
+      const oldValue = current && isValid(current.value) ? current.value : fallback;
       const newValue = next ? next.value : fallback;
       if (next) {
         await trx(OVERRIDES)

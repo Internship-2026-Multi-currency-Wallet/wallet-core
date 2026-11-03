@@ -144,6 +144,7 @@ describe('ClientSettingsService', () => {
         key: 'auth.phoneRequiredAt',
         next: { value: 'signup' },
         fallback: 'never',
+        isValid: expect.any(Function),
         changedBy: '7',
         at: expect.any(Date),
       });
@@ -200,6 +201,7 @@ describe('ClientSettingsService', () => {
         key: 'auth.phoneRequiredAt',
         next: null,
         fallback: 'never',
+        isValid: expect.any(Function),
         changedBy: '7',
         at: expect.any(Date),
       });
@@ -219,6 +221,19 @@ describe('ClientSettingsService', () => {
       });
       expect(logger.info).not.toHaveBeenCalled();
     });
+
+    it.each(['update', 'reset'] as const)(
+      '%s lets the repository check a stored value against the catalog schema',
+      async (method) => {
+        const { service, repository } = setup();
+        await (method === 'update'
+          ? service.update('auth.phoneRequiredAt', 'signup', '7')
+          : service.reset('auth.phoneRequiredAt', '7'));
+        const { isValid } = repository.applyChange.mock.calls[0][0];
+        expect(isValid('signup')).toBe(true);
+        expect(isValid('sometimes')).toBe(false);
+      },
+    );
 
     it('returns a copy of the default', async () => {
       const { service } = setup();

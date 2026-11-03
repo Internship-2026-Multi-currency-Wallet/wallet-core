@@ -75,6 +75,7 @@ export class ClientSettingsService {
         key,
         next: { value: parsed.data },
         fallback,
+        isValid: (stored) => schema.safeParse(stored).success,
         changedBy,
         at: new Date(),
       }),
@@ -95,11 +96,12 @@ export class ClientSettingsService {
    */
   async reset(key: string, changedBy: string): Promise<EffectiveSetting> {
     assertKnownKey(key);
-    const fallback = settingsCatalog[key].default;
+    const { schema, default: fallback } = settingsCatalog[key];
     const change = await this.repository.applyChange({
       key,
       next: null,
       fallback,
+      isValid: (stored) => schema.safeParse(stored).success,
       changedBy,
       at: new Date(),
     });
