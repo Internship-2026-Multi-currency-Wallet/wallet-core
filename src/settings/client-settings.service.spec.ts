@@ -230,6 +230,7 @@ describe('ClientSettingsService', () => {
 
   describe('history', () => {
     const row = {
+      id: '11',
       key: 'auth.googleLogin',
       oldValue: true,
       newValue: false,
@@ -266,6 +267,33 @@ describe('ClientSettingsService', () => {
       expect(error.message).toBe('Unknown setting "nope.nothing"');
       expect(history).not.toHaveBeenCalled();
     });
+
+    it('passes the (before, beforeId) cursor through', async () => {
+      const { service, history } = withHistory();
+      const before = new Date('2026-11-02T12:00:00.000Z');
+      await service.history({ before, beforeId: '11', limit: 50 });
+      expect(history).toHaveBeenCalledWith({ key: undefined, before, beforeId: '11', limit: 50 });
+    });
+
+    it('rejects beforeId without before with INVALID_VALUE', async () => {
+      const { service, history } = withHistory();
+      const error = await graphqlErrorOf(service.history({ beforeId: '11', limit: 50 }));
+      expect(error.extensions.code).toBe('INVALID_VALUE');
+      expect(error.message).toBe('beforeId requires before');
+      expect(history).not.toHaveBeenCalled();
+    });
+
+    it.each(['abc', '0', '-1', '1.5', ''])(
+      'rejects beforeId %p that is not a row id with INVALID_VALUE',
+      async (beforeId) => {
+        const { service, history } = withHistory();
+        const before = new Date('2026-11-02T12:00:00.000Z');
+        const error = await graphqlErrorOf(service.history({ before, beforeId, limit: 50 }));
+        expect(error.extensions.code).toBe('INVALID_VALUE');
+        expect(error.message).toBe(`Invalid beforeId "${beforeId}": must be a row id`);
+        expect(history).not.toHaveBeenCalled();
+      },
+    );
 
     it.each([0, -1, 201])('rejects limit %d with INVALID_VALUE', async (limit) => {
       const { service, history } = withHistory();

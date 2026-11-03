@@ -148,6 +148,7 @@ describe('SettingsResolver (writes and history)', () => {
 
   describe('settingHistory', () => {
     const row = {
+      id: '11',
       key: 'auth.googleLogin',
       oldValue: true,
       newValue: false,
@@ -165,11 +166,24 @@ describe('SettingsResolver (writes and history)', () => {
 
     it('treats explicit null arguments like omitted ones', async () => {
       const { resolver, service } = setup();
-      await resolver.settingHistory(null, 50, null);
+      await resolver.settingHistory(null, 50, null, null);
       expect(service.history).toHaveBeenCalledWith({
         key: undefined,
         limit: 50,
         before: undefined,
+        beforeId: undefined,
+      });
+    });
+
+    it('passes the (before, beforeId) cursor through', async () => {
+      const { resolver, service } = setup();
+      const before = new Date('2026-11-02T12:00:00.000Z');
+      await resolver.settingHistory(null, 10, before, '11');
+      expect(service.history).toHaveBeenCalledWith({
+        key: undefined,
+        limit: 10,
+        before,
+        beforeId: '11',
       });
     });
   });

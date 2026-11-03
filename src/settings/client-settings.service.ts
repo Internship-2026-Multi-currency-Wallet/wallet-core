@@ -113,25 +113,33 @@ export class ClientSettingsService {
   }
 
   /**
-   * Change history (staff), newest first: optionally one key, only changes strictly older than
-   * `before`, at most `limit` (1..200) rows.
+   * Change history (staff), newest first: optionally one key, at most `limit` (1..200) rows.
+   * `before` alone: changes strictly older than that time. Next page: `before` + `beforeId` from
+   * the last row of the previous page (keyset cursor, so equal timestamps are not skipped).
    *
    * Errors: `UNKNOWN_KEY`, `INVALID_VALUE` (GraphQL `extensions.code`).
    */
   async history(query: {
     key?: string;
     before?: Date;
+    beforeId?: string;
     limit: number;
   }): Promise<SettingChangeRow[]> {
-    const { key, before, limit } = query;
+    const { key, before, beforeId, limit } = query;
     if (key !== undefined) assertKnownKey(key);
+    if (beforeId !== undefined) {
+      if (before === undefined) throw settingsError('INVALID_VALUE', 'beforeId requires before');
+      if (!/^[1-9]\d*$/.test(beforeId)) {
+        throw settingsError('INVALID_VALUE', `Invalid beforeId "${beforeId}": must be a row id`);
+      }
+    }
     if (!Number.isInteger(limit) || limit < 1 || limit > HISTORY_MAX_LIMIT) {
       throw settingsError(
         'INVALID_VALUE',
         `Invalid limit ${limit}: must be between 1 and ${HISTORY_MAX_LIMIT}`,
       );
     }
-    return this.repository.history({ key, before, limit });
+    return this.repository.history({ key, before, beforeId, limit });
   }
 
   private effective(key: SettingKey, override?: { value: unknown }): EffectiveSetting {

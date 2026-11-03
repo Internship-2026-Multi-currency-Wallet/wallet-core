@@ -52,6 +52,11 @@ export class Setting {
 
 @ObjectType({ description: 'One recorded change of a setting (an update or a reset).' })
 export class SettingChange {
+  @Field(() => ID, {
+    description: 'Row id. Next page: pass it as `beforeId` together with `before` = `changedAt`.',
+  })
+  id: string;
+
   @Field({ description: 'Dotted key, e.g. "auth.googleLogin".' })
   key: string;
 
