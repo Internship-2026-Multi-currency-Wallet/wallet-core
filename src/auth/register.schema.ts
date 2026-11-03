@@ -15,28 +15,32 @@ export const REGISTER_INPUT_MESSAGES = {
   phoneRequired: 'Phone is required',
 } as const;
 
-const m = REGISTER_INPUT_MESSAGES;
-
 /**
  * Rules of `RegisterInput` (see the contract). The email is trimmed and lower-cased, so it is
  * stored and compared in one form. Unknown keys are dropped.
  */
 export const registerInputSchema = z.object({
   // 255 = the users.email column.
-  email: z.string().trim().toLowerCase().pipe(z.email(m.emailInvalid).max(255, m.emailTooLong)),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .pipe(
+      z.email(REGISTER_INPUT_MESSAGES.emailInvalid).max(255, REGISTER_INPUT_MESSAGES.emailTooLong),
+    ),
   password: z
     .string()
-    .min(8, m.passwordTooShort)
+    .min(8, REGISTER_INPUT_MESSAGES.passwordTooShort)
     // Caps the work argon2 does for one request.
-    .max(128, m.passwordTooLong)
-    .regex(/\d/, m.passwordNoDigit)
-    .regex(/\p{Lu}/u, m.passwordNoUppercase)
+    .max(128, REGISTER_INPUT_MESSAGES.passwordTooLong)
+    .regex(/\d/, REGISTER_INPUT_MESSAGES.passwordNoDigit)
+    .regex(/\p{Lu}/u, REGISTER_INPUT_MESSAGES.passwordNoUppercase)
     // "Special" = anything that is not a letter or a digit.
-    .regex(/[^\p{L}\p{N}]/u, m.passwordNoSpecial),
+    .regex(/[^\p{L}\p{N}]/u, REGISTER_INPUT_MESSAGES.passwordNoSpecial),
   // E.164: "+", then 8–15 digits, the first one not 0.
   phone: z
     .string()
-    .regex(/^\+[1-9]\d{7,14}$/, m.phoneInvalid)
+    .regex(/^\+[1-9]\d{7,14}$/, REGISTER_INPUT_MESSAGES.phoneInvalid)
     .nullish(),
 });
 

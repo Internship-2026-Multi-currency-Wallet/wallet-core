@@ -32,19 +32,3 @@ export function authError(
 ): GraphQLError {
   return new GraphQLError(message, { extensions: { ...extensions, code } });
 }
-
-/**
- * Whether a caught Knex/mysql2 error is a duplicate key on the given unique index, e.g.
- * `users_email_unique`. Catching after the insert (instead of checking first) is deliberate:
- * the insert is atomic, so two concurrent requests cannot both pass a check.
- */
-export function isUniqueViolation(error: unknown, indexName: string): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const { code, sqlMessage } = error as { code?: unknown; sqlMessage?: unknown };
-  return (
-    code === 'ER_DUP_ENTRY' &&
-    typeof sqlMessage === 'string' &&
-    // MySQL 8 names the key "<table>.<index>".
-    new RegExp(`for key '(?:[^'.]+\\.)?${indexName}'$`).test(sqlMessage)
-  );
-}

@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { KNEX } from '../database/database.module.js';
-import { isUniqueViolation } from './auth-errors.js';
+import { isUniqueViolation } from '../database/unique-violation.js';
 
 const USERS = 'users';
 /** Unique index on `users.email` (see the users_and_sessions migration). */

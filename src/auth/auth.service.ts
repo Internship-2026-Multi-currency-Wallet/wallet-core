@@ -39,7 +39,7 @@ export class AuthService {
     });
     if (result === 'emailTaken') {
       // No email in the log: it is personal data.
-      this.logger.info('registration rejected: email already registered');
+      this.logger.warn('registration rejected: email already registered');
       throw authError(AuthErrorCode.InvalidCredentials, AUTH_ERROR_MESSAGES.invalidCredentials);
     }
 
