@@ -156,7 +156,8 @@ describe('client settings (e2e)', () => {
     await update('auth.phoneRequiredAt', '"signup"');
     await update('auth.phoneRequiredAt', '"firstTransfer"');
     // Force a tie: both rows in the same millisecond.
-    await db('client_setting_changes').update({ changed_at: new Date('2026-11-02T10:00:00.000Z') });
+    const tie = new Date('2026-11-02T10:00:00.000Z');
+    await db('client_setting_changes').update({ created_at: tie, updated_at: tie });
 
     const [first, ...rest] = await history('(limit: 1)');
     expect(rest).toEqual([]);
@@ -176,6 +177,8 @@ describe('client settings (e2e)', () => {
     await db('client_settings').insert({
       key: 'auth.phoneRequiredAt',
       value: JSON.stringify('sometimes'),
+      creator: '1',
+      created_at: new Date('2026-11-02T09:00:00.000Z'),
       updated_by: '1',
       updated_at: new Date('2026-11-02T09:00:00.000Z'),
     });

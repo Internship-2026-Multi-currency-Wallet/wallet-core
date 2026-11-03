@@ -53,6 +53,37 @@ describe('SettingsRepository (e2e, real MySQL)', () => {
     ).resolves.toEqual({ oldValue: 'signup', newValue: 'firstTransfer' });
   });
 
+  it('fills audit columns and keeps creator / created_at when an override is updated', async () => {
+    await update('auth.phoneRequiredAt', 'signup', 'never', '2026-11-02T10:00:00.000Z', '7');
+    await update('auth.phoneRequiredAt', 'firstTransfer', 'never', '2026-11-02T10:01:00.000Z', '9');
+    await expect(
+      db('client_settings')
+        .select('value', 'creator', 'created_at', 'updated_by', 'updated_at')
+        .where({ key: 'auth.phoneRequiredAt' })
+        .first(),
+    ).resolves.toEqual({
+      value: 'firstTransfer',
+      creator: '7',
+      created_at: at('2026-11-02T10:00:00.000Z'),
+      updated_by: '9',
+      updated_at: at('2026-11-02T10:01:00.000Z'),
+    });
+    await expect(
+      db('client_setting_changes').select('creator', 'created_at', 'updated_at').orderBy('id'),
+    ).resolves.toEqual([
+      {
+        creator: '7',
+        created_at: at('2026-11-02T10:00:00.000Z'),
+        updated_at: at('2026-11-02T10:00:00.000Z'),
+      },
+      {
+        creator: '9',
+        created_at: at('2026-11-02T10:01:00.000Z'),
+        updated_at: at('2026-11-02T10:01:00.000Z'),
+      },
+    ]);
+  });
+
   it('reset deletes the override and records old → default', async () => {
     await update('auth.googleLogin', false, true, '2026-11-02T10:00:00.000Z');
     await expect(reset('auth.googleLogin', true, '2026-11-02T10:01:00.000Z', '9')).resolves.toEqual(
@@ -80,9 +111,9 @@ describe('SettingsRepository (e2e, real MySQL)', () => {
       repo.applyChange({
         key: 'auth.googleLogin',
         next: { value: false },
-        fallback: true,
+        fallback: undefined, // no old value → NOT NULL old_value: only the history insert fails
         isValid,
-        changedBy: 'x'.repeat(65), // too long for changed_by → the history insert fails
+        changedBy: '7',
         at: at('2026-11-02T10:00:00.000Z'),
       }),
     ).rejects.toThrow();
@@ -93,6 +124,8 @@ describe('SettingsRepository (e2e, real MySQL)', () => {
     await db('client_settings').insert({
       key: 'auth.phoneRequiredAt',
       value: JSON.stringify('sometimes'), // not a valid option: readers see the default
+      creator: '1',
+      created_at: at('2026-11-02T09:00:00.000Z'),
       updated_by: '1',
       updated_at: at('2026-11-02T09:00:00.000Z'),
     });
@@ -162,7 +195,7 @@ describe('SettingsRepository (e2e, real MySQL)', () => {
     await update('auth.googleLogin', true, true, tie, 'second');
 
     const [page1] = await repo.history({ limit: 1 });
-    expect(page1.changedBy).toBe('second'); // same changed_at → higher id first
+    expect(page1.changedBy).toBe('second'); // same created_at → higher id first
 
     const page2 = await repo.history({ before: page1.changedAt, beforeId: page1.id, limit: 1 });
     expect(page2.map((r) => r.changedBy)).toEqual(['first']);

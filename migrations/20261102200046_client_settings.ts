@@ -12,6 +12,8 @@ export async function up(knex: Knex): Promise<void> {
     table.charset('utf8mb4');
     table.string('key', 100).primary();
     table.json('value').notNullable();
+    table.string('creator', 64).notNullable();
+    table.datetime('created_at', { precision: 3 }).notNullable();
     table.string('updated_by', 64).notNullable();
     table.datetime('updated_at', { precision: 3 }).notNullable();
   });
@@ -24,10 +26,12 @@ export async function up(knex: Knex): Promise<void> {
     table.string('key', 100).notNullable();
     table.json('old_value').notNullable();
     table.json('new_value').notNullable();
-    table.string('changed_by', 64).notNullable();
-    table.datetime('changed_at', { precision: 3 }).notNullable();
-    table.index(['key', 'changed_at'], 'client_setting_changes_key_changed_at_idx');
-    table.index(['changed_at'], 'client_setting_changes_changed_at_idx');
+    table.string('creator', 64).notNullable();
+    // Append-only: updated_at always equals created_at.
+    table.datetime('created_at', { precision: 3 }).notNullable();
+    table.datetime('updated_at', { precision: 3 }).notNullable();
+    table.index(['key', 'created_at'], 'client_setting_changes_key_created_at_idx');
+    table.index(['created_at'], 'client_setting_changes_created_at_idx');
   });
 }
 
