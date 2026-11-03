@@ -5,8 +5,10 @@ import { AppConfig } from '../config/app-config.js';
 import { AUTH_STRATEGIES, type AuthStrategy } from './auth-strategy.js';
 import { AuthGuard } from './auth.guard.js';
 import { AuthResolver } from './auth.resolver.js';
+import { AuthService } from './auth.service.js';
 import { DevAuthStrategy } from './dev-auth.strategy.js';
 import { MeResolver } from './me.resolver.js';
+import { UsersRepository } from './users.repository.js';
 import { PermissionGuard } from '../permissions/permission.guard.js';
 
 /**
@@ -39,6 +41,8 @@ import { PermissionGuard } from '../permissions/permission.guard.js';
     { provide: APP_GUARD, useClass: PermissionGuard },
     MeResolver,
     AuthResolver,
+    AuthService,
+    UsersRepository,
   ],
   exports: [AUTH_STRATEGIES],
 })

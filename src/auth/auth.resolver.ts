@@ -5,20 +5,24 @@ import { LoginInput } from './login.input.js';
 import { Public } from './public.decorator.js';
 import { RegisterInput } from './register.input.js';
 import { User } from './user.model.js';
+import { AuthService } from './auth.service.js';
 
 /**
- * Registration, login and sessions. Contract only: every mutation throws until it is implemented.
- * The refresh token travels in an httpOnly cookie, never in arguments or results.
+ * Registration, login and sessions. `login`, `refreshSession` and `logout` are contract only and
+ * throw until they are implemented. The refresh token travels in an httpOnly cookie, never in
+ * arguments or results.
  */
 @Resolver()
 export class AuthResolver {
+  constructor(private readonly auth: AuthService) {}
+
   @Public()
   @Mutation(() => User, {
     description:
-      'Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT, EMAIL_ALREADY_REGISTERED.',
+      'Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT, INVALID_CREDENTIALS (also when the email is already registered).',
   })
-  register(@Args('input') _input: RegisterInput): User {
-    throw new NotImplementedException('register is not implemented yet');
+  register(@Args('input') input: RegisterInput): Promise<User> {
+    return this.auth.register(input);
   }
 
   @Public()

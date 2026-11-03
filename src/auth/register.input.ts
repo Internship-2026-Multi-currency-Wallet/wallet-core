@@ -9,7 +9,7 @@ export class RegisterInput {
 
   @Field({
     description:
-      'At least 8 characters, with at least one digit, one uppercase letter and one special character (not a letter or digit).',
+      '8 to 128 characters, with at least one digit, one uppercase letter and one special character (not a letter or digit).',
   })
   password: string;
 
