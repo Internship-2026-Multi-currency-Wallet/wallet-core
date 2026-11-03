@@ -172,6 +172,22 @@ describe('client settings (e2e)', () => {
     expect(page3).toEqual([]);
   });
 
+  it('history records the value that was in effect when the stored override is invalid', async () => {
+    await db('client_settings').insert({
+      key: 'auth.phoneRequiredAt',
+      value: JSON.stringify('sometimes'),
+      updated_by: '1',
+      updated_at: new Date('2026-11-02T09:00:00.000Z'),
+    });
+    await expect(publicSettings()).resolves.toContainEqual({
+      key: 'auth.phoneRequiredAt',
+      value: 'never',
+    });
+    await update('auth.phoneRequiredAt', '"signup"');
+    const [row] = await history('(key: "auth.phoneRequiredAt")');
+    expect([row.oldValue, row.newValue]).toEqual(['never', 'signup']);
+  });
+
   it('staff reads need bo:settings and writes need bo:settings:modify', async () => {
     const anonymous = await gql('{ staffSettings { key } }');
     expect(anonymous.errors?.[0].extensions.code).toBe('UNAUTHENTICATED');

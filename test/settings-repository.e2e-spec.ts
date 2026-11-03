@@ -8,10 +8,11 @@ describe('SettingsRepository (e2e, real MySQL)', () => {
   let repo: SettingsRepository;
 
   const at = (iso: string) => new Date(iso);
+  const isValid = () => true;
   const update = (key: string, value: unknown, fallback: unknown, when: string, by = '7') =>
-    repo.applyChange({ key, next: { value }, fallback, changedBy: by, at: at(when) });
+    repo.applyChange({ key, next: { value }, fallback, isValid, changedBy: by, at: at(when) });
   const reset = (key: string, fallback: unknown, when: string, by = '7') =>
-    repo.applyChange({ key, next: null, fallback, changedBy: by, at: at(when) });
+    repo.applyChange({ key, next: null, fallback, isValid, changedBy: by, at: at(when) });
 
   beforeAll(() => {
     db = createKnex(process.env.DATABASE_URL!);
@@ -80,11 +81,33 @@ describe('SettingsRepository (e2e, real MySQL)', () => {
         key: 'auth.googleLogin',
         next: { value: false },
         fallback: true,
+        isValid,
         changedBy: 'x'.repeat(65), // too long for changed_by → the history insert fails
         at: at('2026-11-02T10:00:00.000Z'),
       }),
     ).rejects.toThrow();
     await expect(repo.find('auth.googleLogin')).resolves.toBeUndefined();
+  });
+
+  it('records the default as old value when the stored override is invalid', async () => {
+    await db('client_settings').insert({
+      key: 'auth.phoneRequiredAt',
+      value: JSON.stringify('sometimes'), // not a valid option: readers see the default
+      updated_by: '1',
+      updated_at: at('2026-11-02T09:00:00.000Z'),
+    });
+    await expect(
+      repo.applyChange({
+        key: 'auth.phoneRequiredAt',
+        next: { value: 'signup' },
+        fallback: 'never',
+        isValid: (value) => value !== 'sometimes',
+        changedBy: '7',
+        at: at('2026-11-02T10:00:00.000Z'),
+      }),
+    ).resolves.toEqual({ oldValue: 'never', newValue: 'signup' });
+    const [row] = await repo.history({ limit: 1 });
+    expect([row.oldValue, row.newValue]).toEqual(['never', 'signup']);
   });
 
   it('serializes concurrent changes of one key, so history chains old → new', async () => {
