@@ -61,10 +61,20 @@ describe('createKnex (e2e, real MySQL)', () => {
       .catch((err: unknown) => err);
 
     expect(error).toMatchObject({
-      sqlMessage: "Incorrect integer value: '?' for column 'failed_login_attempts' at row 1",
+      sqlMessage: 'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD (errno 1366)',
     });
     const everything = JSON.stringify({ ...(error as object), message: (error as Error).message });
     expect(everything).not.toContain('scrub@test.com');
     expect(everything).not.toContain('secret-hash');
+  });
+
+  it('keeps the value out of a syntax error, which quotes the query near the error', async () => {
+    const error: unknown = await db
+      .raw('select from users where email = ?', ['scrub@test.com'])
+      .catch((err: unknown) => err);
+
+    expect(error).toMatchObject({ sqlMessage: 'ER_PARSE_ERROR (errno 1064)' });
+    const everything = JSON.stringify({ ...(error as object), message: (error as Error).message });
+    expect(everything).not.toContain('scrub@test.com');
   });
 });

@@ -1,6 +1,11 @@
 import { unwrapResolverError } from '@apollo/server/errors';
 import { HttpException } from '@nestjs/common';
-import { GraphQLError, type GraphQLFormattedError } from 'graphql';
+import {
+  type ExecutionResult,
+  type FormattedExecutionResult,
+  GraphQLError,
+  type GraphQLFormattedError,
+} from 'graphql';
 
 export const INTERNAL_ERROR_MESSAGE = 'Internal server error';
 
@@ -27,4 +32,16 @@ export function formatError(
     path: formatted.path,
     extensions: { code: 'INTERNAL_SERVER_ERROR' },
   };
+}
+
+/**
+ * graphql-ws `onNext`: the same masking for results sent over the websocket (any operation can go
+ * there, not only subscriptions), which Apollo's `formatError` does not see. Returning nothing
+ * sends the result unchanged.
+ */
+export function formatExecutionResult(
+  result: ExecutionResult,
+): FormattedExecutionResult | undefined {
+  if (!result.errors) return undefined;
+  return { ...result, errors: result.errors.map((error) => formatError(error.toJSON(), error)) };
 }

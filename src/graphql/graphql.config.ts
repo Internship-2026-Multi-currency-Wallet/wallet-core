@@ -4,7 +4,7 @@ import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
-import { formatError } from './format-error.js';
+import { formatError, formatExecutionResult } from './format-error.js';
 
 /** Path of the committed GraphQL contract. Other repositories consume this file. */
 export const SCHEMA_FILE = join(process.cwd(), 'schema.graphql');
@@ -29,7 +29,14 @@ export function graphqlOptions(config: AppConfig, logger: PinoLogger): ApolloDri
     introspection: true,
     // GraphQL subscriptions over websocket (graphql-ws protocol) on the same path.
     // Subscription start/end are logged with the connection's requestId.
-    subscriptions: { 'graphql-ws': { path: '/graphql', ...subscriptionLoggingHooks(logger) } },
+    subscriptions: {
+      'graphql-ws': {
+        path: '/graphql',
+        ...subscriptionLoggingHooks(logger),
+        // Apollo's formatError does not see websocket results: mask them the same way.
+        onNext: (_ctx, _id, _payload, _args, result) => formatExecutionResult(result),
+      },
+    },
     // Names the operation in the access log and logs resolver errors with the requestId.
     plugins: [graphqlLoggingPlugin()],
     // Unexpected errors reach the client as a bare INTERNAL_SERVER_ERROR (no SQL, no internals).
