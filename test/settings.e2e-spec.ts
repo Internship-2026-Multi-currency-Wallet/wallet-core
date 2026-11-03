@@ -34,8 +34,13 @@ describe('client settings (e2e)', () => {
   const reset = (key: string) =>
     gql(`mutation { resetSetting(key: "${key}") { key value overridden } }`, STAFF);
   const history = async (args = '') =>
-    (await gql(`{ settingHistory${args} { key oldValue newValue changedBy changedAt } }`, STAFF))
-      .data?.settingHistory as { oldValue: unknown; newValue: unknown; changedAt: string }[];
+    (await gql(`{ settingHistory${args} { id key oldValue newValue changedBy changedAt } }`, STAFF))
+      .data?.settingHistory as {
+      id: string;
+      oldValue: unknown;
+      newValue: unknown;
+      changedAt: string;
+    }[];
   /** Keeps change timestamps (millisecond precision) distinct for the `before` cursor. */
   const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -145,6 +150,26 @@ describe('client settings (e2e)', () => {
 
     const invalid = await gql('{ settingHistory(limit: 201) { key } }', STAFF);
     expect(invalid.errors?.[0].extensions.code).toBe('INVALID_VALUE');
+  });
+
+  it('pages through changes with the same changedAt using before + beforeId', async () => {
+    await update('auth.phoneRequiredAt', '"signup"');
+    await update('auth.phoneRequiredAt', '"firstTransfer"');
+    // Force a tie: both rows in the same millisecond.
+    await db('client_setting_changes').update({ changed_at: new Date('2026-11-02T10:00:00.000Z') });
+
+    const [first, ...rest] = await history('(limit: 1)');
+    expect(rest).toEqual([]);
+    const page2 = await history(
+      `(before: "${first.changedAt}", beforeId: "${first.id}", limit: 1)`,
+    );
+    expect(page2).toHaveLength(1);
+    expect(page2[0].id).not.toBe(first.id);
+    expect([first.newValue, page2[0].newValue].sort()).toEqual(['firstTransfer', 'signup']);
+    const page3 = await history(
+      `(before: "${page2[0].changedAt}", beforeId: "${page2[0].id}", limit: 1)`,
+    );
+    expect(page3).toEqual([]);
   });
 
   it('staff reads need bo:settings and writes need bo:settings:modify', async () => {

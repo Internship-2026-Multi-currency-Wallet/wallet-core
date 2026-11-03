@@ -117,9 +117,9 @@ type Query {
   publicSettings: [PublicSetting!]!
 
   """
-  Change history, newest first, optionally for one key. Cursor: `before` returns only changes strictly older than this time. `limit` is at most 200. Requires bo:settings. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.
+  Change history, newest first, optionally for one key. `before` alone returns only changes strictly older than this time. Next page: pass `before` = last row `changedAt` and `beforeId` = last row `id` (changes with the same time are not skipped). `limit` is at most 200. Requires bo:settings. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.
   """
-  settingHistory(before: DateTime, key: String, limit: Int! = 50): [SettingChange!]!
+  settingHistory(before: DateTime, beforeId: ID, key: String, limit: Int! = 50): [SettingChange!]!
 
   """
   All settings with defaults and overrides. Requires bo:settings. Errors: UNAUTHENTICATED, FORBIDDEN.
@@ -171,6 +171,11 @@ type SettingChange {
 
   """Id of the staff user who made the change."""
   changedBy: ID!
+
+  """
+  Row id. Next page: pass it as `beforeId` together with `before` = `changedAt`.
+  """
+  id: ID!
 
   """Dotted key, e.g. "auth.googleLogin"."""
   key: String!

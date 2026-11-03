@@ -11,6 +11,8 @@ export interface SettingOverride {
 }
 
 export interface SettingChangeRow {
+  /** BIGINT row id as a string; the tie-breaker of the history cursor. */
+  id: string;
   key: string;
   oldValue: unknown;
   newValue: unknown;
@@ -80,23 +82,39 @@ export class SettingsRepository {
     });
   }
 
-  /** Changes, newest first; optionally one key and only those strictly older than `before`. */
+  /**
+   * Changes, newest first (`changed_at`, then `id`); optionally one key. Paging: `before` alone
+   * returns changes strictly older than that time; `before` + `beforeId` (the last row of the
+   * previous page) continue after that row, so rows with the same timestamp are not skipped.
+   */
   async history(query: {
     key?: string;
     before?: Date;
+    beforeId?: string;
     limit: number;
   }): Promise<SettingChangeRow[]> {
+    const { before, beforeId } = query;
     const rows = (await this.db(CHANGES)
-      .select('key', 'old_value', 'new_value', 'changed_by', 'changed_at')
+      .select('id', 'key', 'old_value', 'new_value', 'changed_by', 'changed_at')
       .modify((q) => {
         if (query.key !== undefined) void q.where({ key: query.key });
-        if (query.before !== undefined) void q.where('changed_at', '<', query.before);
+        if (before !== undefined && beforeId !== undefined) {
+          // Keyset: (changed_at, id) < (before, beforeId), matching the ORDER BY below.
+          void q.where((w) => {
+            void w.where('changed_at', '<', before).orWhere((tie) => {
+              void tie.where('changed_at', '=', before).andWhere('id', '<', beforeId);
+            });
+          });
+        } else if (before !== undefined) {
+          void q.where('changed_at', '<', before);
+        }
       })
       .orderBy([
         { column: 'changed_at', order: 'desc' },
         { column: 'id', order: 'desc' },
       ])
       .limit(query.limit)) as {
+      id: number | string;
       key: string;
       old_value: unknown;
       new_value: unknown;
@@ -104,6 +122,7 @@ export class SettingsRepository {
       changed_at: Date;
     }[];
     return rows.map((row) => ({
+      id: String(row.id),
       key: row.key,
       oldValue: row.old_value,
       newValue: row.new_value,

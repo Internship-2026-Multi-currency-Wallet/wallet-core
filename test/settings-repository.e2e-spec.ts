@@ -60,6 +60,7 @@ describe('SettingsRepository (e2e, real MySQL)', () => {
     await expect(repo.find('auth.googleLogin')).resolves.toBeUndefined();
     const [latest] = await repo.history({ limit: 1 });
     expect(latest).toEqual({
+      id: expect.any(String),
       key: 'auth.googleLogin',
       oldValue: false,
       newValue: true,
@@ -130,5 +131,24 @@ describe('SettingsRepository (e2e, real MySQL)', () => {
       const rows = await repo.history({ limit: 2 });
       expect(rows.map((r) => r.changedBy)).toEqual(['3', '2']);
     });
+  });
+
+  it('pages through changes with the same timestamp without skipping any', async () => {
+    const tie = '2026-11-02T11:00:00.000Z';
+    await update('auth.googleLogin', false, true, tie, 'first');
+    await update('auth.googleLogin', true, true, tie, 'second');
+
+    const [page1] = await repo.history({ limit: 1 });
+    expect(page1.changedBy).toBe('second'); // same changed_at → higher id first
+
+    const page2 = await repo.history({ before: page1.changedAt, beforeId: page1.id, limit: 1 });
+    expect(page2.map((r) => r.changedBy)).toEqual(['first']);
+
+    const page3 = await repo.history({
+      before: page2[0].changedAt,
+      beforeId: page2[0].id,
+      limit: 1,
+    });
+    expect(page3).toEqual([]);
   });
 });

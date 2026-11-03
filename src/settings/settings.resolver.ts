@@ -1,4 +1,4 @@
-import { Args, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { GraphQLJSON } from 'graphql-scalars';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
@@ -39,18 +39,20 @@ export class SettingsResolver {
   @RequirePermission('bo:settings')
   @Query(() => [SettingChange], {
     description:
-      'Change history, newest first, optionally for one key. Cursor: `before` returns only changes strictly older than this time. `limit` is at most 200. Requires bo:settings. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.',
+      'Change history, newest first, optionally for one key. `before` alone returns only changes strictly older than this time. Next page: pass `before` = last row `changedAt` and `beforeId` = last row `id` (changes with the same time are not skipped). `limit` is at most 200. Requires bo:settings. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.',
   })
   settingHistory(
     // GraphQL passes an explicit `null` for these; the service treats only `undefined` as "not set".
     @Args('key', { type: () => String, nullable: true }) key: string | null | undefined,
     @Args('limit', { type: () => Int, defaultValue: 50 }) limit: number,
     @Args('before', { type: () => Date, nullable: true }) before: Date | null | undefined,
+    @Args('beforeId', { type: () => ID, nullable: true }) beforeId?: string | null,
   ): Promise<SettingChange[]> {
     return this.settings.history({
       key: key ?? undefined,
       limit,
       before: before ?? undefined,
+      beforeId: beforeId ?? undefined,
     });
   }
 
