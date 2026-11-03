@@ -2,6 +2,7 @@ import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/comm
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import knex, { type Knex } from 'knex';
 import { AppConfig } from '../config/app-config.js';
+import { scrubQueryError } from './scrub-query-error.js';
 
 /** Injection token for the shared Knex instance: `@Inject(KNEX) private readonly db: Knex`. */
 export const KNEX = Symbol('KNEX');
@@ -16,28 +17,6 @@ export function createKnex(databaseUrl: string): Knex {
   });
   db.on('query-error', scrubQueryError);
   return db;
-}
-
-/** Fields of a failed query's error (mysql2) that can carry the values that went into it. */
-interface QueryError {
-  message: string;
-  sql?: string;
-  sqlMessage?: string;
-}
-
-const DUPLICATE_VALUE = /Duplicate entry '.*' for key '/s;
-
-/**
- * Removes the query's values from its error before anyone catches or logs it: mysql2 adds `sql`
- * with the values inlined, and MySQL names the duplicate value in "Duplicate entry '…'". The key
- * name stays, so a duplicate can still be told apart by its index.
- */
-export function scrubQueryError(error: QueryError): void {
-  delete error.sql;
-  error.message = error.message.replace(DUPLICATE_VALUE, "Duplicate entry '?' for key '");
-  if (error.sqlMessage !== undefined) {
-    error.sqlMessage = error.sqlMessage.replace(DUPLICATE_VALUE, "Duplicate entry '?' for key '");
-  }
 }
 
 @Global()
