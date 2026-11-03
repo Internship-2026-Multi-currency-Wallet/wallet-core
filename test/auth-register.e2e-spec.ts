@@ -71,14 +71,14 @@ describe('register (e2e)', () => {
     await expect(verify(row.password_hash as string, PASSWORD)).resolves.toBe(true);
   });
 
-  it('answers INVALID_CREDENTIALS for an email that is already registered', async () => {
+  it('answers EMAIL_ALREADY_REGISTERED for an email that is already registered, in any case', async () => {
     await register({ email: 'artem@test.com', password: PASSWORD });
     const res = await register({ email: 'ARTEM@test.com', password: 'Another1!' });
 
     expect(res.data).toBeNull();
     expect(res.errors?.[0]).toMatchObject({
-      message: 'Invalid email or password',
-      extensions: { code: 'INVALID_CREDENTIALS' },
+      message: 'Email is already registered',
+      extensions: { code: 'EMAIL_ALREADY_REGISTERED' },
     });
     await expect(users()).resolves.toHaveLength(1);
   });

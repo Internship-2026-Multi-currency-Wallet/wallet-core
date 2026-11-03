@@ -120,13 +120,13 @@ describe('AuthService.register', () => {
     },
   );
 
-  it('answers INVALID_CREDENTIALS for a taken email', async () => {
+  it('answers EMAIL_ALREADY_REGISTERED for a taken email', async () => {
     const { service } = setup({ insert: 'emailTaken' });
     const error = await graphqlErrorOf(
       service.register({ email: 'artem@test.com', password: PASSWORD }),
     );
-    expect(error.message).toBe('Invalid email or password');
-    expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+    expect(error.message).toBe('Email is already registered');
+    expect(error.extensions).toEqual({ code: 'EMAIL_ALREADY_REGISTERED' });
   });
 
   it('rethrows unexpected repository errors', async () => {

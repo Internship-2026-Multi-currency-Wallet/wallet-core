@@ -19,7 +19,7 @@ export class AuthResolver {
   @Public()
   @Mutation(() => User, {
     description:
-      'Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT, INVALID_CREDENTIALS (also when the email is already registered).',
+      'Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT, EMAIL_ALREADY_REGISTERED.',
   })
   register(@Args('input') input: RegisterInput): Promise<User> {
     return this.auth.register(input);
