@@ -47,4 +47,24 @@ describe('createKnex (e2e, real MySQL)', () => {
     expect(everything).not.toContain('scrub@test.com');
     expect(everything).not.toContain('secret-hash');
   });
+
+  it('keeps the value out of an "Incorrect … value" error', async () => {
+    const error: unknown = await db('users')
+      .insert({
+        id: '00000000-0000-4000-8000-0000000000a3',
+        email: 'scrub@test.com',
+        password_hash: '$argon2id$secret-hash',
+        failed_login_attempts: 'scrub@test.com',
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+      .catch((err: unknown) => err);
+
+    expect(error).toMatchObject({
+      sqlMessage: "Incorrect integer value: '?' for column 'failed_login_attempts' at row 1",
+    });
+    const everything = JSON.stringify({ ...(error as object), message: (error as Error).message });
+    expect(everything).not.toContain('scrub@test.com');
+    expect(everything).not.toContain('secret-hash');
+  });
 });
