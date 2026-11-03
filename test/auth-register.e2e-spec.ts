@@ -3,8 +3,8 @@ import { verify } from '@node-rs/argon2';
 import type { Knex } from 'knex';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
-import { createKnex } from '../../src/database/database.module.js';
-import { createApp } from '../create-app.js';
+import { createKnex } from '../src/database/database.module.js';
+import { createApp } from './create-app.js';
 
 /**
  * `register` through the GraphQL API against real MySQL.

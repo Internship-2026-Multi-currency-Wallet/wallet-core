@@ -1,5 +1,5 @@
 import type { GraphQLError } from 'graphql';
-import { REGISTER_INPUT_MESSAGES as m, parseRegisterInput } from './register.schema.js';
+import { REGISTER_INPUT_MESSAGES, parseRegisterInput } from './register.schema.js';
 
 const valid = { email: 'artem@test.com', password: 'Qwerty1!' };
 
@@ -41,21 +41,29 @@ describe('parseRegisterInput', () => {
 
   describe('email', () => {
     it.each(['', 'artem', 'artem@', '@test.com', 'artem@test'])('rejects %j', (email) => {
-      expectRejected({ ...valid, email }, 'email', m.emailInvalid);
+      expectRejected({ ...valid, email }, 'email', REGISTER_INPUT_MESSAGES.emailInvalid);
     });
 
     it('rejects an email longer than the column', () => {
-      expectRejected({ ...valid, email: `${'a'.repeat(250)}@test.com` }, 'email', m.emailTooLong);
+      expectRejected(
+        { ...valid, email: `${'a'.repeat(250)}@test.com` },
+        'email',
+        REGISTER_INPUT_MESSAGES.emailTooLong,
+      );
     });
   });
 
   describe('password', () => {
     it.each([
-      ['shorter than 8 characters', 'Qwe1!', m.passwordTooShort],
-      ['longer than 128 characters', `Qwerty1!${'a'.repeat(121)}`, m.passwordTooLong],
-      ['without a digit', 'Qwerty!!', m.passwordNoDigit],
-      ['without an uppercase letter', 'qwerty1!', m.passwordNoUppercase],
-      ['without a special character', 'Qwerty12', m.passwordNoSpecial],
+      ['shorter than 8 characters', 'Qwe1!', REGISTER_INPUT_MESSAGES.passwordTooShort],
+      [
+        'longer than 128 characters',
+        `Qwerty1!${'a'.repeat(121)}`,
+        REGISTER_INPUT_MESSAGES.passwordTooLong,
+      ],
+      ['without a digit', 'Qwerty!!', REGISTER_INPUT_MESSAGES.passwordNoDigit],
+      ['without an uppercase letter', 'qwerty1!', REGISTER_INPUT_MESSAGES.passwordNoUppercase],
+      ['without a special character', 'Qwerty12', REGISTER_INPUT_MESSAGES.passwordNoSpecial],
     ])('rejects a password %s', (_case, password, message) => {
       expectRejected({ ...valid, password }, 'password', message);
     });
@@ -76,13 +84,21 @@ describe('parseRegisterInput', () => {
     it.each(['0501234567', '+0501234567', '+380 50 123 45 67', '+3805', '+3805012345678901'])(
       'rejects %j',
       (phone) => {
-        expectRejected({ ...valid, phone }, 'phone', m.phoneInvalid);
+        expectRejected({ ...valid, phone }, 'phone', REGISTER_INPUT_MESSAGES.phoneInvalid);
       },
     );
   });
 
   it('reports only the first broken rule, in field order', () => {
-    expectRejected({ email: 'nope', password: 'short', phone: '050' }, 'email', m.emailInvalid);
-    expectRejected({ ...valid, password: 'short' }, 'password', m.passwordTooShort);
+    expectRejected(
+      { email: 'nope', password: 'short', phone: '050' },
+      'email',
+      REGISTER_INPUT_MESSAGES.emailInvalid,
+    );
+    expectRejected(
+      { ...valid, password: 'short' },
+      'password',
+      REGISTER_INPUT_MESSAGES.passwordTooShort,
+    );
   });
 });
