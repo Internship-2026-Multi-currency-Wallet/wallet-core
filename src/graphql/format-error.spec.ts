@@ -1,5 +1,5 @@
 import { UnauthorizedException } from '@nestjs/common';
-import { GraphQLError } from 'graphql';
+import { GraphQLError, buildSchema, graphqlSync } from 'graphql';
 import { formatError } from './format-error.js';
 
 /** What Apollo does with an error thrown in a resolver: wraps it with the path. */
@@ -47,5 +47,21 @@ describe('formatError', () => {
     });
     const formatted = error.toJSON();
     expect(formatError(formatted, error)).toBe(formatted);
+  });
+
+  it('hides a GraphQLError without a code, e.g. a value GraphQL could not serialize', () => {
+    const schema = buildSchema('type Query { me: String }');
+    const leaked = { email: 'artem@test.com', password_hash: '$argon2id$...' };
+    const result = graphqlSync({ schema, source: '{ me }', rootValue: { me: () => leaked } });
+    const [error] = result.errors ?? [];
+    expect(error.message).toContain('artem@test.com');
+
+    const formatted = { ...error.toJSON(), extensions: { code: 'INTERNAL_SERVER_ERROR' } };
+    expect(formatError(formatted, error)).toEqual({
+      message: 'Internal server error',
+      locations: error.locations,
+      path: ['me'],
+      extensions: { code: 'INTERNAL_SERVER_ERROR' },
+    });
   });
 });
