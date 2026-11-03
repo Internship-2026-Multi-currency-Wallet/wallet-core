@@ -4,6 +4,7 @@ import { AuthPayload } from './auth-payload.model.js';
 import { LoginInput } from './login.input.js';
 import { Public } from './public.decorator.js';
 import { RegisterInput } from './register.input.js';
+import { User } from './user.model.js';
 
 /**
  * Registration, login and sessions. Contract only: every mutation throws until it is implemented.
@@ -12,11 +13,11 @@ import { RegisterInput } from './register.input.js';
 @Resolver()
 export class AuthResolver {
   @Public()
-  @Mutation(() => AuthPayload, {
+  @Mutation(() => User, {
     description:
-      'Creates an account and logs in (sets the refresh token cookie). Errors: BAD_USER_INPUT, EMAIL_ALREADY_REGISTERED.',
+      'Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT, EMAIL_ALREADY_REGISTERED.',
   })
-  register(@Args('input') _input: RegisterInput): AuthPayload {
+  register(@Args('input') _input: RegisterInput): User {
     throw new NotImplementedException('register is not implemented yet');
   }
 

@@ -3,7 +3,7 @@
 # ------------------------------------------------------
 
 """
-Result of register, login and refreshSession. The refresh token is not here: it is set as an httpOnly cookie.
+Result of login and refreshSession. The refresh token is not here: it is set as an httpOnly cookie.
 """
 type AuthPayload {
   """Short-lived JWT. Send it as "Authorization: Bearer <token>"."""
@@ -80,9 +80,9 @@ type Mutation {
   refreshSession: AuthPayload!
 
   """
-  Creates an account and logs in (sets the refresh token cookie). Errors: BAD_USER_INPUT, EMAIL_ALREADY_REGISTERED.
+  Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT, EMAIL_ALREADY_REGISTERED.
   """
-  register(input: RegisterInput!): AuthPayload!
+  register(input: RegisterInput!): User!
 
   """
   Removes the override so the default applies again; recorded in history. Requires bo:settings:modify. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY.
