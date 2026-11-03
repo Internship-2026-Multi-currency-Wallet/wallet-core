@@ -11,6 +11,8 @@ export function createKnex(databaseUrl: string): Knex {
     client: 'mysql2',
     connection: databaseUrl,
     pool: { min: 0, max: 10 },
+    // Error messages carry the SQL with `?`, not the values (emails, password hashes) that went into it.
+    compileSqlOnError: false,
   });
 }
 
