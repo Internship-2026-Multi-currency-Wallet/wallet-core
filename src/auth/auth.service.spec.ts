@@ -5,7 +5,7 @@ import type { PinoLogger } from 'nestjs-pino';
 import type { ClientSettingsService } from '../settings/client-settings.service.js';
 import { type ClientSettings, settingsCatalog } from '../settings/settings.schema.js';
 import { AuthService } from './auth.service.js';
-import type { InsertUserResult, NewUser, UsersRepository } from './users.repository.js';
+import { InsertUserResult, type NewUser, type UsersRepository } from './users.repository.js';
 
 const PASSWORD = 'Qwerty1!';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -16,7 +16,9 @@ const PHONE_REQUIRED_AT: readonly PhoneRequiredAt[] =
 
 function setup(options: { insert?: InsertUserResult; phoneRequiredAt?: PhoneRequiredAt } = {}) {
   const users = {
-    insert: jest.fn((_user: NewUser) => Promise.resolve(options.insert ?? 'created')),
+    insert: jest.fn((_user: NewUser) =>
+      Promise.resolve(options.insert ?? InsertUserResult.Created),
+    ),
   };
   const settings = {
     get: jest.fn((_key: string) => Promise.resolve(options.phoneRequiredAt ?? 'never')),
@@ -121,7 +123,7 @@ describe('AuthService.register', () => {
   );
 
   it('answers EMAIL_ALREADY_REGISTERED for a taken email', async () => {
-    const { service } = setup({ insert: 'emailTaken' });
+    const { service } = setup({ insert: InsertUserResult.EmailTaken });
     const error = await graphqlErrorOf(
       service.register({ email: 'artem@test.com', password: PASSWORD }),
     );
@@ -138,7 +140,7 @@ describe('AuthService.register', () => {
   });
 
   it('logs neither the password nor the email', async () => {
-    for (const insert of ['created', 'emailTaken'] as const) {
+    for (const insert of Object.values(InsertUserResult)) {
       const { service, logger } = setup({ insert });
       await service.register({ email: 'artem@test.com', password: PASSWORD }).catch(() => {});
       const logged = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls]);
