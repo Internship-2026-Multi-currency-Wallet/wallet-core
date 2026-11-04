@@ -64,6 +64,20 @@ describe('validateEnv: JWT', () => {
     expect(() => validateEnv({ JWT_ACCESS_TTL: ttl })).toThrow(/JWT_ACCESS_TTL/);
   });
 
+  it('accepts a TTL of up to 365 days', () => {
+    expect(validateEnv({ JWT_REFRESH_TTL: '365d' }).JWT_REFRESH_TTL).toBe(31_536_000);
+    expect(validateEnv({ JWT_REFRESH_TTL: '8760h' }).JWT_REFRESH_TTL).toBe(31_536_000);
+  });
+
+  it.each(['366d', '31536001s', '9999999d', `${'9'.repeat(309)}s`])(
+    'rejects the TTL %p as longer than 365 days',
+    (ttl) => {
+      expect(() => validateEnv({ JWT_REFRESH_TTL: ttl })).toThrow(
+        /JWT_REFRESH_TTL: must be at most 365d/,
+      );
+    },
+  );
+
   it('refuses a JWT_SECRET shorter than 32 characters', () => {
     expect(() => validateEnv({ JWT_SECRET: 'x'.repeat(31) })).toThrow(
       /JWT_SECRET: must be at least 32 characters/,
