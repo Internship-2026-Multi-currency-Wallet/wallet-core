@@ -1,19 +1,10 @@
-/**
- * Staff permissions and roles: the only place they are defined. Documented in the README ("Staff roles").
- *
- * Only permissions that guard an endpoint today are listed. A new back-office feature adds its
- * permissions here (`bo:<area>` to view, `bo:<area>:modify` to change) and extends the roles below.
- */
+/** Staff permissions and roles (README, "Staff roles"). Add a permission only with its endpoint, and update the roles below. */
 export const PERMISSIONS = [
-  /** Every staff member: staffMe, changeOwnStaffPassword. Never given to users. */
+  /** Base permission of every staff member. Never given to users. */
   'bo',
-  /** staffMembers */
   'bo:staff',
-  /** inviteStaff, resendStaffInvitation, deactivateStaff, changeStaffRole */
   'bo:staff:modify',
-  /** staffSettings, settingHistory */
   'bo:settings',
-  /** updateSetting, resetSetting */
   'bo:settings:modify',
 ] as const;
 
