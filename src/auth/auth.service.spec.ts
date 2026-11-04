@@ -37,8 +37,6 @@ interface SetupOptions {
   lockedMeanwhile?: Date | null;
   /** What sessions.rotate answers. */
   rotated?: ActiveSession | null;
-  /** What findById answers. */
-  userById?: User | null;
 }
 
 const config = AppConfig.fromEnv({});
@@ -49,7 +47,6 @@ function setup(options: SetupOptions = {}) {
       Promise.resolve(options.insert ?? InsertUserResult.Created),
     ),
     findByEmail: jest.fn((_email: string) => Promise.resolve(options.credentials ?? null)),
-    findById: jest.fn((_id: string) => Promise.resolve(options.userById ?? null)),
     recordFailedLogin: jest.fn((_userId: string, _policy: LoginLockPolicy) =>
       Promise.resolve(options.lockedUntil ?? null),
     ),
@@ -360,8 +357,7 @@ describe('AuthService.refreshSession', () => {
 
   it('rotates the refresh token and keeps the session end', async () => {
     const { service, sessions } = setup({
-      rotated: { userId: user.id, expiresAt: SESSION_END },
-      userById: user,
+      rotated: { user, expiresAt: SESSION_END },
     });
     const result = await service.refreshSession('old-token', NOW);
 
@@ -379,7 +375,6 @@ describe('AuthService.refreshSession', () => {
   it.each([
     ['no cookie', undefined, {}],
     ['no active session with the token', 'old-token', { rotated: null }],
-    ['a deleted user', 'old-token', { rotated: { userId: user.id, expiresAt: SESSION_END } }],
   ])('answers INVALID_REFRESH_TOKEN for %s', async (_case, token, options: SetupOptions) => {
     const { service } = setup(options);
     const error = await graphqlErrorOf(service.refreshSession(token, NOW));

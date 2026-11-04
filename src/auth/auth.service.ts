@@ -134,15 +134,13 @@ export class AuthService {
     if (!refreshToken) throw invalidRefreshToken();
     const next = newRefreshToken();
     const session = await this.sessions.rotate(hashRefreshToken(refreshToken), next.hash, now);
-    // A deleted user has no sessions (ON DELETE CASCADE), so a missing user means the same.
-    const user = session && (await this.users.findById(session.userId));
-    if (!session || !user) {
+    if (!session) {
       this.logger.warn('session refresh rejected');
       throw invalidRefreshToken();
     }
 
-    this.logger.info({ userId: user.id }, 'session refreshed');
-    return this.result(user, next.token, { sessionExpiresAt: session.expiresAt, now });
+    this.logger.info({ userId: session.user.id }, 'session refreshed');
+    return this.result(session.user, next.token, { sessionExpiresAt: session.expiresAt, now });
   }
 
   async logout(refreshToken: string | undefined, now: Date = new Date()): Promise<void> {

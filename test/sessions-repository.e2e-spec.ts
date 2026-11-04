@@ -86,7 +86,7 @@ describe('SessionsRepository (e2e, real MySQL)', () => {
     it('swaps the token hash of an active session and returns the session', async () => {
       await repo.create(session());
       await expect(repo.rotate(OLD, NEW, NOW)).resolves.toEqual({
-        userId: USER_ID,
+        user: { id: USER_ID, email: 'artem@test.com', phone: null },
         expiresAt: new Date('2026-12-04T10:00:00.000Z'),
       });
       await expect(hashes()).resolves.toEqual([NEW]);
