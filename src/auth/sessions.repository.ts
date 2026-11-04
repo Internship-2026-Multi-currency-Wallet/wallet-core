@@ -41,9 +41,8 @@ export class SessionsRepository {
     });
   }
 
-  // The lookup and replacement must hold the same row lock so concurrent refreshes cannot both
-  // consume one token. The user is read in the same transaction: if that fails, the swap rolls
-  // back and the client can retry with its token instead of losing the session.
+  // Lock rotation and read the user atomically so concurrent refreshes cannot reuse a token and
+  // lookup failures preserve it.
   async rotate(
     refreshTokenHash: string,
     newRefreshTokenHash: string,
