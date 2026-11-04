@@ -1,11 +1,22 @@
 import { jest } from '@jest/globals';
-import { verify } from '@node-rs/argon2';
+import { JwtService } from '@nestjs/jwt';
+import { hash, verify } from '@node-rs/argon2';
 import { GraphQLError } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
+import { AppConfig } from '../config/app-config.js';
 import type { ClientSettingsService } from '../settings/client-settings.service.js';
 import { type ClientSettings, settingsCatalog } from '../settings/settings.schema.js';
+import { accessTokenPayloadSchema } from './access-token.js';
 import { AuthService } from './auth.service.js';
-import { InsertUserResult, type NewUser, type UsersRepository } from './users.repository.js';
+import type { NewSession, SessionsRepository } from './sessions.repository.js';
+import { TokenService, hashRefreshToken } from './tokens.js';
+import {
+  InsertUserResult,
+  type LoginLockPolicy,
+  type NewUser,
+  type UserCredentials,
+  type UsersRepository,
+} from './users.repository.js';
 
 const PASSWORD = 'Qwerty1!';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -14,22 +25,42 @@ type PhoneRequiredAt = ClientSettings['auth.phoneRequiredAt'];
 const PHONE_REQUIRED_AT: readonly PhoneRequiredAt[] =
   settingsCatalog['auth.phoneRequiredAt'].schema.options;
 
-function setup(options: { insert?: InsertUserResult; phoneRequiredAt?: PhoneRequiredAt } = {}) {
+interface SetupOptions {
+  insert?: InsertUserResult;
+  phoneRequiredAt?: PhoneRequiredAt;
+  /** What findByEmail answers. */
+  credentials?: UserCredentials | null;
+  /** What recordFailedLogin answers. */
+  lockedUntil?: Date | null;
+}
+
+const config = AppConfig.fromEnv({});
+
+function setup(options: SetupOptions = {}) {
   const users = {
     insert: jest.fn((_user: NewUser) =>
       Promise.resolve(options.insert ?? InsertUserResult.Created),
     ),
+    findByEmail: jest.fn((_email: string) => Promise.resolve(options.credentials ?? null)),
+    recordFailedLogin: jest.fn((_userId: string, _policy: LoginLockPolicy) =>
+      Promise.resolve(options.lockedUntil ?? null),
+    ),
+    resetFailedLogins: jest.fn((_userId: string, _now: Date) => Promise.resolve()),
   };
+  const sessions = { create: jest.fn((_session: NewSession) => Promise.resolve()) };
   const settings = {
     get: jest.fn((_key: string) => Promise.resolve(options.phoneRequiredAt ?? 'never')),
   };
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const service = new AuthService(
     users as unknown as UsersRepository,
+    sessions as unknown as SessionsRepository,
+    new TokenService(new JwtService(), config),
     settings as unknown as ClientSettingsService,
+    config,
     logger as unknown as PinoLogger,
   );
-  return { service, users, settings, logger };
+  return { service, users, sessions, settings, logger };
 }
 
 function inserted(users: ReturnType<typeof setup>['users']): NewUser {
@@ -145,6 +176,134 @@ describe('AuthService.register', () => {
       const logged = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls]);
       expect(logged).not.toContain(PASSWORD);
       expect(logged).not.toContain('artem@test.com');
+    }
+  });
+});
+
+describe('AuthService.login', () => {
+  const USER_ID = '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b';
+  const NOW = new Date('2026-11-04T10:00:00.000Z');
+  const LOCKED_UNTIL = new Date('2026-11-04T10:15:00.000Z');
+  let credentials: UserCredentials;
+
+  beforeAll(async () => {
+    credentials = {
+      id: USER_ID,
+      email: 'artem@test.com',
+      phone: null,
+      passwordHash: await hash(PASSWORD),
+      lockedUntil: null,
+    };
+  });
+
+  const login = (service: AuthService, password = PASSWORD, email = 'artem@test.com') =>
+    service.login({ email, password }, NOW);
+
+  it('creates a session and returns an access token for the user', async () => {
+    const { service, users, sessions } = setup({ credentials });
+    const result = await login(service, PASSWORD, '  Artem@Test.com ');
+
+    expect(users.findByEmail).toHaveBeenCalledWith('artem@test.com');
+    expect(users.resetFailedLogins).toHaveBeenCalledWith(USER_ID, NOW);
+    expect(result.payload.user).toEqual({ id: USER_ID, email: 'artem@test.com', phone: null });
+    expect(result.payload.accessTokenExpiresAt).toEqual(new Date('2026-11-04T10:15:00.000Z'));
+    expect(result.sessionExpiresAt).toEqual(new Date('2026-12-04T10:00:00.000Z'));
+    expect(sessions.create).toHaveBeenCalledWith({
+      id: expect.stringMatching(UUID),
+      userId: USER_ID,
+      refreshTokenHash: hashRefreshToken(result.refreshToken),
+      expiresAt: result.sessionExpiresAt,
+      createdAt: NOW,
+    });
+
+    const claims: unknown = new JwtService().verify(result.payload.accessToken, {
+      secret: config.jwt.secret,
+      algorithms: ['HS256'],
+      issuer: 'wallet-core',
+      ignoreExpiration: true,
+    });
+    expect(accessTokenPayloadSchema.parse(claims)).toMatchObject({
+      sub: USER_ID,
+      permissions: ['wallet'],
+    });
+  });
+
+  it('answers INVALID_CREDENTIALS for an unknown email', async () => {
+    const { service, users, sessions } = setup({ credentials: null });
+    const error = await graphqlErrorOf(login(service));
+    expect(error.message).toBe('Invalid email or password');
+    expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+    expect(users.recordFailedLogin).not.toHaveBeenCalled();
+    expect(sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('answers INVALID_CREDENTIALS for a too long password without looking up the user', async () => {
+    const { service, users } = setup({ credentials });
+    const error = await graphqlErrorOf(login(service, `${PASSWORD}${'x'.repeat(121)}`));
+    expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+    expect(users.findByEmail).not.toHaveBeenCalled();
+  });
+
+  it('counts a wrong password and answers INVALID_CREDENTIALS', async () => {
+    const { service, users, sessions } = setup({ credentials, lockedUntil: null });
+    const error = await graphqlErrorOf(login(service, 'Wrong1!pass'));
+
+    expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+    expect(users.recordFailedLogin).toHaveBeenCalledWith(USER_ID, {
+      now: NOW,
+      maxFailedAttempts: 5,
+      lockUntil: LOCKED_UNTIL,
+    });
+    expect(users.resetFailedLogins).not.toHaveBeenCalled();
+    expect(sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('answers ACCOUNT_LOCKED when the wrong password locks the account', async () => {
+    const { service } = setup({ credentials, lockedUntil: LOCKED_UNTIL });
+    const error = await graphqlErrorOf(login(service, 'Wrong1!pass'));
+    expect(error.message).toBe('Account is locked until 2026-11-04T10:15:00.000Z');
+    expect(error.extensions).toEqual({
+      code: 'ACCOUNT_LOCKED',
+      lockedUntil: '2026-11-04T10:15:00.000Z',
+    });
+  });
+
+  it('answers ACCOUNT_LOCKED while locked, even for the right password, without counting', async () => {
+    const { service, users, sessions } = setup({
+      credentials: { ...credentials, lockedUntil: LOCKED_UNTIL },
+    });
+    const error = await graphqlErrorOf(login(service));
+    expect(error.extensions).toEqual({
+      code: 'ACCOUNT_LOCKED',
+      lockedUntil: '2026-11-04T10:15:00.000Z',
+    });
+    expect(users.recordFailedLogin).not.toHaveBeenCalled();
+    expect(sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('logs in once the lock has expired', async () => {
+    const { service } = setup({
+      credentials: { ...credentials, lockedUntil: new Date('2026-11-04T09:59:59.999Z') },
+    });
+    await expect(login(service)).resolves.toMatchObject({ payload: { user: { id: USER_ID } } });
+  });
+
+  it('logs neither the password, the email nor a token', async () => {
+    for (const options of [
+      { credentials },
+      { credentials: null },
+      { credentials, lockedUntil: LOCKED_UNTIL },
+    ]) {
+      const { service, logger } = setup(options);
+      const result = await login(service).catch(() => undefined);
+      await login(service, 'Wrong1!pass').catch(() => undefined);
+      const logged = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls]);
+      expect(logged).not.toContain(PASSWORD);
+      expect(logged).not.toContain('artem@test.com');
+      if (result) {
+        expect(logged).not.toContain(result.refreshToken);
+        expect(logged).not.toContain(result.payload.accessToken);
+      }
     }
   });
 });

@@ -1,15 +1,23 @@
 import { NotImplementedException } from '@nestjs/common';
-import { Args, Mutation, Resolver } from '@nestjs/graphql';
+import { Args, Context, Mutation, Resolver } from '@nestjs/graphql';
+import type { Response } from 'express';
+import { GraphQLError } from 'graphql';
+import { AppConfig } from '../config/app-config.js';
+import type { GraphqlContext } from '../graphql/graphql.config.js';
 import { AuthPayload } from './auth-payload.model.js';
 import { LoginInput } from './login.input.js';
 import { Public } from './public.decorator.js';
+import { REFRESH_TOKEN_COOKIE, refreshTokenCookieOptions } from './refresh-token-cookie.js';
 import { RegisterInput } from './register.input.js';
 import { User } from './user.model.js';
 import { AuthService } from './auth.service.js';
 
 @Resolver()
 export class AuthResolver {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly config: AppConfig,
+  ) {}
 
   @Public()
   @Mutation(() => User, {
@@ -25,8 +33,18 @@ export class AuthResolver {
     description:
       'Logs in with email and password (sets the refresh token cookie). Errors: INVALID_CREDENTIALS, ACCOUNT_LOCKED (extensions.lockedUntil).',
   })
-  login(@Args('input') _input: LoginInput): AuthPayload {
-    throw new NotImplementedException('login is not implemented yet');
+  async login(
+    @Args('input') input: LoginInput,
+    @Context() context: GraphqlContext,
+  ): Promise<AuthPayload> {
+    const res = httpResponseOf(context);
+    const result = await this.auth.login(input);
+    res.cookie(
+      REFRESH_TOKEN_COOKIE,
+      result.refreshToken,
+      refreshTokenCookieOptions(this.config.isProduction, result.sessionExpiresAt),
+    );
+    return result.payload;
   }
 
   @Public()
@@ -46,4 +64,14 @@ export class AuthResolver {
   logout(): boolean {
     throw new NotImplementedException('logout is not implemented yet');
   }
+}
+
+// A websocket has no response to carry the cookie, so the session would be lost.
+function httpResponseOf(context: GraphqlContext): Response {
+  if (!context.res) {
+    throw new GraphQLError('Use HTTP for this operation, not the websocket', {
+      extensions: { code: 'BAD_REQUEST' },
+    });
+  }
+  return context.res;
 }
