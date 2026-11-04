@@ -23,6 +23,30 @@ export const InsertUserResult = {
 
 export type InsertUserResult = (typeof InsertUserResult)[keyof typeof InsertUserResult];
 
+export interface UserCredentials {
+  id: string;
+  email: string;
+  phone: string | null;
+  passwordHash: string;
+  lockedUntil: Date | null;
+}
+
+export interface LoginLockPolicy {
+  now: Date;
+  /** The failure that reaches this count locks the account. */
+  maxFailedAttempts: number;
+  lockUntil: Date;
+}
+
+interface UserRow {
+  id: string;
+  email: string;
+  phone: string | null;
+  password_hash: string;
+  failed_login_attempts: number;
+  locked_until: Date | null;
+}
+
 @Injectable()
 export class UsersRepository {
   constructor(@Inject(KNEX) private readonly db: Knex) {}
@@ -42,5 +66,56 @@ export class UsersRepository {
       if (isUniqueViolation(error, EMAIL_UNIQUE)) return InsertUserResult.EmailTaken;
       throw error;
     }
+  }
+
+  async findByEmail(email: string): Promise<UserCredentials | null> {
+    const row = await this.db<UserRow>(USERS)
+      .where({ email })
+      .first('id', 'email', 'phone', 'password_hash', 'locked_until');
+    if (!row) return null;
+    return {
+      id: row.id,
+      email: row.email,
+      phone: row.phone,
+      passwordHash: row.password_hash,
+      lockedUntil: row.locked_until,
+    };
+  }
+
+  /**
+   * Counts a wrong password and returns until when the account is locked (null = not locked).
+   * The row is locked for the whole read-and-write, so parallel failures are all counted.
+   * A failure while the account is locked is not counted and does not extend the lock.
+   */
+  async recordFailedLogin(userId: string, policy: LoginLockPolicy): Promise<Date | null> {
+    return this.db.transaction(async (trx) => {
+      const row = await trx<UserRow>(USERS)
+        .where({ id: userId })
+        .forUpdate()
+        .first('failed_login_attempts', 'locked_until');
+      if (!row) return null;
+      if (row.locked_until && row.locked_until > policy.now) return row.locked_until;
+
+      const attempts = row.failed_login_attempts + 1;
+      const locks = attempts >= policy.maxFailedAttempts;
+      await trx(USERS)
+        .where({ id: userId })
+        .update({
+          // Counting starts again after the lock.
+          failed_login_attempts: locks ? 0 : attempts,
+          locked_until: locks ? policy.lockUntil : null,
+          updated_at: policy.now,
+        });
+      return locks ? policy.lockUntil : null;
+    });
+  }
+
+  async resetFailedLogins(userId: string, now: Date): Promise<void> {
+    await this.db(USERS)
+      .where({ id: userId })
+      .andWhere((query) => {
+        void query.where('failed_login_attempts', '>', 0).orWhereNotNull('locked_until');
+      })
+      .update({ failed_login_attempts: 0, locked_until: null, updated_at: now });
   }
 }

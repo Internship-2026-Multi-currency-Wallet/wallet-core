@@ -71,4 +71,116 @@ describe('UsersRepository (e2e, real MySQL)', () => {
       code: 'ER_DUP_ENTRY',
     });
   });
+
+  describe('findByEmail', () => {
+    it('returns the credentials of a user', async () => {
+      await repo.insert(user());
+      await expect(repo.findByEmail('artem@test.com')).resolves.toEqual({
+        id: '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b',
+        email: 'artem@test.com',
+        phone: '+380501234567',
+        passwordHash: '$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA',
+        lockedUntil: null,
+      });
+    });
+
+    it('returns null for an unknown email', async () => {
+      await repo.insert(user());
+      await expect(repo.findByEmail('other@test.com')).resolves.toBeNull();
+    });
+  });
+
+  describe('recordFailedLogin', () => {
+    const ID = '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b';
+    const NOW = new Date('2026-11-04T10:00:00.000Z');
+    const LOCK_UNTIL = new Date('2026-11-04T10:15:00.000Z');
+    const policy = { now: NOW, maxFailedAttempts: 5, lockUntil: LOCK_UNTIL };
+
+    const state = () =>
+      db('users').where({ id: ID }).first('failed_login_attempts', 'locked_until', 'updated_at');
+
+    it('counts failures and locks the account on the fifth one', async () => {
+      await repo.insert(user());
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        await expect(repo.recordFailedLogin(ID, policy)).resolves.toBeNull();
+      }
+      await expect(state()).resolves.toEqual({
+        failed_login_attempts: 4,
+        locked_until: null,
+        updated_at: NOW,
+      });
+
+      await expect(repo.recordFailedLogin(ID, policy)).resolves.toEqual(LOCK_UNTIL);
+      await expect(state()).resolves.toMatchObject({
+        failed_login_attempts: 0,
+        locked_until: LOCK_UNTIL,
+      });
+    });
+
+    it('neither counts nor extends while the account is locked', async () => {
+      await repo.insert(user());
+      await db('users').where({ id: ID }).update({ locked_until: LOCK_UNTIL });
+      const later = { ...policy, now: new Date('2026-11-04T10:05:00.000Z') };
+      const extended = { ...later, lockUntil: new Date('2026-11-04T10:20:00.000Z') };
+
+      await expect(repo.recordFailedLogin(ID, extended)).resolves.toEqual(LOCK_UNTIL);
+      await expect(state()).resolves.toMatchObject({
+        failed_login_attempts: 0,
+        locked_until: LOCK_UNTIL,
+      });
+    });
+
+    it('starts counting again once the lock has expired', async () => {
+      await repo.insert(user());
+      await db('users').where({ id: ID }).update({ locked_until: LOCK_UNTIL });
+      const afterLock = { ...policy, now: new Date('2026-11-04T10:16:00.000Z') };
+
+      await expect(repo.recordFailedLogin(ID, afterLock)).resolves.toBeNull();
+      await expect(state()).resolves.toMatchObject({
+        failed_login_attempts: 1,
+        locked_until: null,
+      });
+    });
+
+    it('counts parallel failures one by one and locks exactly once', async () => {
+      await repo.insert(user());
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () => repo.recordFailedLogin(ID, policy)),
+      );
+      expect(results.filter((lockedUntil) => lockedUntil !== null)).toEqual([LOCK_UNTIL]);
+      await expect(state()).resolves.toMatchObject({
+        failed_login_attempts: 0,
+        locked_until: LOCK_UNTIL,
+      });
+    });
+
+    it('returns null for an unknown user', async () => {
+      await expect(repo.recordFailedLogin(ID, policy)).resolves.toBeNull();
+    });
+  });
+
+  describe('resetFailedLogins', () => {
+    const ID = '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b';
+    const NOW = new Date('2026-11-04T10:30:00.000Z');
+
+    it('clears the counter and the lock', async () => {
+      await repo.insert(user());
+      await db('users')
+        .where({ id: ID })
+        .update({ failed_login_attempts: 3, locked_until: new Date('2026-11-04T10:15:00.000Z') });
+
+      await repo.resetFailedLogins(ID, NOW);
+      await expect(
+        db('users').where({ id: ID }).first('failed_login_attempts', 'locked_until', 'updated_at'),
+      ).resolves.toEqual({ failed_login_attempts: 0, locked_until: null, updated_at: NOW });
+    });
+
+    it('does not write when there is nothing to reset', async () => {
+      await repo.insert(user());
+      await repo.resetFailedLogins(ID, NOW);
+      await expect(db('users').where({ id: ID }).first('updated_at')).resolves.toEqual({
+        updated_at: new Date('2026-11-03T10:00:00.123Z'),
+      });
+    });
+  });
 });
