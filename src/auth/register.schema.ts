@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { AuthErrorCode, authError } from './auth-errors.js';
 
-/** Messages of the register validation rules (`BAD_USER_INPUT`), kept in one place. */
 export const REGISTER_INPUT_MESSAGES = {
   emailInvalid: 'Email must be a valid email address',
   emailTooLong: 'Email must be at most 255 characters',
@@ -15,11 +14,8 @@ export const REGISTER_INPUT_MESSAGES = {
   phoneRequired: 'Phone is required',
 } as const;
 
-/**
- * Rules of `RegisterInput` (see the contract). The email is trimmed and lower-cased, so it is
- * stored and compared in one form. Unknown keys are dropped.
- */
 export const registerInputSchema = z.object({
+  // Trimmed and lower-cased so an email is stored and compared in one form.
   // 255 = the users.email column.
   email: z
     .string()
@@ -35,7 +31,6 @@ export const registerInputSchema = z.object({
     .max(128, REGISTER_INPUT_MESSAGES.passwordTooLong)
     .regex(/\d/, REGISTER_INPUT_MESSAGES.passwordNoDigit)
     .regex(/\p{Lu}/u, REGISTER_INPUT_MESSAGES.passwordNoUppercase)
-    // "Special" = anything that is not a letter or a digit.
     .regex(/[^\p{L}\p{N}]/u, REGISTER_INPUT_MESSAGES.passwordNoSpecial),
   // E.164: "+", then 7–15 digits, the first one not 0 (7 = the shortest plans, e.g. Niue).
   phone: z
@@ -46,7 +41,6 @@ export const registerInputSchema = z.object({
 
 export type RegisterData = z.infer<typeof registerInputSchema>;
 
-/** Validates register input; the first broken rule → `BAD_USER_INPUT` with its `field`. */
 export function parseRegisterInput(input: unknown): RegisterData {
   const result = registerInputSchema.safeParse(input);
   if (result.success) return result.data;

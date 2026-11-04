@@ -32,7 +32,6 @@ function setup(options: { insert?: InsertUserResult; phoneRequiredAt?: PhoneRequ
   return { service, users, settings, logger };
 }
 
-/** The row the service handed to the repository. */
 function inserted(users: ReturnType<typeof setup>['users']): NewUser {
   expect(users.insert).toHaveBeenCalledTimes(1);
   return users.insert.mock.calls[0][0];
