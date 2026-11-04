@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LogLevel } from '../logging/logger.options.js';
-import { type AppEnv, type ClientCode, type Env, validateEnv } from './env.schema.js';
+import {
+  type AppEnv,
+  type ClientCode,
+  type Env,
+  LOCAL_JWT_SECRET,
+  validateEnv,
+} from './env.schema.js';
 
 export const SERVICE_NAME = 'wallet-core';
 
@@ -37,10 +43,9 @@ export class AppConfig {
   readonly logLevel: LogLevel;
   readonly jwt: {
     issuer: string;
-    publicKey?: string;
-    privateKey?: string;
-    accessTtl: string;
-    refreshTtl: string;
+    secret: string;
+    accessTtlSeconds: number;
+    sessionTtlSeconds: number;
   };
 
   constructor(env: Env) {
@@ -58,10 +63,9 @@ export class AppConfig {
       .filter(Boolean);
     this.jwt = {
       issuer: env.JWT_ISSUER,
-      publicKey: env.JWT_PUBLIC_KEY,
-      privateKey: env.JWT_PRIVATE_KEY,
-      accessTtl: env.JWT_ACCESS_TTL,
-      refreshTtl: env.JWT_REFRESH_TTL,
+      secret: env.JWT_SECRET ?? LOCAL_JWT_SECRET,
+      accessTtlSeconds: env.JWT_ACCESS_TTL,
+      sessionTtlSeconds: env.JWT_REFRESH_TTL,
     };
   }
 

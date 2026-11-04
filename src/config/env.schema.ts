@@ -23,6 +23,26 @@ const booleanFromString = z
   .transform((value) => value === 'true' || value === '1');
 
 /**
+ * Lets the service start locally and in tests without a `.env`. Same value as in rates-service's
+ * `.env.example`, so local tokens work across services. Refused in production.
+ */
+export const LOCAL_JWT_SECRET = 'local-only-jwt-secret-change-me-0123456789';
+
+const SECONDS_PER_UNIT = { s: 1, m: 60, h: 3600, d: 86400 } as const;
+type DurationUnit = keyof typeof SECONDS_PER_UNIT;
+
+function durationInSeconds(defaultValue: `${number}${DurationUnit}`) {
+  return z
+    .string()
+    .regex(/^[1-9]\d*[smhd]$/, 'must be a positive number followed by s, m, h or d, e.g. 15m')
+    .default(defaultValue)
+    .transform((value) => {
+      const unit = value.slice(-1) as DurationUnit;
+      return Number(value.slice(0, -1)) * SECONDS_PER_UNIT[unit];
+    });
+}
+
+/**
  * Environment variables of the service. Validated once at startup:
  * a missing or invalid value stops the process with a clear message.
  * Keep `.env.example` in sync with this schema.
@@ -39,14 +59,30 @@ export const envSchema = z
     CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174'),
     APP_VERSION: z.string().optional(),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
-    // Placeholders for the real JWT strategy (not used yet).
-    JWT_ISSUER: z.string().default('wallet-core'),
-    JWT_PUBLIC_KEY: z.string().optional(),
-    JWT_PRIVATE_KEY: z.string().optional(),
-    JWT_ACCESS_TTL: z.string().default('15m'),
-    JWT_REFRESH_TTL: z.string().default('30d'),
+    JWT_ISSUER: z.string().min(1).default('wallet-core'),
+    // Shared with rates-service and treasury-service, which verify the tokens with it (HS256).
+    JWT_SECRET: z.string().min(32, 'must be at least 32 characters').optional(),
+    JWT_ACCESS_TTL: durationInSeconds('15m'),
+    // Lifetime of a session (refresh token), counted from login.
+    JWT_REFRESH_TTL: durationInSeconds('30d'),
   })
   .superRefine((env, ctx) => {
+    // Every deployed image runs with NODE_ENV=production, so a server cannot fall back to the
+    // public local secret.
+    if (env.NODE_ENV === 'production' && env.JWT_SECRET === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['JWT_SECRET'],
+        message: 'is required in production (the HS256 secret shared with the other services)',
+      });
+    }
+    if (env.NODE_ENV === 'production' && env.JWT_SECRET === LOCAL_JWT_SECRET) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['JWT_SECRET'],
+        message: 'must not be the local-only secret in production',
+      });
+    }
     if (env.DEV_AUTH && !isDevAuthAllowed(env.APP_ENV)) {
       ctx.addIssue({
         code: 'custom',
