@@ -22,7 +22,6 @@ import { PermissionGuard } from '../permissions/permission.guard.js';
  * `@CurrentUser()`, `@Public()` and `@RequirePermission()` unchanged.
  */
 @Module({
-  // The secret is passed on every call, from AppConfig.
   imports: [JwtModule.register({})],
   providers: [
     DevAuthStrategy,
