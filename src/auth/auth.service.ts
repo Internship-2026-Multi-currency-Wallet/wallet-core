@@ -7,7 +7,7 @@ import { AUTH_ERROR_MESSAGES, AuthErrorCode, authError } from './auth-errors.js'
 import { REGISTER_INPUT_MESSAGES, parseRegisterInput } from './register.schema.js';
 import type { RegisterInput } from './register.input.js';
 import type { User } from './user.model.js';
-import { UsersRepository } from './users.repository.js';
+import { InsertUserResult, UsersRepository } from './users.repository.js';
 
 /** Registration, login and sessions. The password is only ever hashed, never stored or logged. */
 @Injectable()
@@ -37,7 +37,7 @@ export class AuthService {
       passwordHash: await hash(data.password),
       createdAt: new Date(),
     });
-    if (result === 'emailTaken') {
+    if (result === InsertUserResult.EmailTaken) {
       // No email in the log: it is personal data.
       this.logger.warn('registration rejected: email already registered');
       throw authError(

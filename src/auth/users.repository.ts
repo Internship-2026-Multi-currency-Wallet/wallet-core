@@ -18,7 +18,12 @@ export interface NewUser {
   createdAt: Date;
 }
 
-export type InsertUserResult = 'created' | 'emailTaken';
+export const InsertUserResult = {
+  Created: 'created',
+  EmailTaken: 'emailTaken',
+} as const;
+
+export type InsertUserResult = (typeof InsertUserResult)[keyof typeof InsertUserResult];
 
 /**
  * Storage of user accounts. Knows the table and its constraints; API errors are the service's job.
@@ -41,9 +46,9 @@ export class UsersRepository {
         created_at: user.createdAt,
         updated_at: user.createdAt,
       });
-      return 'created';
+      return InsertUserResult.Created;
     } catch (error) {
-      if (isUniqueViolation(error, EMAIL_UNIQUE)) return 'emailTaken';
+      if (isUniqueViolation(error, EMAIL_UNIQUE)) return InsertUserResult.EmailTaken;
       throw error;
     }
   }
