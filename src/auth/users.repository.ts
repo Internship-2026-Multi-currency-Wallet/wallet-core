@@ -81,11 +81,8 @@ export class UsersRepository {
     };
   }
 
-  // recordFailedLogin and recordSuccessfulLogin return until when the account is locked (null =
-  // not locked). Both lock the user row, so parallel logins are applied one by one: failures
-  // cannot overwrite each other's count, and a right password cannot slip past a lock that
-  // parallel failures set while it was being checked.
-
+  // Both login methods lock the user row, so parallel failures are all counted and a right
+  // password sees a lock they set while it was being verified.
   async recordFailedLogin(userId: string, policy: LoginLockPolicy): Promise<Date | null> {
     return this.db.transaction(async (trx) => {
       const row = await trx<UserRow>(USERS)
