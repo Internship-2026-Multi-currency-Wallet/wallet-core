@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { KNEX } from '../database/database.module.js';
+import type { User } from './user.model.js';
 
 const SESSIONS = 'sessions';
 
@@ -14,7 +15,7 @@ export interface NewSession {
 }
 
 export interface ActiveSession {
-  userId: string;
+  user: User;
   expiresAt: Date;
 }
 
@@ -41,7 +42,8 @@ export class SessionsRepository {
   }
 
   // The lookup and replacement must hold the same row lock so concurrent refreshes cannot both
-  // consume one token.
+  // consume one token. The user is read in the same transaction: if that fails, the swap rolls
+  // back and the client can retry with its token instead of losing the session.
   async rotate(
     refreshTokenHash: string,
     newRefreshTokenHash: string,
@@ -56,7 +58,12 @@ export class SessionsRepository {
         .first('id', 'user_id', 'expires_at');
       if (!row) return null;
       await trx(SESSIONS).where({ id: row.id }).update({ refresh_token_hash: newRefreshTokenHash });
-      return { userId: row.user_id, expiresAt: row.expires_at };
+      const user = await trx<User>('users')
+        .where({ id: row.user_id })
+        .first('id', 'email', 'phone');
+      // Unreachable: a deleted user has no sessions (ON DELETE CASCADE).
+      if (!user) throw new Error(`session ${row.id} has no user`);
+      return { user, expiresAt: row.expires_at };
     });
   }
 

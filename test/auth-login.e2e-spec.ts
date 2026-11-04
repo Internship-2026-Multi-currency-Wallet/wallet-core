@@ -49,6 +49,9 @@ describe('login (e2e)', () => {
   beforeEach(async () => {
     await db('sessions').delete();
     await db('users').delete();
+    // Another spec may leave auth.phoneRequiredAt = signup behind, and register would fail.
+    await db('client_setting_changes').delete();
+    await db('client_settings').delete();
     await register().expect(200);
   });
 
