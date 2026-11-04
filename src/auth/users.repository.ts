@@ -33,7 +33,6 @@ export interface UserCredentials {
 
 export interface LoginLockPolicy {
   now: Date;
-  /** The failure that reaches this count locks the account. */
   maxFailedAttempts: number;
   lockUntil: Date;
 }
@@ -83,9 +82,8 @@ export class UsersRepository {
   }
 
   /**
-   * Counts a wrong password and returns until when the account is locked (null = not locked).
-   * The row is locked for the whole read-and-write, so parallel failures are all counted.
-   * A failure while the account is locked is not counted and does not extend the lock.
+   * Returns until when the account is locked (null = not locked). The row lock keeps parallel
+   * failures from overwriting each other's count.
    */
   async recordFailedLogin(userId: string, policy: LoginLockPolicy): Promise<Date | null> {
     return this.db.transaction(async (trx) => {
@@ -101,7 +99,6 @@ export class UsersRepository {
       await trx(USERS)
         .where({ id: userId })
         .update({
-          // Counting starts again after the lock.
           failed_login_attempts: locks ? 0 : attempts,
           locked_until: locks ? policy.lockUntil : null,
           updated_at: policy.now,
