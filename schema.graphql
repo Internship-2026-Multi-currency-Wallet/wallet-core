@@ -2,6 +2,16 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
 # ------------------------------------------------------
 
+input AcceptStaffInvitationInput {
+  """
+  New password: 8 to 128 characters, with at least one digit, one uppercase letter and one special character (same rules as user registration).
+  """
+  password: String!
+
+  """The token from the invitation link (/accept-invitation?token=…)."""
+  token: String!
+}
+
 """
 Result of login and refreshSession. The refresh token is not here: it is set as an httpOnly cookie.
 """
@@ -12,6 +22,13 @@ type AuthPayload {
   """When the access token expires. Call refreshSession before that."""
   accessTokenExpiresAt: DateTime!
   user: User!
+}
+
+input ChangeOwnStaffPasswordInput {
+  currentPassword: String!
+
+  """Same rules as AcceptStaffInvitationInput.password."""
+  newPassword: String!
 }
 
 """
@@ -42,6 +59,14 @@ type Health {
   version: String!
 }
 
+input InviteStaffInput {
+  """
+  Valid email address. Case-insensitive, must not belong to another staff member.
+  """
+  email: String!
+  role: StaffRole!
+}
+
 """
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
 """
@@ -65,6 +90,31 @@ type Me {
 
 type Mutation {
   """
+  Sets the password of an invited staff member and activates the account. The token works once and expires 48 hours after it was sent. Does not log in: call staffLogin afterwards. Errors: INVALID_INVITATION (unknown, used, expired or replaced token), BAD_USER_INPUT (extensions.field).
+  """
+  acceptStaffInvitation(input: AcceptStaffInvitationInput!): Boolean!
+
+  """
+  Changes the own password after checking the current one. Ends all other sessions of this staff member (this one stays) and emails a "password changed" notice. Requires bo. Errors: UNAUTHENTICATED, FORBIDDEN, INVALID_CURRENT_PASSWORD, BAD_USER_INPUT (extensions.field).
+  """
+  changeOwnStaffPassword(input: ChangeOwnStaffPasswordInput!): Boolean!
+
+  """
+  Changes the role and ends the staff member's sessions, so they log in again with the new permissions (an access token already issued stays valid up to 15 minutes). Requires bo:staff:modify. Errors: FORBIDDEN, STAFF_NOT_FOUND, LAST_ADMIN.
+  """
+  changeStaffRole(role: StaffRole!, staffId: ID!): StaffMember!
+
+  """
+  Deactivates a staff member and ends their sessions (an access token already issued stays valid up to 15 minutes). Requires bo:staff:modify. Errors: FORBIDDEN, STAFF_NOT_FOUND, CANNOT_DEACTIVATE_SELF, LAST_ADMIN.
+  """
+  deactivateStaff(staffId: ID!): StaffMember!
+
+  """
+  Creates an INVITED staff member and emails a one-time invitation link (valid 48 hours). Requires bo:staff:modify. Errors: FORBIDDEN, BAD_USER_INPUT (extensions.field), STAFF_ALREADY_EXISTS.
+  """
+  inviteStaff(input: InviteStaffInput!): StaffMember!
+
+  """
   Logs in with email and password (sets the refresh token cookie). Errors: INVALID_CREDENTIALS, ACCOUNT_LOCKED (extensions.lockedUntil).
   """
   login(input: LoginInput!): AuthPayload!
@@ -85,9 +135,29 @@ type Mutation {
   register(input: RegisterInput!): User!
 
   """
+  Emails a new invitation link to an INVITED staff member; earlier links stop working. Requires bo:staff:modify. Errors: FORBIDDEN, STAFF_NOT_FOUND, NOT_INVITED.
+  """
+  resendStaffInvitation(staffId: ID!): StaffMember!
+
+  """
   Removes the override so the default applies again; recorded in history. Requires bo:settings:modify. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY.
   """
   resetSetting(key: String!): Setting!
+
+  """
+  Logs a staff member in (sets the staff refresh token cookie). The session lasts 8 hours from login. Errors: INVALID_CREDENTIALS (also for invited and deactivated accounts), ACCOUNT_LOCKED (extensions.lockedUntil; after 5 failed attempts in a row, for 15 minutes).
+  """
+  staffLogin(input: StaffLoginInput!): StaffAuthPayload!
+
+  """
+  Ends the session of the staff refresh token cookie and clears the cookie. Returns true even when there was no session.
+  """
+  staffLogout: Boolean!
+
+  """
+  Issues a new access token using the staff refresh token cookie, with the current role. Does not extend the 8-hour session. Errors: INVALID_REFRESH_TOKEN (also after deactivation or a role change).
+  """
+  staffRefreshSession: StaffAuthPayload!
 
   """
   Sets an override. Requires bo:settings:modify. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.
@@ -120,6 +190,16 @@ type Query {
   Change history, newest first, optionally for one key. `before` alone returns only changes strictly older than this time. Next page: pass `before` = last row `changedAt` and `beforeId` = last row `id` (changes with the same time are not skipped). `limit` is at most 200. Requires bo:settings. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.
   """
   settingHistory(before: DateTime, beforeId: ID, key: String, limit: Int! = 50): [SettingChange!]!
+
+  """
+  The logged-in staff member with the permissions of their role. Requires a staff login (bo). Errors: UNAUTHENTICATED, FORBIDDEN (e.g. a user token), STAFF_NOT_FOUND.
+  """
+  staffMe: StaffMe!
+
+  """
+  All staff accounts of this client. Requires bo:staff. Errors: FORBIDDEN.
+  """
+  staffMembers: [StaffMember!]!
 
   """
   All settings with defaults and overrides. Requires bo:settings. Errors: UNAUTHENTICATED, FORBIDDEN.
@@ -194,6 +274,68 @@ enum SettingType {
   BOOLEAN
   ENUM
   STRING_LIST
+}
+
+"""
+Result of staffLogin and staffRefreshSession. The refresh token is not here: it is set as an httpOnly cookie (separate from the user cookie).
+"""
+type StaffAuthPayload {
+  """Short-lived JWT. Send it as "Authorization: Bearer <token>"."""
+  accessToken: String!
+
+  """When the access token expires. Call staffRefreshSession before that."""
+  accessTokenExpiresAt: DateTime!
+  staff: StaffMe!
+}
+
+input StaffLoginInput {
+  email: String!
+  password: String!
+}
+
+"""The logged-in staff member."""
+type StaffMe {
+  email: String!
+
+  """Staff id (UUID)."""
+  id: ID!
+
+  """
+  Permissions of the role, e.g. "bo:settings:modify". Show pages and buttons by these.
+  """
+  permissions: [String!]!
+  role: StaffRole!
+}
+
+"""A staff account of this client, as shown in staff management."""
+type StaffMember {
+  """When the staff member was invited."""
+  createdAt: DateTime!
+  email: String!
+
+  """Staff id (UUID)."""
+  id: ID!
+  role: StaffRole!
+  status: StaffStatus!
+}
+
+"""
+Back-office role. Each role has a fixed permission list (README, "Staff roles"). ADMIN: everything; FINANCE: settings; SUPPORT, COMPLIANCE: base access for now.
+"""
+enum StaffRole {
+  ADMIN
+  COMPLIANCE
+  FINANCE
+  SUPPORT
+}
+
+"""
+INVITED: invitation sent, no password yet. ACTIVE: can log in. DEACTIVATED: cannot log in.
+"""
+enum StaffStatus {
+  ACTIVE
+  DEACTIVATED
+  INVITED
 }
 
 """A registered wallet user."""

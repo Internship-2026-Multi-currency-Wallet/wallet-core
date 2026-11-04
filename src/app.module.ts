@@ -14,6 +14,7 @@ import { LoggingModule } from './logging/logging.module.js';
 import { RatesModule } from './rates/rates.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { ClientSettingsModule } from './settings/client-settings.module.js';
+import { StaffModule } from './staff/staff.module.js';
 
 /**
  * Root module. Shared file: change it only in small, dedicated PRs.
@@ -39,6 +40,7 @@ import { ClientSettingsModule } from './settings/client-settings.module.js';
     // Features
     HealthModule,
     DiagnosticsModule,
+    StaffModule,
   ],
 })
 export class AppModule {}
