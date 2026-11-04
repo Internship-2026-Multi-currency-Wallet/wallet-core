@@ -1,5 +1,5 @@
 import { AppConfig } from './app-config.js';
-import { validateEnv } from './env.schema.js';
+import { LOCAL_JWT_SECRET, validateEnv } from './env.schema.js';
 
 describe('validateEnv', () => {
   it('applies safe defaults', () => {
@@ -49,10 +49,63 @@ describe('validateEnv', () => {
   });
 });
 
+describe('validateEnv: JWT', () => {
+  const SECRET = 'x'.repeat(32);
+
+  it('turns the TTLs into seconds, 15m and 30d by default', () => {
+    expect(validateEnv({})).toMatchObject({ JWT_ACCESS_TTL: 900, JWT_REFRESH_TTL: 2_592_000 });
+    expect(validateEnv({ JWT_ACCESS_TTL: '30s', JWT_REFRESH_TTL: '12h' })).toMatchObject({
+      JWT_ACCESS_TTL: 30,
+      JWT_REFRESH_TTL: 43_200,
+    });
+  });
+
+  it.each(['15', '15 m', '0m', '-5m', '1.5h', '15M', 'abc'])('rejects the TTL %p', (ttl) => {
+    expect(() => validateEnv({ JWT_ACCESS_TTL: ttl })).toThrow(/JWT_ACCESS_TTL/);
+  });
+
+  it('refuses a JWT_SECRET shorter than 32 characters', () => {
+    expect(() => validateEnv({ JWT_SECRET: 'x'.repeat(31) })).toThrow(
+      /JWT_SECRET: must be at least 32 characters/,
+    );
+  });
+
+  it('does not require JWT_SECRET outside production', () => {
+    expect(validateEnv({ NODE_ENV: 'development' }).JWT_SECRET).toBeUndefined();
+    expect(validateEnv({ NODE_ENV: 'test', JWT_SECRET: '' }).JWT_SECRET).toBeUndefined();
+  });
+
+  it('requires JWT_SECRET in production', () => {
+    expect(() => validateEnv({ NODE_ENV: 'production' })).toThrow(
+      /JWT_SECRET: is required in production/,
+    );
+    expect(() => validateEnv({ NODE_ENV: 'production', JWT_SECRET: '' })).toThrow(
+      /JWT_SECRET: is required in production/,
+    );
+    expect(validateEnv({ NODE_ENV: 'production', JWT_SECRET: SECRET }).JWT_SECRET).toBe(SECRET);
+  });
+
+  it('refuses the local-only secret in production', () => {
+    expect(() => validateEnv({ NODE_ENV: 'production', JWT_SECRET: LOCAL_JWT_SECRET })).toThrow(
+      /JWT_SECRET: must not be the local-only secret/,
+    );
+  });
+});
+
 describe('AppConfig', () => {
   it('exposes the current client and splits CORS origins', () => {
     const config = AppConfig.fromEnv({ CLIENT: 'wisla', CORS_ORIGINS: 'http://a, http://b' });
     expect(config.client).toBe('wisla');
     expect(config.corsOrigins).toEqual(['http://a', 'http://b']);
+  });
+
+  it('uses the local-only JWT secret when none is set', () => {
+    expect(AppConfig.fromEnv({}).jwt).toEqual({
+      issuer: 'wallet-core',
+      secret: LOCAL_JWT_SECRET,
+      accessTtlSeconds: 900,
+      sessionTtlSeconds: 2_592_000,
+    });
+    expect(AppConfig.fromEnv({ JWT_SECRET: 'y'.repeat(32) }).jwt.secret).toBe('y'.repeat(32));
   });
 });
