@@ -8,6 +8,7 @@ import { AuthGuard } from './auth.guard.js';
 import { AuthResolver } from './auth.resolver.js';
 import { AuthService } from './auth.service.js';
 import { DevAuthStrategy } from './dev-auth.strategy.js';
+import { JwtAuthStrategy } from './jwt-auth.strategy.js';
 import { MeResolver } from './me.resolver.js';
 import { SessionsRepository } from './sessions.repository.js';
 import { TokenService } from './tokens.js';
@@ -15,21 +16,24 @@ import { UsersRepository } from './users.repository.js';
 import { PermissionGuard } from '../permissions/permission.guard.js';
 
 /**
- * Authentication seam.
- *
- * To add the real JWT login later, implement `AuthStrategy` (e.g. `JwtStrategy`), add it to
- * `providers` and to the `AUTH_STRATEGIES` factory below. Business code keeps using
- * `@CurrentUser()`, `@Public()` and `@RequirePermission()` unchanged.
+ * Authentication seam. Business code only uses `@CurrentUser()`, `@Public()` and
+ * `@RequirePermission()`, whichever strategy authenticated the request.
  */
 @Module({
   imports: [JwtModule.register({})],
   providers: [
     DevAuthStrategy,
+    JwtAuthStrategy,
     {
       provide: AUTH_STRATEGIES,
-      inject: [AppConfig, DevAuthStrategy, PinoLogger],
-      useFactory: (config: AppConfig, dev: DevAuthStrategy, logger: PinoLogger): AuthStrategy[] => {
-        const strategies: AuthStrategy[] = [];
+      inject: [AppConfig, JwtAuthStrategy, DevAuthStrategy, PinoLogger],
+      useFactory: (
+        config: AppConfig,
+        jwt: JwtAuthStrategy,
+        dev: DevAuthStrategy,
+        logger: PinoLogger,
+      ): AuthStrategy[] => {
+        const strategies: AuthStrategy[] = [jwt];
         if (config.devAuth) {
           if (config.isProduction) {
             logger.setContext('AuthModule');
