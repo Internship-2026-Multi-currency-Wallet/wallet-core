@@ -32,6 +32,8 @@ interface SetupOptions {
   credentials?: UserCredentials | null;
   /** What recordFailedLogin answers. */
   lockedUntil?: Date | null;
+  /** What recordSuccessfulLogin answers. */
+  lockedMeanwhile?: Date | null;
 }
 
 const config = AppConfig.fromEnv({});
@@ -45,7 +47,9 @@ function setup(options: SetupOptions = {}) {
     recordFailedLogin: jest.fn((_userId: string, _policy: LoginLockPolicy) =>
       Promise.resolve(options.lockedUntil ?? null),
     ),
-    resetFailedLogins: jest.fn((_userId: string, _now: Date) => Promise.resolve()),
+    recordSuccessfulLogin: jest.fn((_userId: string, _now: Date) =>
+      Promise.resolve(options.lockedMeanwhile ?? null),
+    ),
   };
   const sessions = { create: jest.fn((_session: NewSession) => Promise.resolve()) };
   const settings = {
@@ -204,7 +208,7 @@ describe('AuthService.login', () => {
     const result = await login(service, PASSWORD, '  Artem@Test.com ');
 
     expect(users.findByEmail).toHaveBeenCalledWith('artem@test.com');
-    expect(users.resetFailedLogins).toHaveBeenCalledWith(USER_ID, NOW);
+    expect(users.recordSuccessfulLogin).toHaveBeenCalledWith(USER_ID, NOW);
     expect(result.payload.user).toEqual({ id: USER_ID, email: 'artem@test.com', phone: null });
     expect(result.payload.accessTokenExpiresAt).toEqual(new Date('2026-11-04T10:15:00.000Z'));
     expect(result.sessionExpiresAt).toEqual(new Date('2026-12-04T10:00:00.000Z'));
@@ -254,7 +258,7 @@ describe('AuthService.login', () => {
       maxFailedAttempts: 5,
       lockUntil: LOCKED_UNTIL,
     });
-    expect(users.resetFailedLogins).not.toHaveBeenCalled();
+    expect(users.recordSuccessfulLogin).not.toHaveBeenCalled();
     expect(sessions.create).not.toHaveBeenCalled();
   });
 
@@ -286,6 +290,16 @@ describe('AuthService.login', () => {
       credentials: { ...credentials, lockedUntil: new Date('2026-11-04T09:59:59.999Z') },
     });
     await expect(login(service)).resolves.toMatchObject({ payload: { user: { id: USER_ID } } });
+  });
+
+  it('answers ACCOUNT_LOCKED for the right password when parallel failures locked the account meanwhile', async () => {
+    const { service, sessions } = setup({ credentials, lockedMeanwhile: LOCKED_UNTIL });
+    const error = await graphqlErrorOf(login(service));
+    expect(error.extensions).toEqual({
+      code: 'ACCOUNT_LOCKED',
+      lockedUntil: '2026-11-04T10:15:00.000Z',
+    });
+    expect(sessions.create).not.toHaveBeenCalled();
   });
 
   it('logs neither the password, the email nor a token', async () => {

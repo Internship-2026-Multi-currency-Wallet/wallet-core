@@ -95,7 +95,13 @@ export class AuthService {
       throw lockedUntil ? accountLocked(lockedUntil) : invalidCredentials();
     }
 
-    await this.users.resetFailedLogins(user.id, now);
+    // Parallel wrong guesses may have locked the account while argon2 ran.
+    const lockedMeanwhile = await this.users.recordSuccessfulLogin(user.id, now);
+    if (lockedMeanwhile) {
+      this.logger.warn({ userId: user.id }, 'login rejected: account locked');
+      throw accountLocked(lockedMeanwhile);
+    }
+
     const refreshToken = newRefreshToken();
     const sessionExpiresAt = new Date(now.getTime() + this.config.jwt.sessionTtlSeconds * 1000);
     await this.sessions.create({
