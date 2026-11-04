@@ -6,10 +6,7 @@ import type { App } from 'supertest/types.js';
 import { createKnex } from '../src/database/database.module.js';
 import { createApp } from './create-app.js';
 
-/**
- * `register` through the GraphQL API against real MySQL.
- * Needs migrations applied (`npm run migrate`); empties users and settings before each test.
- */
+/** Needs migrations applied (`npm run migrate`); empties users and settings before each test. */
 describe('register (e2e)', () => {
   const STAFF = 'Dev 42:bo:settings,bo:settings:modify';
   const PASSWORD = 'Qwerty1!';

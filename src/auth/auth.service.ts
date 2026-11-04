@@ -9,7 +9,6 @@ import type { RegisterInput } from './register.input.js';
 import type { User } from './user.model.js';
 import { InsertUserResult, UsersRepository } from './users.repository.js';
 
-/** Registration, login and sessions. The password is only ever hashed, never stored or logged. */
 @Injectable()
 export class AuthService {
   constructor(
@@ -18,10 +17,6 @@ export class AuthService {
     @InjectPinoLogger(AuthService.name) private readonly logger: PinoLogger,
   ) {}
 
-  /**
-   * Creates an account; does not log in. Errors: `BAD_USER_INPUT` (first broken rule, or no
-   * phone while the client requires it at signup), `EMAIL_ALREADY_REGISTERED`.
-   */
   async register(input: RegisterInput): Promise<User> {
     const data = parseRegisterInput(input);
     const phone = data.phone ?? null;

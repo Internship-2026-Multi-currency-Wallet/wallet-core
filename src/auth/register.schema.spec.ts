@@ -3,7 +3,6 @@ import { REGISTER_INPUT_MESSAGES, parseRegisterInput } from './register.schema.j
 
 const valid = { email: 'artem@test.com', password: 'Qwerty1!' };
 
-/** The `BAD_USER_INPUT` error thrown for `input`. */
 function rejection(input: Record<string, unknown>): GraphQLError {
   try {
     parseRegisterInput(input);

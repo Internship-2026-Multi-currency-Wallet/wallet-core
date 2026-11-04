@@ -4,7 +4,6 @@ import { KNEX } from '../database/database.module.js';
 import { isUniqueViolation } from '../database/unique-violation.js';
 
 const USERS = 'users';
-/** Unique index on `users.email` (see the users_and_sessions migration). */
 const EMAIL_UNIQUE = 'users_email_unique';
 
 export interface NewUser {
@@ -12,7 +11,6 @@ export interface NewUser {
   id: string;
   /** Already trimmed and lower-cased. */
   email: string;
-  /** argon2 hash; never the password itself. */
   passwordHash: string;
   phone: string | null;
   createdAt: Date;
@@ -25,17 +23,10 @@ export const InsertUserResult = {
 
 export type InsertUserResult = (typeof InsertUserResult)[keyof typeof InsertUserResult];
 
-/**
- * Storage of user accounts. Knows the table and its constraints; API errors are the service's job.
- */
 @Injectable()
 export class UsersRepository {
   constructor(@Inject(KNEX) private readonly db: Knex) {}
 
-  /**
-   * Inserts a user. A taken email (the unique index, case-insensitive) answers `emailTaken`
-   * instead of throwing; any other database error is rethrown.
-   */
   async insert(user: NewUser): Promise<InsertUserResult> {
     try {
       await this.db(USERS).insert({

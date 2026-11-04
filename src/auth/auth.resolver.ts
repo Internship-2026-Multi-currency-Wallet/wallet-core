@@ -7,11 +7,6 @@ import { RegisterInput } from './register.input.js';
 import { User } from './user.model.js';
 import { AuthService } from './auth.service.js';
 
-/**
- * Registration, login and sessions. `login`, `refreshSession` and `logout` are contract only and
- * throw until they are implemented. The refresh token travels in an httpOnly cookie, never in
- * arguments or results.
- */
 @Resolver()
 export class AuthResolver {
   constructor(private readonly auth: AuthService) {}
