@@ -115,7 +115,7 @@ export class AuthService {
       expiresAt: sessionExpiresAt,
       createdAt: now,
     });
-    // The browser has just replaced that cookie, so nobody could use its session any more.
+    // Revoke the previous browser session because login replaces its refresh cookie.
     if (previousRefreshToken) {
       await this.sessions.revoke(hashRefreshToken(previousRefreshToken), now);
     }

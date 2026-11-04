@@ -21,7 +21,7 @@ export function setRefreshTokenCookie(
   res.cookie(REFRESH_TOKEN_COOKIE, token, { ...cookieOptions(secure), expires: expiresAt });
 }
 
-// The browser only drops the cookie when path and the other attributes match the ones it was set with.
+// Clearing must target the same cookie name, domain, and path.
 export function clearRefreshTokenCookie(res: Response, secure: boolean): void {
   res.clearCookie(REFRESH_TOKEN_COOKIE, cookieOptions(secure));
 }
