@@ -15,7 +15,7 @@ export interface IssuedAccessToken {
 export interface RefreshToken {
   /** Goes only to the client's cookie. */
   token: string;
-  /** What the database stores. */
+  /** Persist only the hash so a database leak does not expose usable refresh tokens. */
   hash: string;
 }
 
