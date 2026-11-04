@@ -77,7 +77,8 @@ describe('refreshSession and logout (e2e)', () => {
 
     const reused = await refresh(first);
     expect(codeOf(reused)).toBe('INVALID_REFRESH_TOKEN');
-    expect(tokenOf(reused)).toBe('');
+    // Left alone: a parallel refresh may have just set a new cookie.
+    expect(reused.headers['set-cookie']).toBeUndefined();
     expect(codeOf(await refresh(second))).toBeUndefined();
   });
 
