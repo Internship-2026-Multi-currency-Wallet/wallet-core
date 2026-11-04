@@ -51,7 +51,6 @@ export function graphqlOptions(config: AppConfig, logger: PinoLogger): ApolloDri
     formatError,
     // HTTP requests carry headers; websocket requests carry connectionParams.
     // Both end up as `context.req.headers`, which the auth guard reads.
-    // `res` lets a resolver set or clear a cookie (the refresh token).
     context: ({ req, res, connectionParams }: ContextInput): GraphqlContext => ({
       req: req ?? requestFromConnectionParams(connectionParams),
       res,

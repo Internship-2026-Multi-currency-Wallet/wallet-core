@@ -22,14 +22,13 @@ const booleanFromString = z
   .default('false')
   .transform((value) => value === 'true' || value === '1');
 
-/**
- * Lets the service start locally and in tests without a `.env`. Same value as in rates-service's
- * `.env.example`, so local tokens work across services. Refused in production.
- */
+/** Must match rates-service's local default so development tokens work across services. */
 export const LOCAL_JWT_SECRET = 'local-only-jwt-secret-change-me-0123456789';
 
 const SECONDS_PER_UNIT = { s: 1, m: 60, h: 3600, d: 86400 } as const;
 type DurationUnit = keyof typeof SECONDS_PER_UNIT;
+// Without a bound a long number passes the regex and becomes Infinity.
+const MAX_DURATION_SECONDS = 365 * SECONDS_PER_UNIT.d;
 
 function durationInSeconds(defaultValue: `${number}${DurationUnit}`) {
   return z
@@ -39,7 +38,8 @@ function durationInSeconds(defaultValue: `${number}${DurationUnit}`) {
     .transform((value) => {
       const unit = value.slice(-1) as DurationUnit;
       return Number(value.slice(0, -1)) * SECONDS_PER_UNIT[unit];
-    });
+    })
+    .refine((seconds) => seconds <= MAX_DURATION_SECONDS, 'must be at most 365d');
 }
 
 /**
