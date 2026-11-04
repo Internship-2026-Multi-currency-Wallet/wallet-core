@@ -13,6 +13,19 @@ export interface NewSession {
   createdAt: Date;
 }
 
+export interface ActiveSession {
+  userId: string;
+  expiresAt: Date;
+}
+
+interface SessionRow {
+  id: string;
+  user_id: string;
+  refresh_token_hash: string;
+  expires_at: Date;
+  revoked_at: Date | null;
+}
+
 @Injectable()
 export class SessionsRepository {
   constructor(@Inject(KNEX) private readonly db: Knex) {}
@@ -25,5 +38,35 @@ export class SessionsRepository {
       expires_at: session.expiresAt,
       created_at: session.createdAt,
     });
+  }
+
+  /**
+   * Swaps the refresh token of an active session and returns the session (null = no active
+   * session with this token). The row lock lets only one of two parallel refreshes with the
+   * same token win; the other finds the old hash gone.
+   */
+  async rotate(
+    refreshTokenHash: string,
+    newRefreshTokenHash: string,
+    now: Date,
+  ): Promise<ActiveSession | null> {
+    return this.db.transaction(async (trx) => {
+      const row = await trx<SessionRow>(SESSIONS)
+        .where({ refresh_token_hash: refreshTokenHash })
+        .whereNull('revoked_at')
+        .andWhere('expires_at', '>', now)
+        .forUpdate()
+        .first('id', 'user_id', 'expires_at');
+      if (!row) return null;
+      await trx(SESSIONS).where({ id: row.id }).update({ refresh_token_hash: newRefreshTokenHash });
+      return { userId: row.user_id, expiresAt: row.expires_at };
+    });
+  }
+
+  async revoke(refreshTokenHash: string, now: Date): Promise<void> {
+    await this.db(SESSIONS)
+      .where({ refresh_token_hash: refreshTokenHash })
+      .whereNull('revoked_at')
+      .update({ revoked_at: now });
   }
 }
