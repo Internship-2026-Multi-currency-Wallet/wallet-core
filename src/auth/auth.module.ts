@@ -8,6 +8,7 @@ import { AuthResolver } from './auth.resolver.js';
 import { AuthService } from './auth.service.js';
 import { DevAuthStrategy } from './dev-auth.strategy.js';
 import { MeResolver } from './me.resolver.js';
+import { SessionsRepository } from './sessions.repository.js';
 import { UsersRepository } from './users.repository.js';
 import { PermissionGuard } from '../permissions/permission.guard.js';
 
@@ -43,6 +44,7 @@ import { PermissionGuard } from '../permissions/permission.guard.js';
     AuthResolver,
     AuthService,
     UsersRepository,
+    SessionsRepository,
   ],
   exports: [AUTH_STRATEGIES],
 })
