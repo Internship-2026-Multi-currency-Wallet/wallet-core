@@ -15,10 +15,6 @@ import { TokenService } from './tokens.js';
 import { UsersRepository } from './users.repository.js';
 import { PermissionGuard } from '../permissions/permission.guard.js';
 
-/**
- * Authentication seam. Business code only uses `@CurrentUser()`, `@Public()` and
- * `@RequirePermission()`, whichever strategy authenticated the request.
- */
 @Module({
   imports: [JwtModule.register({})],
   providers: [
