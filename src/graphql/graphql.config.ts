@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { ApolloDriver, type ApolloDriverConfig } from '@nestjs/apollo';
+import type { Response } from 'express';
 import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
@@ -10,8 +11,15 @@ export const SCHEMA_FILE = join(process.cwd(), 'schema.graphql');
 
 interface ContextInput {
   req?: RequestLike;
+  res?: Response;
   connectionParams?: Record<string, unknown>;
   extra?: { request?: unknown };
+}
+
+export interface GraphqlContext {
+  req: RequestLike;
+  /** Absent over websocket. */
+  res?: Response;
 }
 
 /**
@@ -33,8 +41,10 @@ export function graphqlOptions(config: AppConfig, logger: PinoLogger): ApolloDri
     plugins: [graphqlLoggingPlugin()],
     // HTTP requests carry headers; websocket requests carry connectionParams.
     // Both end up as `context.req.headers`, which the auth guard reads.
-    context: ({ req, connectionParams }: ContextInput) => ({
+    // `res` lets a resolver set or clear a cookie (the refresh token).
+    context: ({ req, res, connectionParams }: ContextInput): GraphqlContext => ({
       req: req ?? requestFromConnectionParams(connectionParams),
+      res,
     }),
   };
 }
