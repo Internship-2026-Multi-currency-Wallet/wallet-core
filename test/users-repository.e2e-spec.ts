@@ -1,5 +1,5 @@
 import type { Knex } from 'knex';
-import { type NewUser, UsersRepository } from '../src/auth/users.repository.js';
+import { InsertUserResult, type NewUser, UsersRepository } from '../src/auth/users.repository.js';
 import { createKnex } from '../src/database/database.module.js';
 
 /** Needs MySQL with migrations applied (`npm run infra:up && npm run migrate`). */
@@ -32,7 +32,7 @@ describe('UsersRepository (e2e, real MySQL)', () => {
   });
 
   it('stores a new user with the lockout columns at their defaults', async () => {
-    await expect(repo.insert(user())).resolves.toBe('created');
+    await expect(repo.insert(user())).resolves.toBe(InsertUserResult.Created);
     await expect(db('users').select('*')).resolves.toEqual([
       {
         id: '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b',
@@ -56,10 +56,10 @@ describe('UsersRepository (e2e, real MySQL)', () => {
     await repo.insert(user());
     const second = { id: '1c7a4d3f-9e5b-4a8c-8d2e-3b6f7a8b9c0d' };
     await expect(repo.insert(user({ ...second, email: 'artem@test.com' }))).resolves.toBe(
-      'emailTaken',
+      InsertUserResult.EmailTaken,
     );
     await expect(repo.insert(user({ ...second, email: 'ARTEM@test.com' }))).resolves.toBe(
-      'emailTaken',
+      InsertUserResult.EmailTaken,
     );
     await expect(db('users').count({ count: '*' })).resolves.toEqual([{ count: 1 }]);
   });
