@@ -40,11 +40,8 @@ export class SessionsRepository {
     });
   }
 
-  /**
-   * Swaps the refresh token of an active session and returns the session (null = no active
-   * session with this token). The row lock lets only one of two parallel refreshes with the
-   * same token win; the other finds the old hash gone.
-   */
+  // The lookup and replacement must hold the same row lock so concurrent refreshes cannot both
+  // consume one token.
   async rotate(
     refreshTokenHash: string,
     newRefreshTokenHash: string,

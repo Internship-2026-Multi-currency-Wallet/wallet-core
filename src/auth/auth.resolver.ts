@@ -13,7 +13,6 @@ import {
 } from './refresh-token-cookie.js';
 import { RegisterInput } from './register.input.js';
 import { User } from './user.model.js';
-import { AuthErrorCode } from './auth-errors.js';
 import { AuthService, type LoginResult } from './auth.service.js';
 
 @Resolver()
@@ -53,18 +52,9 @@ export class AuthResolver {
   })
   async refreshSession(@Context() context: GraphqlContext): Promise<AuthPayload> {
     const res = httpResponseOf(context);
-    try {
-      return this.withCookie(res, await this.auth.refreshSession(readRefreshToken(context.req)));
-    } catch (error) {
-      // A dead cookie would make the client try again and again.
-      if (
-        error instanceof GraphQLError &&
-        error.extensions.code === AuthErrorCode.InvalidRefreshToken
-      ) {
-        clearRefreshTokenCookie(res, this.config.isProduction);
-      }
-      throw error;
-    }
+    // A failed refresh leaves the cookie alone: a parallel refresh may have just set a new one,
+    // and clearing would delete that.
+    return this.withCookie(res, await this.auth.refreshSession(readRefreshToken(context.req)));
   }
 
   @Public()

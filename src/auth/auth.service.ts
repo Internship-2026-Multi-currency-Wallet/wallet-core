@@ -70,7 +70,6 @@ export class AuthService {
     return user;
   }
 
-  /** `previousRefreshToken`: the cookie the browser still sent, if any. */
   async login(
     input: LoginInput,
     now: Date = new Date(),
