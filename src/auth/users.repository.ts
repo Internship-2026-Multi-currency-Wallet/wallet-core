@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { KNEX } from '../database/database.module.js';
 import { isUniqueViolation } from '../database/unique-violation.js';
+import type { User } from './user.model.js';
 
 const USERS = 'users';
 const EMAIL_UNIQUE = 'users_email_unique';
@@ -65,6 +66,11 @@ export class UsersRepository {
       if (isUniqueViolation(error, EMAIL_UNIQUE)) return InsertUserResult.EmailTaken;
       throw error;
     }
+  }
+
+  async findById(id: string): Promise<User | null> {
+    const row = await this.db<UserRow>(USERS).where({ id }).first('id', 'email', 'phone');
+    return row ? { id: row.id, email: row.email, phone: row.phone } : null;
   }
 
   async findByEmail(email: string): Promise<UserCredentials | null> {

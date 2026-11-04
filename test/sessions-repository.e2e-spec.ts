@@ -73,4 +73,56 @@ describe('SessionsRepository (e2e, real MySQL)', () => {
       repo.create(session({ userId: '7f3a4b5c-6d7e-4f8a-8b9c-1d2e3f4a5b6c' })),
     ).rejects.toMatchObject({ code: 'ER_NO_REFERENCED_ROW_2' });
   });
+
+  describe('rotate', () => {
+    const NOW = new Date('2026-11-10T10:00:00.000Z');
+    const OLD = 'a'.repeat(64);
+    const NEW = 'b'.repeat(64);
+    const hashes = () =>
+      db('sessions')
+        .select('refresh_token_hash')
+        .then((rows) => rows.map((r) => r.refresh_token_hash as string));
+
+    it('swaps the token hash of an active session and returns the session', async () => {
+      await repo.create(session());
+      await expect(repo.rotate(OLD, NEW, NOW)).resolves.toEqual({
+        userId: USER_ID,
+        expiresAt: new Date('2026-12-04T10:00:00.000Z'),
+      });
+      await expect(hashes()).resolves.toEqual([NEW]);
+    });
+
+    it.each([
+      ['an unknown token', {}, 'c'.repeat(64)],
+      ['a revoked session', { revoked_at: new Date('2026-11-05T10:00:00.000Z') }, OLD],
+      ['an expired session', { expires_at: new Date('2026-11-10T10:00:00.000Z') }, OLD],
+    ])('returns null for %s', async (_case, change, token) => {
+      await repo.create(session());
+      if (Object.keys(change).length > 0) await db('sessions').update(change);
+      await expect(repo.rotate(token, NEW, NOW)).resolves.toBeNull();
+      await expect(hashes()).resolves.toEqual([OLD]);
+    });
+
+    it('lets only one of two parallel refreshes with the same token win', async () => {
+      await repo.create(session());
+      const results = await Promise.all([
+        repo.rotate(OLD, NEW, NOW),
+        repo.rotate(OLD, 'c'.repeat(64), NOW),
+      ]);
+      expect(results.filter((result) => result !== null)).toHaveLength(1);
+      const [hash] = await hashes();
+      expect([NEW, 'c'.repeat(64)]).toContain(hash);
+    });
+  });
+
+  describe('revoke', () => {
+    const NOW = new Date('2026-11-10T10:00:00.000Z');
+
+    it('closes the session once and keeps the first time', async () => {
+      await repo.create(session());
+      await repo.revoke('a'.repeat(64), NOW);
+      await repo.revoke('a'.repeat(64), new Date('2026-11-11T10:00:00.000Z'));
+      await expect(db('sessions').first('revoked_at')).resolves.toEqual({ revoked_at: NOW });
+    });
+  });
 });
