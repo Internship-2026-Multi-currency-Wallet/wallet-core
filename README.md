@@ -171,6 +171,29 @@ blockUser(...) { ... }
 All listed permissions are required (class-level or method-level); missing → **403**. In dev mode you choose the
 permissions in the header, e.g. `Dev 100:bo:users,bo:users:modify`.
 
+#### Staff roles
+
+Staff permissions and roles are defined in one file, `src/staff/permissions.ts`. Names follow
+`bo:<area>` (view) and `bo:<area>:modify` (change). Only permissions that guard an endpoint exist; a new
+back-office feature adds its own permissions there and extends the roles.
+
+| Permission           | Guards                                                                        |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `bo`                 | Every staff member: `staffMe`, `changeOwnStaffPassword`. Never given to users |
+| `bo:staff`           | `staffMembers`                                                                |
+| `bo:staff:modify`    | `inviteStaff`, `resendStaffInvitation`, `deactivateStaff`, `changeStaffRole`  |
+| `bo:settings`        | `staffSettings`, `settingHistory`                                             |
+| `bo:settings:modify` | `updateSetting`, `resetSetting`                                               |
+
+| Role         | Permissions                                                             |
+| ------------ | ----------------------------------------------------------------------- |
+| `ADMIN`      | all of the above                                                        |
+| `FINANCE`    | `bo`, `bo:settings`, `bo:settings:modify` (`bo:users` comes with users) |
+| `SUPPORT`    | `bo` (users and transactions views come with their features)            |
+| `COMPLIANCE` | `bo` (KYC review and transactions views come with their features)       |
+
+In dev mode act as a staff member with e.g. `Dev 1:bo,bo:staff,bo:staff:modify`.
+
 ### Client settings — `src/settings`
 
 ```ts
