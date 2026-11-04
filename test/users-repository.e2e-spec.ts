@@ -159,28 +159,65 @@ describe('UsersRepository (e2e, real MySQL)', () => {
     });
   });
 
-  describe('resetFailedLogins', () => {
+  describe('recordSuccessfulLogin', () => {
     const ID = '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b';
     const NOW = new Date('2026-11-04T10:30:00.000Z');
+    const state = () =>
+      db('users').where({ id: ID }).first('failed_login_attempts', 'locked_until', 'updated_at');
 
-    it('clears the counter and the lock', async () => {
+    it('clears the counter and an expired lock', async () => {
       await repo.insert(user());
       await db('users')
         .where({ id: ID })
         .update({ failed_login_attempts: 3, locked_until: new Date('2026-11-04T10:15:00.000Z') });
 
-      await repo.resetFailedLogins(ID, NOW);
-      await expect(
-        db('users').where({ id: ID }).first('failed_login_attempts', 'locked_until', 'updated_at'),
-      ).resolves.toEqual({ failed_login_attempts: 0, locked_until: null, updated_at: NOW });
+      await expect(repo.recordSuccessfulLogin(ID, NOW)).resolves.toBeNull();
+      await expect(state()).resolves.toEqual({
+        failed_login_attempts: 0,
+        locked_until: null,
+        updated_at: NOW,
+      });
     });
 
     it('does not write when there is nothing to reset', async () => {
       await repo.insert(user());
-      await repo.resetFailedLogins(ID, NOW);
-      await expect(db('users').where({ id: ID }).first('updated_at')).resolves.toEqual({
+      await expect(repo.recordSuccessfulLogin(ID, NOW)).resolves.toBeNull();
+      await expect(state()).resolves.toMatchObject({
         updated_at: new Date('2026-11-03T10:00:00.123Z'),
       });
+    });
+
+    it('returns the lock and keeps it while the account is locked', async () => {
+      const lockedUntil = new Date('2026-11-04T10:45:00.000Z');
+      await repo.insert(user());
+      await db('users').where({ id: ID }).update({ locked_until: lockedUntil });
+
+      await expect(repo.recordSuccessfulLogin(ID, NOW)).resolves.toEqual(lockedUntil);
+      await expect(state()).resolves.toMatchObject({ locked_until: lockedUntil });
+    });
+
+    it('cannot lift a lock that a parallel failure sets', async () => {
+      const lockUntil = new Date('2026-11-04T10:45:00.000Z');
+      await repo.insert(user());
+      await db('users').where({ id: ID }).update({ failed_login_attempts: 4 });
+
+      const [failure, success] = await Promise.all([
+        repo.recordFailedLogin(ID, { now: NOW, maxFailedAttempts: 5, lockUntil }),
+        repo.recordSuccessfulLogin(ID, NOW),
+      ]);
+
+      // Either order is fine, but the success must see a lock the failure set before it.
+      const row = await state();
+      if (success === null && failure === null) {
+        expect(row).toMatchObject({ failed_login_attempts: 1, locked_until: null });
+      } else {
+        expect({ failure, success }).toEqual({ failure: lockUntil, success: lockUntil });
+        expect(row).toMatchObject({ failed_login_attempts: 0, locked_until: lockUntil });
+      }
+    });
+
+    it('returns null for an unknown user', async () => {
+      await expect(repo.recordSuccessfulLogin(ID, NOW)).resolves.toBeNull();
     });
   });
 });

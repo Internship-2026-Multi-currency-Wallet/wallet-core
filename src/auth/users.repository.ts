@@ -81,10 +81,11 @@ export class UsersRepository {
     };
   }
 
-  /**
-   * Returns until when the account is locked (null = not locked). The row lock keeps parallel
-   * failures from overwriting each other's count.
-   */
+  // recordFailedLogin and recordSuccessfulLogin return until when the account is locked (null =
+  // not locked). Both lock the user row, so parallel logins are applied one by one: failures
+  // cannot overwrite each other's count, and a right password cannot slip past a lock that
+  // parallel failures set while it was being checked.
+
   async recordFailedLogin(userId: string, policy: LoginLockPolicy): Promise<Date | null> {
     return this.db.transaction(async (trx) => {
       const row = await trx<UserRow>(USERS)
@@ -107,12 +108,21 @@ export class UsersRepository {
     });
   }
 
-  async resetFailedLogins(userId: string, now: Date): Promise<void> {
-    await this.db(USERS)
-      .where({ id: userId })
-      .andWhere((query) => {
-        void query.where('failed_login_attempts', '>', 0).orWhereNotNull('locked_until');
-      })
-      .update({ failed_login_attempts: 0, locked_until: null, updated_at: now });
+  async recordSuccessfulLogin(userId: string, now: Date): Promise<Date | null> {
+    return this.db.transaction(async (trx) => {
+      const row = await trx<UserRow>(USERS)
+        .where({ id: userId })
+        .forUpdate()
+        .first('failed_login_attempts', 'locked_until');
+      if (!row) return null;
+      if (row.locked_until && row.locked_until > now) return row.locked_until;
+
+      if (row.failed_login_attempts > 0 || row.locked_until) {
+        await trx(USERS)
+          .where({ id: userId })
+          .update({ failed_login_attempts: 0, locked_until: null, updated_at: now });
+      }
+      return null;
+    });
   }
 }
