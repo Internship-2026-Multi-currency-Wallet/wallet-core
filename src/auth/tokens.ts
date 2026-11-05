@@ -4,7 +4,6 @@ import { JwtService } from '@nestjs/jwt';
 import { AppConfig } from '../config/app-config.js';
 import type { AccessTokenPayload, TokenAudience } from './access-token.js';
 
-// A staff token carries the permissions of its role instead (staff module).
 export const USER_PERMISSIONS: readonly string[] = ['wallet'];
 
 export interface AccessTokenSubject {
