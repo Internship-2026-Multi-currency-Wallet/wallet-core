@@ -1,0 +1,191 @@
+import type { INestApplication } from '@nestjs/common';
+import type { Knex } from 'knex';
+import request from 'supertest';
+import type { App } from 'supertest/types.js';
+import { createKnex } from '../src/database/database.module.js';
+import { StaffRole } from '../src/staff/permissions.js';
+import { StaffStatus } from '../src/staff/staff.model.js';
+import { StaffRepository } from '../src/staff/staff.repository.js';
+import { createApp } from './create-app.js';
+
+/** Staff management over GraphQL, against real MySQL (`npm run infra:up && npm run migrate`). */
+describe('staff management (e2e, DEV_AUTH=true, real MySQL)', () => {
+  let app: INestApplication;
+  let db: Knex;
+  let repo: StaffRepository;
+
+  interface GqlResponse {
+    data: Record<string, unknown> | null;
+    errors?: { message: string; extensions: Record<string, unknown> }[];
+  }
+
+  const gql = async (query: string, authorization: string): Promise<GqlResponse> =>
+    (
+      await request(app.getHttpServer() as App)
+        .post('/graphql')
+        .set('Authorization', authorization)
+        .send({ query })
+    ).body as GqlResponse;
+
+  const ADMIN_ID = '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b';
+  const SUPPORT_ID = '1c7a4d3f-9e5b-4a8c-8d2e-3b6f7a8b9c0d';
+  const FINANCE_ID = '2d8b5e4a-0f6c-4b9d-9e3f-4c7a8b9c0d1e';
+  const COMPLIANCE_ID = '3e9c6f5b-1a7d-4c0e-8f4a-5d8b9c0d1e2f';
+  /** Acts as an admin id that is not a staff member (no staff row). */
+  const DEV_ACTOR_ID = '9e4d2a1b-7c3f-4b8e-a6d5-0f1e2d3c4b5a';
+  const SESSION_ID = '5a1e8b7d-3c9f-4e2a-8b6c-7f0d1e2f3a4b';
+  const createdAt = new Date('2026-11-04T10:00:00.000Z');
+
+  const ADMIN = `Dev ${ADMIN_ID}:bo,bo:staff,bo:staff:modify`;
+  const DEV_ADMIN = `Dev ${DEV_ACTOR_ID}:bo,bo:staff,bo:staff:modify`;
+
+  /** Creates a staff member and sets its status directly (no invitation flow). */
+  const seed = async (id: string, email: string, role: StaffRole, status: StaffStatus) => {
+    await repo.insert({ id, email, role, createdAt });
+    await repo.update(id, { status }, createdAt);
+  };
+
+  /** Sessions are created by staff login (later PR); here they are set up directly. */
+  const session = (staffId: string) =>
+    db('staff_sessions').insert({
+      id: SESSION_ID,
+      staff_id: staffId,
+      refresh_token_hash: 'd'.repeat(64),
+      expires_at: new Date('2030-01-01T00:00:00.000Z'),
+      created_at: createdAt,
+    });
+
+  const revokedSessionIds = async () =>
+    (await db('staff_sessions').whereNotNull('revoked_at').pluck('id')) as string[];
+
+  const statusOf = async (id: string) => (await repo.findById(id))?.status;
+
+  beforeAll(async () => {
+    app = await createApp({ DEV_AUTH: 'true', CLIENT: 'demo' });
+    db = createKnex(process.env.DATABASE_URL!);
+    repo = new StaffRepository(db);
+  });
+
+  beforeEach(async () => {
+    // DELETE, not TRUNCATE: MySQL refuses to truncate a table referenced by a foreign key.
+    await db('staff_sessions').delete();
+    await db('staff_invitations').delete();
+    await db('staff').delete();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await db.destroy();
+  });
+
+  it('an admin invites a member: INVITED, listed by staffMembers, with one invitation', async () => {
+    const body = await gql(
+      'mutation { inviteStaff(input: { email: "New@Test.com", role: SUPPORT }) { id email role status } }',
+      ADMIN,
+    );
+    expect(body.errors).toBeUndefined();
+    const invited = body.data?.inviteStaff as { id: string };
+    expect(invited).toEqual({
+      id: expect.any(String),
+      email: 'new@test.com',
+      role: 'SUPPORT',
+      status: 'INVITED',
+    });
+
+    const listed = await gql('{ staffMembers { id email status } }', ADMIN);
+    expect(listed.data).toEqual({
+      staffMembers: [{ id: invited.id, email: 'new@test.com', status: 'INVITED' }],
+    });
+    await expect(db('staff_invitations').select('staff_id')).resolves.toEqual([
+      { staff_id: invited.id },
+    ]);
+  });
+
+  it('answers STAFF_ALREADY_EXISTS for an email taken in another case', async () => {
+    await seed(SUPPORT_ID, 'taken@test.com', StaffRole.SUPPORT, StaffStatus.ACTIVE);
+    const body = await gql(
+      'mutation { inviteStaff(input: { email: "TAKEN@test.com", role: FINANCE }) { id } }',
+      ADMIN,
+    );
+    expect(body.errors?.[0].extensions).toEqual({ code: 'STAFF_ALREADY_EXISTS' });
+    await expect(db('staff').count({ n: '*' }).first()).resolves.toEqual({ n: 1 });
+  });
+
+  it.each([
+    ['Support', `Dev ${SUPPORT_ID}:bo`],
+    ['Finance', `Dev ${FINANCE_ID}:bo,bo:settings,bo:settings:modify`],
+    ['Compliance', `Dev ${COMPLIANCE_ID}:bo`],
+  ])('%s cannot invite staff: FORBIDDEN, nothing created', async (_role, authorization) => {
+    const body = await gql(
+      'mutation { inviteStaff(input: { email: "new@test.com", role: SUPPORT }) { id } }',
+      authorization,
+    );
+    expect(body.errors?.[0].extensions.code).toBe('FORBIDDEN');
+    await expect(db('staff').count({ n: '*' }).first()).resolves.toEqual({ n: 0 });
+  });
+
+  it('refuses to deactivate the caller themselves: CANNOT_DEACTIVATE_SELF', async () => {
+    await seed(ADMIN_ID, 'admin@test.com', StaffRole.ADMIN, StaffStatus.ACTIVE);
+    await seed(SUPPORT_ID, 'support@test.com', StaffRole.ADMIN, StaffStatus.ACTIVE);
+    const body = await gql(`mutation { deactivateStaff(staffId: "${ADMIN_ID}") { id } }`, ADMIN);
+    expect(body.errors?.[0].extensions).toEqual({ code: 'CANNOT_DEACTIVATE_SELF' });
+    await expect(statusOf(ADMIN_ID)).resolves.toBe(StaffStatus.ACTIVE);
+  });
+
+  it('refuses to deactivate the last active admin: LAST_ADMIN', async () => {
+    await seed(ADMIN_ID, 'admin@test.com', StaffRole.ADMIN, StaffStatus.ACTIVE);
+    const body = await gql(
+      `mutation { deactivateStaff(staffId: "${ADMIN_ID}") { id } }`,
+      DEV_ADMIN,
+    );
+    expect(body.errors?.[0].extensions).toEqual({ code: 'LAST_ADMIN' });
+    await expect(statusOf(ADMIN_ID)).resolves.toBe(StaffStatus.ACTIVE);
+  });
+
+  it('deactivates a member and revokes their sessions', async () => {
+    await seed(ADMIN_ID, 'admin@test.com', StaffRole.ADMIN, StaffStatus.ACTIVE);
+    await seed(SUPPORT_ID, 'support@test.com', StaffRole.SUPPORT, StaffStatus.ACTIVE);
+    await session(SUPPORT_ID);
+    const body = await gql(
+      `mutation { deactivateStaff(staffId: "${SUPPORT_ID}") { id status } }`,
+      ADMIN,
+    );
+    expect(body.errors).toBeUndefined();
+    expect(body.data).toEqual({ deactivateStaff: { id: SUPPORT_ID, status: 'DEACTIVATED' } });
+    await expect(statusOf(SUPPORT_ID)).resolves.toBe(StaffStatus.DEACTIVATED);
+    await expect(revokedSessionIds()).resolves.toEqual([SESSION_ID]);
+  });
+
+  it('changes a role and revokes the sessions of that member', async () => {
+    await seed(ADMIN_ID, 'admin@test.com', StaffRole.ADMIN, StaffStatus.ACTIVE);
+    await seed(SUPPORT_ID, 'support@test.com', StaffRole.SUPPORT, StaffStatus.ACTIVE);
+    await session(SUPPORT_ID);
+    const body = await gql(
+      `mutation { changeStaffRole(staffId: "${SUPPORT_ID}", role: FINANCE) { id role } }`,
+      ADMIN,
+    );
+    expect(body.errors).toBeUndefined();
+    expect(body.data).toEqual({ changeStaffRole: { id: SUPPORT_ID, role: 'FINANCE' } });
+    await expect(repo.findById(SUPPORT_ID)).resolves.toMatchObject({ role: StaffRole.FINANCE });
+    await expect(revokedSessionIds()).resolves.toEqual([SESSION_ID]);
+  });
+
+  it('staffMe returns the member with the permissions of their role', async () => {
+    await seed(FINANCE_ID, 'finance@test.com', StaffRole.FINANCE, StaffStatus.ACTIVE);
+    const body = await gql('{ staffMe { id email role permissions } }', `Dev ${FINANCE_ID}:bo`);
+    expect(body.errors).toBeUndefined();
+    expect(body.data).toEqual({
+      staffMe: {
+        id: FINANCE_ID,
+        email: 'finance@test.com',
+        role: 'FINANCE',
+        permissions: ['bo', 'bo:settings', 'bo:settings:modify'],
+      },
+    });
+  });
+
+  it('staffMe refuses a user token (no bo permission): FORBIDDEN', async () => {
+    const body = await gql('{ staffMe { id } }', `Dev ${FINANCE_ID}:wallet`);
+    expect(body.errors?.[0].extensions.code).toBe('FORBIDDEN');
+  });
+});

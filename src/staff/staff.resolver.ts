@@ -1,22 +1,28 @@
 import { NotImplementedException } from '@nestjs/common';
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import type { AuthUser } from '../auth/auth-user.js';
+import { CurrentUser } from '../auth/current-user.decorator.js';
 import { RequirePermission } from '../permissions/require-permission.decorator.js';
 import { StaffRole } from './permissions.js';
 import { ChangeOwnStaffPasswordInput, InviteStaffInput } from './staff.inputs.js';
 import { StaffMe, StaffMember } from './staff.model.js';
+import { StaffService } from './staff.service.js';
 
 /**
- * Staff management and the staff member's own account. Contract only: every operation throws until
- * it is implemented. Permissions are listed in `permissions.ts`.
+ * Staff management and the staff member's own account. Staff management is implemented;
+ * `changeOwnStaffPassword` is still a stub (it throws until it is implemented).
+ * Permissions are listed in `permissions.ts`.
  */
 @Resolver()
 export class StaffResolver {
+  constructor(private readonly staff: StaffService) {}
+
   @RequirePermission('bo:staff')
   @Query(() => [StaffMember], {
     description: 'All staff accounts of this client. Requires bo:staff. Errors: FORBIDDEN.',
   })
-  staffMembers(): StaffMember[] {
-    throw new NotImplementedException('staffMembers is not implemented yet');
+  staffMembers(): Promise<StaffMember[]> {
+    return this.staff.list();
   }
 
   @RequirePermission('bo:staff:modify')
@@ -24,8 +30,11 @@ export class StaffResolver {
     description:
       'Creates an INVITED staff member and emails a one-time invitation link (valid 48 hours). Requires bo:staff:modify. Errors: FORBIDDEN, BAD_USER_INPUT (extensions.field), STAFF_ALREADY_EXISTS.',
   })
-  inviteStaff(@Args('input') _input: InviteStaffInput): StaffMember {
-    throw new NotImplementedException('inviteStaff is not implemented yet');
+  inviteStaff(
+    @CurrentUser() user: AuthUser,
+    @Args('input') input: InviteStaffInput,
+  ): Promise<StaffMember> {
+    return this.staff.invite(user.id, input);
   }
 
   @RequirePermission('bo:staff:modify')
@@ -33,8 +42,11 @@ export class StaffResolver {
     description:
       'Emails a new invitation link to an INVITED staff member; earlier links stop working. Requires bo:staff:modify. Errors: FORBIDDEN, STAFF_NOT_FOUND, NOT_INVITED.',
   })
-  resendStaffInvitation(@Args('staffId', { type: () => ID }) _staffId: string): StaffMember {
-    throw new NotImplementedException('resendStaffInvitation is not implemented yet');
+  resendStaffInvitation(
+    @CurrentUser() user: AuthUser,
+    @Args('staffId', { type: () => ID }) staffId: string,
+  ): Promise<StaffMember> {
+    return this.staff.resendInvitation(user.id, staffId);
   }
 
   @RequirePermission('bo:staff:modify')
@@ -42,8 +54,11 @@ export class StaffResolver {
     description:
       'Deactivates a staff member and ends their sessions (an access token already issued stays valid up to 15 minutes). Requires bo:staff:modify. Errors: FORBIDDEN, STAFF_NOT_FOUND, CANNOT_DEACTIVATE_SELF, LAST_ADMIN.',
   })
-  deactivateStaff(@Args('staffId', { type: () => ID }) _staffId: string): StaffMember {
-    throw new NotImplementedException('deactivateStaff is not implemented yet');
+  deactivateStaff(
+    @CurrentUser() user: AuthUser,
+    @Args('staffId', { type: () => ID }) staffId: string,
+  ): Promise<StaffMember> {
+    return this.staff.deactivate(user.id, staffId);
   }
 
   @RequirePermission('bo:staff:modify')
@@ -52,10 +67,11 @@ export class StaffResolver {
       "Changes the role and ends the staff member's sessions, so they log in again with the new permissions (an access token already issued stays valid up to 15 minutes). Requires bo:staff:modify. Errors: FORBIDDEN, STAFF_NOT_FOUND, LAST_ADMIN.",
   })
   changeStaffRole(
-    @Args('staffId', { type: () => ID }) _staffId: string,
-    @Args('role', { type: () => StaffRole }) _role: StaffRole,
-  ): StaffMember {
-    throw new NotImplementedException('changeStaffRole is not implemented yet');
+    @CurrentUser() user: AuthUser,
+    @Args('staffId', { type: () => ID }) staffId: string,
+    @Args('role', { type: () => StaffRole }) role: StaffRole,
+  ): Promise<StaffMember> {
+    return this.staff.changeRole(user.id, staffId, role);
   }
 
   @RequirePermission('bo')
@@ -63,8 +79,8 @@ export class StaffResolver {
     description:
       'The logged-in staff member with the permissions of their role. Requires a staff login (bo). Errors: UNAUTHENTICATED, FORBIDDEN (e.g. a user token), STAFF_NOT_FOUND.',
   })
-  staffMe(): StaffMe {
-    throw new NotImplementedException('staffMe is not implemented yet');
+  staffMe(@CurrentUser() user: AuthUser): Promise<StaffMe> {
+    return this.staff.me(user.id);
   }
 
   @RequirePermission('bo')
