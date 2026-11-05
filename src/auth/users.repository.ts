@@ -37,7 +37,7 @@ export interface LoginLockPolicy {
   now: Date;
   /** The failure that reaches this count locks the account. */
   maxFailedAttempts: number;
-  lockUntil: Date;
+  lockDurationMs: number;
 }
 
 interface UserRow {
@@ -106,16 +106,19 @@ export class UsersRepository {
       if (row.locked_until && row.locked_until > policy.now) return row.locked_until;
 
       const attempts = row.failed_login_attempts + 1;
-      const locks = attempts >= policy.maxFailedAttempts;
+      const lockUntil =
+        attempts >= policy.maxFailedAttempts
+          ? new Date(policy.now.getTime() + policy.lockDurationMs)
+          : null;
       await trx(USERS)
         .where({ id: userId })
         .update({
-          // Counting starts again after the lock.
-          failed_login_attempts: locks ? 0 : attempts,
-          locked_until: locks ? policy.lockUntil : null,
+// Counting starts again after the lock.
+          failed_login_attempts: lockUntil ? 0 : attempts,
+          locked_until: lockUntil,
           updated_at: policy.now,
         });
-      return locks ? policy.lockUntil : null;
+      return lockUntil;
     });
   }
 
