@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { AuthErrorCode, authError } from './auth-errors.js';
 
+// Caps the work argon2 does for one request (register and login).
+export const PASSWORD_MAX_LENGTH = 128;
+
 export const REGISTER_INPUT_MESSAGES = {
   emailInvalid: 'Email must be a valid email address',
   emailTooLong: 'Email must be at most 255 characters',
@@ -27,8 +30,7 @@ export const registerInputSchema = z.object({
   password: z
     .string()
     .min(8, REGISTER_INPUT_MESSAGES.passwordTooShort)
-    // Caps the work argon2 does for one request.
-    .max(128, REGISTER_INPUT_MESSAGES.passwordTooLong)
+    .max(PASSWORD_MAX_LENGTH, REGISTER_INPUT_MESSAGES.passwordTooLong)
     .regex(/\d/, REGISTER_INPUT_MESSAGES.passwordNoDigit)
     .regex(/\p{Lu}/u, REGISTER_INPUT_MESSAGES.passwordNoUppercase)
     .regex(/[^\p{L}\p{N}]/u, REGISTER_INPUT_MESSAGES.passwordNoSpecial),
