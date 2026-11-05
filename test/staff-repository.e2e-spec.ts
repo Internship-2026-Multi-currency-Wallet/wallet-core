@@ -134,6 +134,35 @@ describe('StaffRepository (e2e, real MySQL)', () => {
     });
   });
 
+  describe('locking', () => {
+    beforeEach(async () => {
+      await repo.insert(staff());
+    });
+
+    it('answers the staff record under lock, and undefined for an unknown id', async () => {
+      await repo.transaction(async (tx) => {
+        await expect(tx.lockById(ADMIN_ID)).resolves.toMatchObject({
+          id: ADMIN_ID,
+          email: 'admin@test.com',
+        });
+        await expect(tx.lockById(OTHER_ID)).resolves.toBeUndefined();
+      });
+    });
+
+    it('keeps the row locked inside the transaction, so another connection cannot lock it', async () => {
+      await repo.transaction(async (tx) => {
+        await tx.lockById(ADMIN_ID);
+        const error = await db
+          .raw('SELECT id FROM staff WHERE id = ? FOR UPDATE NOWAIT', [ADMIN_ID])
+          .then(
+            () => undefined,
+            (err: { code?: string; errno?: number }) => err,
+          );
+        expect(error).toMatchObject({ code: 'ER_LOCK_NOWAIT', errno: 3572 });
+      });
+    });
+  });
+
   describe('invitations', () => {
     const HASH = 'a'.repeat(64);
     const expiresAt = new Date('2026-11-06T10:00:00.123Z');

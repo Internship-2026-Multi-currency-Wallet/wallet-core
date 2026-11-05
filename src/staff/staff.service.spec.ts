@@ -27,6 +27,8 @@ class FakeStaffRepository {
   readonly records = new Map<string, StaffRecord>();
   readonly invitations: (NewInvitation & { expired?: Date })[] = [];
   readonly revocations: Revocation[] = [];
+  /** Lock, read and write calls in order, to check the locking protocol. */
+  readonly calls: string[] = [];
 
   seed(id: string, overrides: Partial<StaffRecord> = {}): void {
     this.records.set(id, {
@@ -61,6 +63,12 @@ class FakeStaffRepository {
   }
 
   findById(id: string): Promise<StaffRecord | undefined> {
+    this.calls.push('findById');
+    return Promise.resolve(this.records.get(id));
+  }
+
+  lockById(id: string): Promise<StaffRecord | undefined> {
+    this.calls.push('lockById');
     return Promise.resolve(this.records.get(id));
   }
 
@@ -69,12 +77,14 @@ class FakeStaffRepository {
   }
 
   update(id: string, patch: { role?: StaffRole; status?: StaffStatus }, at: Date): Promise<void> {
+    this.calls.push('update');
     const record = this.records.get(id);
     if (record) this.records.set(id, { ...record, ...patch, updatedAt: at });
     return Promise.resolve();
   }
 
   lockActiveAdminIds(): Promise<string[]> {
+    this.calls.push('lockActiveAdminIds');
     const ids = [...this.records.values()]
       .filter((r) => r.role === StaffRole.ADMIN && r.status === StaffStatus.ACTIVE)
       .map((r) => r.id)
@@ -83,6 +93,7 @@ class FakeStaffRepository {
   }
 
   revokeSessions(staffId: string, at: Date): Promise<void> {
+    this.calls.push('revokeSessions');
     this.revocations.push({ staffId, at });
     return Promise.resolve();
   }
@@ -93,6 +104,7 @@ class FakeStaffRepository {
   }
 
   expireInvitations(staffId: string, at: Date): Promise<void> {
+    this.calls.push('expireInvitations');
     for (const invitation of this.invitations) {
       if (invitation.staffId === staffId && !invitation.expired) invitation.expired = at;
     }
@@ -203,6 +215,14 @@ describe('StaffService.resendInvitation', () => {
     expect(error.extensions).toEqual({ code: 'STAFF_NOT_FOUND' });
   });
 
+  it('reads the invited member through lockById, before expiring the old invitation', async () => {
+    const { service, repo } = setup();
+    repo.seed(SUPPORT_ID, { status: StaffStatus.INVITED });
+    await service.resendInvitation(ADMIN_ID, SUPPORT_ID, NOW);
+
+    expect(repo.calls).toEqual(['lockById', 'expireInvitations']);
+  });
+
   it('expires the old invitation and adds a new valid one', async () => {
     const { service, repo } = setup();
     const { id } = await service.invite(
@@ -285,6 +305,15 @@ describe('StaffService.deactivate', () => {
     expect(repo.revocations).toHaveLength(0);
     expect(logger.info).not.toHaveBeenCalled();
   });
+
+  it('locks the active admins, then the target, before changing anything', async () => {
+    const { service, repo } = setup();
+    repo.seed(ADMIN_ID, { role: StaffRole.ADMIN });
+    repo.seed(SUPPORT_ID, { role: StaffRole.SUPPORT });
+    await service.deactivate(DEV_ACTOR_ID, SUPPORT_ID, NOW);
+
+    expect(repo.calls.slice(0, 2)).toEqual(['lockActiveAdminIds', 'lockById']);
+  });
 });
 
 describe('StaffService.changeRole', () => {
@@ -344,6 +373,15 @@ describe('StaffService.changeRole', () => {
       service.changeRole(DEV_ACTOR_ID, SUPPORT_ID, StaffRole.FINANCE, NOW),
     );
     expect(error.extensions).toEqual({ code: 'STAFF_NOT_FOUND' });
+  });
+
+  it('locks the active admins, then the target, before changing anything, also for a non-admin', async () => {
+    const { service, repo } = setup();
+    repo.seed(ADMIN_ID, { role: StaffRole.ADMIN });
+    repo.seed(SUPPORT_ID, { role: StaffRole.SUPPORT });
+    await service.changeRole(DEV_ACTOR_ID, SUPPORT_ID, StaffRole.FINANCE, NOW);
+
+    expect(repo.calls.slice(0, 2)).toEqual(['lockActiveAdminIds', 'lockById']);
   });
 });
 

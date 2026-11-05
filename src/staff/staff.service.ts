@@ -50,7 +50,7 @@ export class StaffService {
     now: Date = new Date(),
   ): Promise<StaffMember> {
     const record = await this.staff.transaction(async (tx) => {
-      const found = await findOrThrow(tx, staffId);
+      const found = await lockOrThrow(tx, staffId);
       if (found.status !== StaffStatus.INVITED) {
         throw staffError(StaffErrorCode.NotInvited, STAFF_ERROR_MESSAGES.notInvited);
       }
@@ -70,10 +70,11 @@ export class StaffService {
       );
     }
     const { record, changed } = await this.staff.transaction(async (tx) => {
-      const target = await findOrThrow(tx, staffId);
+      const admins = await tx.lockActiveAdminIds();
+      const target = await lockOrThrow(tx, staffId);
       if (target.status === StaffStatus.DEACTIVATED) return { record: target, changed: false };
       if (target.status === StaffStatus.ACTIVE && target.role === StaffRole.ADMIN) {
-        await assertNotLastAdmin(tx, staffId);
+        assertNotLastAdmin(admins, staffId);
       }
       await tx.update(staffId, { status: StaffStatus.DEACTIVATED }, now);
       await tx.revokeSessions(staffId, now);
@@ -93,10 +94,11 @@ export class StaffService {
     now: Date = new Date(),
   ): Promise<StaffMember> {
     const { before, record } = await this.staff.transaction(async (tx) => {
-      const target = await findOrThrow(tx, staffId);
+      const admins = await tx.lockActiveAdminIds();
+      const target = await lockOrThrow(tx, staffId);
       if (target.role === role) return { before: target, record: target };
       if (target.status === StaffStatus.ACTIVE && target.role === StaffRole.ADMIN) {
-        await assertNotLastAdmin(tx, staffId);
+        assertNotLastAdmin(admins, staffId);
       }
       await tx.update(staffId, { role }, now);
       await tx.revokeSessions(staffId, now);
@@ -126,9 +128,8 @@ export class StaffService {
   }
 }
 
-/** Throws LAST_ADMIN when the target is the only ACTIVE admin. Call inside a transaction. */
-async function assertNotLastAdmin(tx: StaffRepository, staffId: string): Promise<void> {
-  const admins = await tx.lockActiveAdminIds();
+/** Throws LAST_ADMIN when the target is the only ACTIVE admin in the locked `admins` list. */
+function assertNotLastAdmin(admins: string[], staffId: string): void {
   if (admins.length === 1 && admins[0] === staffId) {
     throw staffError(StaffErrorCode.LastAdmin, STAFF_ERROR_MESSAGES.lastAdmin);
   }
@@ -142,6 +143,12 @@ function parseEmail(email: string): string {
 
 async function findOrThrow(repo: StaffRepository, staffId: string): Promise<StaffRecord> {
   const record = await repo.findById(staffId);
+  if (!record) throw staffError(StaffErrorCode.StaffNotFound, STAFF_ERROR_MESSAGES.staffNotFound);
+  return record;
+}
+
+async function lockOrThrow(tx: StaffRepository, staffId: string): Promise<StaffRecord> {
+  const record = await tx.lockById(staffId);
   if (!record) throw staffError(StaffErrorCode.StaffNotFound, STAFF_ERROR_MESSAGES.staffNotFound);
   return record;
 }

@@ -91,8 +91,9 @@ export class StaffRepository {
   }
 
   /**
-   * Ids of the ACTIVE admins, locked (`FOR UPDATE`) until the transaction ends, so two concurrent
-   * demotions or deactivations cannot both see "another admin is left". Call inside `transaction`.
+   * Ids of the ACTIVE admins, locked (`FOR UPDATE`) until the transaction ends. Every role or status
+   * change locks the active admins first, then its target, so these changes serialize and can't
+   * remove the last admin. Call inside `transaction`.
    */
   async lockActiveAdminIds(): Promise<string[]> {
     return (await this.db(STAFF)
@@ -114,6 +115,12 @@ export class StaffRepository {
 
   async findById(id: string): Promise<StaffRecord | undefined> {
     const row = (await this.db(STAFF).where({ id }).first()) as StaffRow | undefined;
+    return row && toRecord(row);
+  }
+
+  /** `findById` with `FOR UPDATE`: call inside `transaction`; the row stays locked until it ends. */
+  async lockById(id: string): Promise<StaffRecord | undefined> {
+    const row = (await this.db(STAFF).where({ id }).forUpdate().first()) as StaffRow | undefined;
     return row && toRecord(row);
   }
 
