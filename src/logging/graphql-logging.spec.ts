@@ -1,6 +1,7 @@
 import { Writable } from 'node:stream';
+import { ApolloServer } from '@apollo/server';
 import { GraphQLError, buildSchema, graphql } from 'graphql';
-import { pino } from 'pino';
+import { type Logger, pino } from 'pino';
 import { type GraphqlLoggingOptions, graphqlLoggingPlugin } from './graphql-logging.js';
 
 type Plugin = ReturnType<typeof graphqlLoggingPlugin>;
@@ -16,8 +17,8 @@ interface LogLine {
   err?: { type: string; message: string; stack: string };
 }
 
-/** Runs the plugin's error hook on one error and returns the JSON line it logged. */
-async function logError(error: GraphQLError, options?: GraphqlLoggingOptions): Promise<LogLine> {
+/** A real pino logger whose JSON lines are collected in `lines`. */
+function captureLog() {
   const lines: string[] = [];
   const stream = new Writable({
     write(chunk: Buffer, _encoding, done) {
@@ -26,7 +27,12 @@ async function logError(error: GraphQLError, options?: GraphqlLoggingOptions): P
     },
   });
   const log = pino({ formatters: { level: (label) => ({ level: label }) } }, stream);
+  return { log, lines };
+}
 
+/** Runs the plugin's error hook on one error and returns the JSON line it logged. */
+async function logError(error: GraphQLError, options?: GraphqlLoggingOptions): Promise<LogLine> {
+  const { log, lines } = captureLog();
   const listener = await graphqlLoggingPlugin(options).requestDidStart?.({} as StartContext);
   await listener?.didEncounterErrors?.({
     contextValue: { req: { log } },
@@ -128,5 +134,58 @@ describe('graphqlLoggingPlugin, a resolver returning a wrong type', () => {
     await logError(error);
     expect(error.message).toContain('secret-hash');
     expect(error.originalError?.stack).toContain('secret-hash');
+  });
+});
+
+describe('graphqlLoggingPlugin, a variable of a wrong shape from the client', () => {
+  const typeDefs =
+    'input LoginInput { email: String! password: String! } type Query { login(input: LoginInput!): Boolean }';
+
+  /** Sends `login` through a real Apollo server with the plugin and returns the line it logged. */
+  async function logVariableError(input: Record<string, unknown>): Promise<LogLine> {
+    const { log, lines } = captureLog();
+    const server = new ApolloServer<{ req: { log: Logger } }>({
+      typeDefs,
+      resolvers: { Query: { login: () => true } },
+      plugins: [graphqlLoggingPlugin()],
+    });
+    await server.start();
+    await server.executeOperation(
+      { query: 'query Login($input: LoginInput!) { login(input: $input) }', variables: { input } },
+      { contextValue: { req: { log } } },
+    );
+    await server.stop();
+    expect(lines).toHaveLength(1);
+    return JSON.parse(lines[0]) as LogLine;
+  }
+
+  it.each([
+    [
+      'an unknown field',
+      { email: 'user@example.com', password: 'MyPass123', remember: true },
+      'MyPass123',
+      'Variable "$input" got invalid value [REDACTED]; Field "remember" is not defined by type "LoginInput".',
+    ],
+    [
+      'a missing field, with "; " in the password',
+      { password: 'My; Pass; 123' },
+      'Pass',
+      'Variable "$input" got invalid value [REDACTED]; Field "email" of required type "String!" was not provided.',
+    ],
+    [
+      'a wrong type',
+      { email: 'user@example.com', password: 12345678 },
+      '12345678',
+      'Variable "$input" got invalid value [REDACTED] at "input.password"; String cannot represent a non string value: [REDACTED]',
+    ],
+  ])('hides the variable for %s and keeps the reason', async (_case, input, secret, message) => {
+    const line = await logVariableError(input);
+    expect(line).toMatchObject({
+      level: 'warn',
+      code: 'BAD_USER_INPUT',
+      msg: `GraphQL error: ${message}`,
+    });
+    expect(JSON.stringify(line)).not.toContain(secret);
+    expect(JSON.stringify(line)).not.toContain('user@example.com');
   });
 });

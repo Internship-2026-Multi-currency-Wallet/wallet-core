@@ -34,8 +34,15 @@ const CLIENT_ERROR_CODES = new Set([
  */
 const COERCED_VALUE = /(cannot represent [^:]*value): .*$/s;
 
+/**
+ * A variable of a wrong shape is quoted whole, password included:
+ * `Variable "$input" got invalid value { password: "…" }[ at "input.x"]; <reason>`. The value ends
+ * before the last `; `, so a `; ` inside it only hides more.
+ */
+const VARIABLE_VALUE = /(got invalid value ).*?((?: at "[\w.[\]]*")?; [^;]*)$/s;
+
 function withoutValue(text: string): string {
-  return text.replace(COERCED_VALUE, `$1: ${REDACTED}`);
+  return text.replace(VARIABLE_VALUE, `$1${REDACTED}$2`).replace(COERCED_VALUE, `$1: ${REDACTED}`);
 }
 
 /**
