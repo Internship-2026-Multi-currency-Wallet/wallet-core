@@ -94,7 +94,7 @@ describe('UsersRepository (e2e, real MySQL)', () => {
     const ID = '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b';
     const NOW = new Date('2026-11-04T10:00:00.000Z');
     const LOCK_UNTIL = new Date('2026-11-04T10:15:00.000Z');
-    const policy = { now: NOW, maxFailedAttempts: 5, lockUntil: LOCK_UNTIL };
+    const policy = { now: NOW, maxFailedAttempts: 5, lockDurationMs: 15 * 60 * 1000 };
 
     const state = () =>
       db('users').where({ id: ID }).first('failed_login_attempts', 'locked_until', 'updated_at');
@@ -121,9 +121,8 @@ describe('UsersRepository (e2e, real MySQL)', () => {
       await repo.insert(user());
       await db('users').where({ id: ID }).update({ locked_until: LOCK_UNTIL });
       const later = { ...policy, now: new Date('2026-11-04T10:05:00.000Z') };
-      const extended = { ...later, lockUntil: new Date('2026-11-04T10:20:00.000Z') };
 
-      await expect(repo.recordFailedLogin(ID, extended)).resolves.toEqual(LOCK_UNTIL);
+      await expect(repo.recordFailedLogin(ID, later)).resolves.toEqual(LOCK_UNTIL);
       await expect(state()).resolves.toMatchObject({
         failed_login_attempts: 0,
         locked_until: LOCK_UNTIL,
@@ -202,7 +201,11 @@ describe('UsersRepository (e2e, real MySQL)', () => {
       await db('users').where({ id: ID }).update({ failed_login_attempts: 4 });
 
       const [failure, success] = await Promise.all([
-        repo.recordFailedLogin(ID, { now: NOW, maxFailedAttempts: 5, lockUntil }),
+        repo.recordFailedLogin(ID, {
+          now: NOW,
+          maxFailedAttempts: 5,
+          lockDurationMs: 15 * 60 * 1000,
+        }),
         repo.recordSuccessfulLogin(ID, NOW),
       ]);
 

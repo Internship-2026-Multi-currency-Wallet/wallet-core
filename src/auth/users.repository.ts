@@ -34,7 +34,7 @@ export interface UserCredentials {
 export interface LoginLockPolicy {
   now: Date;
   maxFailedAttempts: number;
-  lockUntil: Date;
+  lockDurationMs: number;
 }
 
 interface UserRow {
@@ -93,15 +93,18 @@ export class UsersRepository {
       if (row.locked_until && row.locked_until > policy.now) return row.locked_until;
 
       const attempts = row.failed_login_attempts + 1;
-      const locks = attempts >= policy.maxFailedAttempts;
+      const lockUntil =
+        attempts >= policy.maxFailedAttempts
+          ? new Date(policy.now.getTime() + policy.lockDurationMs)
+          : null;
       await trx(USERS)
         .where({ id: userId })
         .update({
-          failed_login_attempts: locks ? 0 : attempts,
-          locked_until: locks ? policy.lockUntil : null,
+          failed_login_attempts: lockUntil ? 0 : attempts,
+          locked_until: lockUntil,
           updated_at: policy.now,
         });
-      return locks ? policy.lockUntil : null;
+      return lockUntil;
     });
   }
 
