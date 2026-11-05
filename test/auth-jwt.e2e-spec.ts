@@ -98,4 +98,20 @@ describe('access token (e2e, DEV_AUTH=false)', () => {
     const body = await me(`Bearer ${signed(claims())}`);
     expect(body.errors?.[0].extensions.code).toBe('UNAUTHENTICATED');
   });
+
+  describe('a staff endpoint (staffSettings requires bo:settings)', () => {
+    const staffSettings = (claims: Record<string, unknown>) =>
+      gql('{ staffSettings { key } }', `Bearer ${signed(claims)}`);
+
+    it('is FORBIDDEN for a client token, even with the staff permission', async () => {
+      const body = await staffSettings({ aud: 'wallet', permissions: ['bo:settings'] });
+      expect(body.errors?.[0].extensions.code).toBe('FORBIDDEN');
+    });
+
+    it('works for a back-office token with the permission', async () => {
+      const body = await staffSettings({ aud: 'backoffice', permissions: ['bo:settings'] });
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.staffSettings).toEqual(expect.any(Array));
+    });
+  });
 });
