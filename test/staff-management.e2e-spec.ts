@@ -60,6 +60,9 @@ describe('staff management (e2e, DEV_AUTH=true, real MySQL)', () => {
 
   const statusOf = async (id: string) => (await repo.findById(id))?.status;
 
+  const tokenHashesOf = async (staffId: string) =>
+    (await db('staff_invitations').where({ staff_id: staffId }).pluck('token_hash')) as string[];
+
   beforeAll(async () => {
     app = await createApp({ DEV_AUTH: 'true', CLIENT: 'demo' });
     db = createKnex(process.env.DATABASE_URL!);
@@ -187,5 +190,64 @@ describe('staff management (e2e, DEV_AUTH=true, real MySQL)', () => {
   it('staffMe refuses a user token (no bo permission): FORBIDDEN', async () => {
     const body = await gql('{ staffMe { id } }', `Dev ${FINANCE_ID}:wallet`);
     expect(body.errors?.[0].extensions.code).toBe('FORBIDDEN');
+  });
+
+  it('deactivating an invited member makes their invitation link unusable', async () => {
+    const invited = await gql(
+      'mutation { inviteStaff(input: { email: "new@test.com", role: SUPPORT }) { id } }',
+      ADMIN,
+    );
+    const staffId = (invited.data?.inviteStaff as { id: string }).id;
+
+    const body = await gql(`mutation { deactivateStaff(staffId: "${staffId}") { status } }`, ADMIN);
+    expect(body.errors).toBeUndefined();
+
+    const [tokenHash] = await tokenHashesOf(staffId);
+    await expect(repo.consumeInvitation(tokenHash, new Date())).resolves.toBeNull();
+  });
+
+  it('resending an invitation returns the member and replaces the old link with a new one', async () => {
+    const invited = await gql(
+      'mutation { inviteStaff(input: { email: "new@test.com", role: SUPPORT }) { id } }',
+      ADMIN,
+    );
+    const staffId = (invited.data?.inviteStaff as { id: string }).id;
+    const [oldHash] = await tokenHashesOf(staffId);
+
+    const body = await gql(
+      `mutation { resendStaffInvitation(staffId: "${staffId}") { id email status } }`,
+      ADMIN,
+    );
+    expect(body.errors).toBeUndefined();
+    expect(body.data).toEqual({
+      resendStaffInvitation: { id: staffId, email: 'new@test.com', status: 'INVITED' },
+    });
+
+    const hashes = await tokenHashesOf(staffId);
+    const newHash = hashes.find((hash) => hash !== oldHash);
+    expect(hashes).toHaveLength(2);
+    expect(newHash).toBeDefined();
+    await expect(repo.consumeInvitation(oldHash, new Date())).resolves.toBeNull();
+    await expect(repo.consumeInvitation(newHash!, new Date())).resolves.toBe(staffId);
+  });
+
+  it('refuses to resend an invitation to an active member: NOT_INVITED', async () => {
+    await seed(SUPPORT_ID, 'support@test.com', StaffRole.SUPPORT, StaffStatus.ACTIVE);
+    const body = await gql(
+      `mutation { resendStaffInvitation(staffId: "${SUPPORT_ID}") { id } }`,
+      ADMIN,
+    );
+    expect(body.errors?.[0].extensions).toEqual({ code: 'NOT_INVITED' });
+    await expect(db('staff_invitations').count({ n: '*' }).first()).resolves.toEqual({ n: 0 });
+  });
+
+  it('refuses to demote the last active admin: LAST_ADMIN, role unchanged', async () => {
+    await seed(ADMIN_ID, 'admin@test.com', StaffRole.ADMIN, StaffStatus.ACTIVE);
+    const body = await gql(
+      `mutation { changeStaffRole(staffId: "${ADMIN_ID}", role: SUPPORT) { id } }`,
+      DEV_ADMIN,
+    );
+    expect(body.errors?.[0].extensions).toEqual({ code: 'LAST_ADMIN' });
+    await expect(repo.findById(ADMIN_ID)).resolves.toMatchObject({ role: StaffRole.ADMIN });
   });
 });

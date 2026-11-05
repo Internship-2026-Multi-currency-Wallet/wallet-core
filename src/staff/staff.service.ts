@@ -77,6 +77,7 @@ export class StaffService {
       }
       await tx.update(staffId, { status: StaffStatus.DEACTIVATED }, now);
       await tx.revokeSessions(staffId, now);
+      await tx.expireInvitations(staffId, now);
       return { record: { ...target, status: StaffStatus.DEACTIVATED }, changed: true };
     });
     if (changed) {

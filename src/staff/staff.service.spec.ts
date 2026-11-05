@@ -393,3 +393,72 @@ describe('StaffService.me', () => {
     expect(error.extensions).toEqual({ code: 'STAFF_NOT_FOUND' });
   });
 });
+
+describe('StaffService.deactivate of an invited member', () => {
+  const DEV_ACTOR_ID = '9e4d2a1b-7c3f-4b8e-a6d5-0f1e2d3c4b5a';
+
+  it('expires the pending invitation so its link stops working', async () => {
+    const { service, repo } = setup();
+    const { id } = await service.invite(
+      DEV_ACTOR_ID,
+      { email: 'new@test.com', role: StaffRole.SUPPORT },
+      NOW,
+    );
+    const deactivatedAt = new Date(NOW.getTime() + HOUR_MS);
+
+    await service.deactivate(DEV_ACTOR_ID, id, deactivatedAt);
+
+    expect(repo.invitations).toHaveLength(1);
+    expect(repo.invitations[0].staffId).toBe(id);
+    expect(repo.invitations[0].expired).toEqual(deactivatedAt);
+  });
+});
+
+describe('StaffService audit lines for resend and demotion', () => {
+  const DEV_ACTOR_ID = '9e4d2a1b-7c3f-4b8e-a6d5-0f1e2d3c4b5a';
+
+  it('logs the resend with actor and staff id, but not the email', async () => {
+    const { service, logger } = setup();
+    const { id } = await service.invite(
+      DEV_ACTOR_ID,
+      { email: 'new@test.com', role: StaffRole.SUPPORT },
+      NOW,
+    );
+    logger.info.mockClear();
+
+    await service.resendInvitation(DEV_ACTOR_ID, id, NOW);
+
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith(
+      { audit: 'staff.resendInvitation', actorId: DEV_ACTOR_ID, staffId: id },
+      'staff action',
+    );
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain('new@test.com');
+  });
+
+  it('demotes an active admin while another active admin exists, revokes sessions and logs from/to', async () => {
+    const { service, repo, logger } = setup();
+    repo.seed(ADMIN_ID, { role: StaffRole.ADMIN });
+    repo.seed(SUPPORT_ID, { role: StaffRole.ADMIN });
+
+    const member = await service.changeRole(ADMIN_ID, SUPPORT_ID, StaffRole.FINANCE, NOW);
+
+    expect(member).toMatchObject({
+      id: SUPPORT_ID,
+      role: StaffRole.FINANCE,
+      status: StaffStatus.ACTIVE,
+    });
+    expect(repo.records.get(SUPPORT_ID)?.role).toBe(StaffRole.FINANCE);
+    expect(repo.revocations).toEqual([{ staffId: SUPPORT_ID, at: NOW }]);
+    expect(logger.info).toHaveBeenCalledWith(
+      {
+        audit: 'staff.changeRole',
+        actorId: ADMIN_ID,
+        staffId: SUPPORT_ID,
+        from: StaffRole.ADMIN,
+        to: StaffRole.FINANCE,
+      },
+      'staff action',
+    );
+  });
+});
