@@ -8,8 +8,9 @@ import type { ClientSettingsService } from '../settings/client-settings.service.
 import { type ClientSettings, settingsCatalog } from '../settings/settings.schema.js';
 import { accessTokenPayloadSchema } from './access-token.js';
 import { AuthService } from './auth.service.js';
-import type { NewSession, SessionsRepository } from './sessions.repository.js';
+import type { ActiveSession, NewSession, SessionsRepository } from './sessions.repository.js';
 import { TokenService, hashRefreshToken } from './tokens.js';
+import type { User } from './user.model.js';
 import {
   InsertUserResult,
   type LoginLockPolicy,
@@ -34,6 +35,8 @@ interface SetupOptions {
   lockedUntil?: Date | null;
   /** What recordSuccessfulLogin answers. */
   lockedMeanwhile?: Date | null;
+  /** What sessions.rotate answers. */
+  rotated?: ActiveSession | null;
 }
 
 const config = AppConfig.fromEnv({});
@@ -51,7 +54,13 @@ function setup(options: SetupOptions = {}) {
       Promise.resolve(options.lockedMeanwhile ?? null),
     ),
   };
-  const sessions = { create: jest.fn((_session: NewSession) => Promise.resolve()) };
+  const sessions = {
+    create: jest.fn((_session: NewSession) => Promise.resolve()),
+    rotate: jest.fn((_hash: string, _newHash: string, _now: Date) =>
+      Promise.resolve(options.rotated ?? null),
+    ),
+    revoke: jest.fn((_hash: string, _now: Date) => Promise.resolve()),
+  };
   const settings = {
     get: jest.fn((_key: string) => Promise.resolve(options.phoneRequiredAt ?? 'never')),
   };
@@ -201,7 +210,7 @@ describe('AuthService.login', () => {
   });
 
   const login = (service: AuthService, password = PASSWORD, email = 'artem@test.com') =>
-    service.login({ email, password }, NOW);
+    service.login({ email, password }, undefined, NOW);
 
   it('creates a session and returns an access token for the user', async () => {
     const { service, users, sessions } = setup({ credentials });
@@ -230,6 +239,21 @@ describe('AuthService.login', () => {
       sub: USER_ID,
       permissions: ['wallet'],
     });
+  });
+
+  it('closes the session of the cookie the browser still sent', async () => {
+    const { service, sessions } = setup({ credentials });
+    await service.login({ email: 'artem@test.com', password: PASSWORD }, 'old-token', NOW);
+    expect(sessions.revoke).toHaveBeenCalledWith(hashRefreshToken('old-token'), NOW);
+  });
+
+  it('closes no session without a previous cookie or when the login fails', async () => {
+    const { service, sessions } = setup({ credentials });
+    await login(service);
+    await service
+      .login({ email: 'artem@test.com', password: 'Wrong1!pass' }, 'old-token', NOW)
+      .catch(() => undefined);
+    expect(sessions.revoke).not.toHaveBeenCalled();
   });
 
   it('answers INVALID_CREDENTIALS for an unknown email', async () => {
@@ -319,5 +343,58 @@ describe('AuthService.login', () => {
         expect(logged).not.toContain(result.payload.accessToken);
       }
     }
+  });
+});
+
+describe('AuthService.refreshSession', () => {
+  const NOW = new Date('2026-11-10T10:00:00.000Z');
+  const SESSION_END = new Date('2026-12-04T10:00:00.000Z');
+  const user: User = {
+    id: '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b',
+    email: 'artem@test.com',
+    phone: null,
+  };
+
+  it('rotates the refresh token and keeps the session end', async () => {
+    const { service, sessions } = setup({
+      rotated: { user, expiresAt: SESSION_END },
+    });
+    const result = await service.refreshSession('old-token', NOW);
+
+    expect(sessions.rotate).toHaveBeenCalledWith(
+      hashRefreshToken('old-token'),
+      hashRefreshToken(result.refreshToken),
+      NOW,
+    );
+    expect(result.refreshToken).not.toBe('old-token');
+    expect(result.sessionExpiresAt).toEqual(SESSION_END);
+    expect(result.payload.user).toEqual(user);
+    expect(result.payload.accessTokenExpiresAt).toEqual(new Date('2026-11-10T10:15:00.000Z'));
+  });
+
+  it.each([
+    ['no cookie', undefined, {}],
+    ['no active session with the token', 'old-token', { rotated: null }],
+  ])('answers INVALID_REFRESH_TOKEN for %s', async (_case, token, options: SetupOptions) => {
+    const { service } = setup(options);
+    const error = await graphqlErrorOf(service.refreshSession(token, NOW));
+    expect(error.message).toBe('Session expired, please log in again');
+    expect(error.extensions).toEqual({ code: 'INVALID_REFRESH_TOKEN' });
+  });
+});
+
+describe('AuthService.logout', () => {
+  const NOW = new Date('2026-11-10T10:00:00.000Z');
+
+  it('closes the session of the cookie', async () => {
+    const { service, sessions } = setup();
+    await service.logout('token', NOW);
+    expect(sessions.revoke).toHaveBeenCalledWith(hashRefreshToken('token'), NOW);
+  });
+
+  it('does nothing without a cookie', async () => {
+    const { service, sessions } = setup();
+    await service.logout(undefined, NOW);
+    expect(sessions.revoke).not.toHaveBeenCalled();
   });
 });

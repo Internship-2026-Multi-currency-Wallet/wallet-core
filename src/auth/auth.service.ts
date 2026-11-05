@@ -14,7 +14,7 @@ import {
 } from './register.schema.js';
 import type { RegisterInput } from './register.input.js';
 import { SessionsRepository } from './sessions.repository.js';
-import { TokenService, newRefreshToken } from './tokens.js';
+import { TokenService, hashRefreshToken, newRefreshToken } from './tokens.js';
 import type { User } from './user.model.js';
 import { InsertUserResult, UsersRepository } from './users.repository.js';
 
@@ -70,7 +70,11 @@ export class AuthService {
     return user;
   }
 
-  async login(input: LoginInput, now: Date = new Date()): Promise<LoginResult> {
+  async login(
+    input: LoginInput,
+    previousRefreshToken?: string,
+    now: Date = new Date(),
+  ): Promise<LoginResult> {
     if (input.password.length > PASSWORD_MAX_LENGTH) throw invalidCredentials();
 
     const user = await this.users.findByEmail(input.email.trim().toLowerCase());
@@ -111,19 +115,58 @@ export class AuthService {
       expiresAt: sessionExpiresAt,
       createdAt: now,
     });
-    const accessToken = this.tokens.signAccessToken(user.id, now);
+    // Revoke the previous browser session because login replaces its refresh cookie.
+    if (previousRefreshToken) {
+      await this.sessions.revoke(hashRefreshToken(previousRefreshToken), now);
+    }
 
     this.logger.info({ userId: user.id }, 'user logged in');
+    return this.result({ id: user.id, email: user.email, phone: user.phone }, refreshToken.token, {
+      sessionExpiresAt,
+      now,
+    });
+  }
+
+  async refreshSession(
+    refreshToken: string | undefined,
+    now: Date = new Date(),
+  ): Promise<LoginResult> {
+    if (!refreshToken) throw invalidRefreshToken();
+    const next = newRefreshToken();
+    const session = await this.sessions.rotate(hashRefreshToken(refreshToken), next.hash, now);
+    if (!session) {
+      this.logger.warn('session refresh rejected');
+      throw invalidRefreshToken();
+    }
+
+    this.logger.info({ userId: session.user.id }, 'session refreshed');
+    return this.result(session.user, next.token, { sessionExpiresAt: session.expiresAt, now });
+  }
+
+  async logout(refreshToken: string | undefined, now: Date = new Date()): Promise<void> {
+    if (refreshToken) await this.sessions.revoke(hashRefreshToken(refreshToken), now);
+  }
+
+  private result(
+    user: User,
+    refreshToken: string,
+    { sessionExpiresAt, now }: { sessionExpiresAt: Date; now: Date },
+  ): LoginResult {
+    const accessToken = this.tokens.signAccessToken(user.id, now);
     return {
       payload: {
         accessToken: accessToken.token,
         accessTokenExpiresAt: accessToken.expiresAt,
-        user: { id: user.id, email: user.email, phone: user.phone },
+        user,
       },
-      refreshToken: refreshToken.token,
+      refreshToken,
       sessionExpiresAt,
     };
   }
+}
+
+function invalidRefreshToken() {
+  return authError(AuthErrorCode.InvalidRefreshToken, AUTH_ERROR_MESSAGES.invalidRefreshToken);
 }
 
 function invalidCredentials() {
