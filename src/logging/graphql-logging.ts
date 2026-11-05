@@ -10,7 +10,7 @@
 import type { ApolloServerPlugin } from '@apollo/server';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Logger } from 'pino';
-import { type GraphqlOperationInfo, requestIdFrom } from './logger.options.js';
+import { type GraphqlOperationInfo, REDACTED, requestIdFrom } from './logger.options.js';
 
 interface GraphqlContext {
   req?: { graphqlOperation?: GraphqlOperationInfo; log?: Logger };
@@ -27,6 +27,29 @@ const CLIENT_ERROR_CODES = new Set([
   'PERSISTED_QUERY_NOT_FOUND',
   'OPERATION_RESOLUTION_FAILURE',
 ]);
+
+/**
+ * GraphQL's coercion errors quote the value, which can be a whole row: a resolver returning a user
+ * for a String field gives `String cannot represent value: { passwordHash: "…" }`.
+ */
+const COERCED_VALUE = /(cannot represent [^:]*value): .*$/s;
+
+function withoutValue(text: string): string {
+  return text.replace(COERCED_VALUE, `$1: ${REDACTED}`);
+}
+
+/**
+ * A copy, because the same error then goes to formatError and a client error's message reaches
+ * the client.
+ */
+function loggableError(error: Error): Error {
+  const message = withoutValue(error.message);
+  if (message === error.message) return error;
+  const copy = Object.assign(Object.create(Object.getPrototypeOf(error) as object) as Error, error);
+  copy.message = message;
+  copy.stack = error.stack?.replace(error.message, () => message);
+  return copy;
+}
 
 export interface GraphqlLoggingOptions {
   /** The service's own business codes (e.g. `INVALID_CREDENTIALS`), logged like the codes above. */
@@ -70,10 +93,11 @@ export function graphqlLoggingPlugin({
               operation: operationName ?? null,
               code,
               path: error.path?.join('.'),
-              ...(clientError ? {} : { err: error.originalError ?? error }),
+              ...(clientError ? {} : { err: loggableError(error.originalError ?? error) }),
             };
-            if (clientError) log.warn(fields, `GraphQL error: ${error.message}`);
-            else log.error(fields, `GraphQL error: ${error.message}`);
+            const msg = `GraphQL error: ${withoutValue(error.message)}`;
+            if (clientError) log.warn(fields, msg);
+            else log.error(fields, msg);
           }
           return Promise.resolve();
         },

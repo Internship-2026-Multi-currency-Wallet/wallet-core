@@ -1,5 +1,5 @@
 import { Writable } from 'node:stream';
-import { GraphQLError } from 'graphql';
+import { GraphQLError, buildSchema, graphql } from 'graphql';
 import { pino } from 'pino';
 import { type GraphqlLoggingOptions, graphqlLoggingPlugin } from './graphql-logging.js';
 
@@ -12,7 +12,8 @@ interface LogLine {
   level: string;
   msg: string;
   code?: string;
-  err?: { message: string; stack: string };
+  path?: string;
+  err?: { type: string; message: string; stack: string };
 }
 
 /** Runs the plugin's error hook on one error and returns the JSON line it logged. */
@@ -83,5 +84,49 @@ describe('graphqlLoggingPlugin', () => {
     );
     expect(line).toMatchObject({ level: 'error', code: 'INTERNAL_SERVER_ERROR' });
     expect(line.err).toMatchObject({ message: 'connect ECONNREFUSED', stack: original.stack });
+  });
+});
+
+describe('graphqlLoggingPlugin, a resolver returning a wrong type', () => {
+  const schema = buildSchema(
+    'enum Role { CLIENT } type Query { email: String, count: Int, role: Role }',
+  );
+  const user = { email: 'user@example.com', passwordHash: 'secret-hash' };
+
+  /** The error GraphQL itself raises for the field, as Apollo passes it to the plugin. */
+  async function coercionError(field: string, value: unknown): Promise<GraphQLError> {
+    const { errors = [] } = await graphql({
+      schema,
+      source: `{ ${field} }`,
+      rootValue: { [field]: value },
+    });
+    expect(errors).toHaveLength(1);
+    return errors[0];
+  }
+
+  it.each([
+    ['email', user, 'secret-hash', 'String cannot represent value: [REDACTED]'],
+    ['count', 1.5, '1.5', 'Int cannot represent non-integer value: [REDACTED]'],
+    ['role', 'secret-role', 'secret-role', 'Enum "Role" cannot represent value: [REDACTED]'],
+  ])('hides the value returned for %s', async (field, value, secret, message) => {
+    const line = await logError(await coercionError(field, value));
+    expect(line).toMatchObject({
+      level: 'error',
+      code: 'INTERNAL_SERVER_ERROR',
+      path: field,
+      msg: `GraphQL error: ${message}`,
+      err: { type: 'GraphQLError', message },
+    });
+    const [firstLine, ...frames] = line.err?.stack.split('\n') ?? [];
+    expect(firstLine).toBe(`GraphQLError: ${message}`);
+    expect(frames[0]).toMatch(/^\s+at /);
+    expect(JSON.stringify(line)).not.toContain(secret);
+  });
+
+  it('does not change the error itself, which formatError gets next', async () => {
+    const error = await coercionError('email', user);
+    await logError(error);
+    expect(error.message).toContain('secret-hash');
+    expect(error.originalError?.stack).toContain('secret-hash');
   });
 });
