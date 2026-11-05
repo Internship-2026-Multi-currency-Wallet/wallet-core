@@ -250,4 +250,27 @@ describe('staff management (e2e, DEV_AUTH=true, real MySQL)', () => {
     expect(body.errors?.[0].extensions).toEqual({ code: 'LAST_ADMIN' });
     await expect(repo.findById(ADMIN_ID)).resolves.toMatchObject({ role: StaffRole.ADMIN });
   });
+
+  it('refuses the sole admin deactivating their own id in upper case: CANNOT_DEACTIVATE_SELF', async () => {
+    await seed(ADMIN_ID, 'admin@test.com', StaffRole.ADMIN, StaffStatus.ACTIVE);
+    const body = await gql(
+      `mutation { deactivateStaff(staffId: "${ADMIN_ID.toUpperCase()}") { id } }`,
+      ADMIN,
+    );
+    expect(body.errors?.[0].extensions).toEqual({ code: 'CANNOT_DEACTIVATE_SELF' });
+    await expect(statusOf(ADMIN_ID)).resolves.toBe(StaffStatus.ACTIVE);
+  });
+
+  it('refuses to demote the sole active admin given in upper case: LAST_ADMIN, row unchanged', async () => {
+    await seed(ADMIN_ID, 'admin@test.com', StaffRole.ADMIN, StaffStatus.ACTIVE);
+    const body = await gql(
+      `mutation { changeStaffRole(staffId: "${ADMIN_ID.toUpperCase()}", role: SUPPORT) { id } }`,
+      DEV_ADMIN,
+    );
+    expect(body.errors?.[0].extensions).toEqual({ code: 'LAST_ADMIN' });
+    await expect(repo.findById(ADMIN_ID)).resolves.toMatchObject({
+      role: StaffRole.ADMIN,
+      status: StaffStatus.ACTIVE,
+    });
+  });
 });
