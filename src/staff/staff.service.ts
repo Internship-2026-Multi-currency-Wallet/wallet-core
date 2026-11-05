@@ -132,7 +132,7 @@ export class StaffService {
   }
 }
 
-/** Throws LAST_ADMIN when the target is the only ACTIVE admin in the locked `admins` list. */
+/** `admins` must come from `lockActiveAdminIds` in the same transaction. */
 function assertNotLastAdmin(admins: string[], staffId: string): void {
   if (admins.length === 1 && admins[0] === staffId) {
     throw staffError(StaffErrorCode.LastAdmin, STAFF_ERROR_MESSAGES.lastAdmin);
@@ -157,7 +157,7 @@ async function lockOrThrow(tx: StaffRepository, staffId: string): Promise<StaffR
   return record;
 }
 
-/** One-time link: only its SHA-256 is stored. The token itself is neither returned nor logged. */
+/** Only the SHA-256 of the token is stored; the token is never returned or logged. */
 async function insertInvitation(tx: StaffRepository, staffId: string, now: Date): Promise<void> {
   const token = randomBytes(32).toString('base64url');
   await tx.insertInvitation({
