@@ -130,12 +130,15 @@ this.logger.error({ err, conversionId }, 'conversion failed'); // pass errors as
 
 Seams let you write business logic now and swap the stand-in for the real thing later without touching that logic.
 
-### Dev auth — `src/auth`
+### Auth — `src/auth`
 
 A global `AuthGuard` asks the registered `AuthStrategy` list who the caller is. Every endpoint requires
 authentication unless it is marked `@Public()`.
 
-With `DEV_AUTH=true` the `DevAuthStrategy` accepts:
+Real users send the access token from `login`: `Authorization: Bearer <jwt>`. `JwtAuthStrategy` verifies it
+locally (HS256 with `JWT_SECRET`, issuer, expiry, claims), the same way rates-service and treasury-service do.
+
+With `DEV_AUTH=true` the `DevAuthStrategy` also accepts:
 
 ```
 Authorization: Dev <userId>:<perm1,perm2>
@@ -144,7 +147,7 @@ Authorization: Dev 100:bo:users,bo:users:modify
 ```
 
 It works for HTTP, GraphQL queries/mutations and GraphQL subscriptions (send `{ "Authorization": "Dev 1:wallet" }`
-as graphql-ws `connectionParams`). With `DEV_AUTH=false` and no real strategy registered, every non-public request is **401**.
+as graphql-ws `connectionParams`). With `DEV_AUTH=false` only the Bearer token is accepted.
 
 `DEV_AUTH=true` is allowed only with `APP_ENV=local` or `staging`; in a client UAT (`*-uat`) the service refuses to start.
 
@@ -157,7 +160,7 @@ balance(@CurrentUser() user: AuthUser) { /* user.id, user.permissions */ }
 publicSettings() { ... }
 ```
 
-**Adding real auth later:** implement `AuthStrategy` (`src/auth/auth-strategy.ts`), register it in
+**Another way to authenticate:** implement `AuthStrategy` (`src/auth/auth-strategy.ts`) and register it in
 `AuthModule` under `AUTH_STRATEGIES`. Nothing else changes.
 
 ### Permissions — `src/permissions`
