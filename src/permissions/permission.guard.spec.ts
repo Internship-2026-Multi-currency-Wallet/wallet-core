@@ -1,6 +1,7 @@
 import { type ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { RequestLike } from '../auth/request-context.js';
+import { UserKind } from '../auth/user-kind.js';
 import { PermissionGuard } from './permission.guard.js';
 import { RequirePermission } from './require-permission.decorator.js';
 
@@ -27,7 +28,7 @@ function context(cls: new () => object, handler: string, request: RequestLike): 
 
 const user = (...permissions: string[]): RequestLike => ({
   headers: {},
-  user: { id: '1', permissions, strategy: 'dev' },
+  user: { id: '1', kind: UserKind.STAFF, permissions, strategy: 'dev' },
 });
 
 describe('PermissionGuard', () => {

@@ -14,7 +14,7 @@ import {
 } from './register.schema.js';
 import type { RegisterInput } from './register.input.js';
 import { SessionsRepository } from './sessions.repository.js';
-import { TokenService, hashRefreshToken, newRefreshToken } from './tokens.js';
+import { TokenService, USER_PERMISSIONS, hashRefreshToken, newRefreshToken } from './tokens.js';
 import type { User } from './user.model.js';
 import { InsertUserResult, UsersRepository } from './users.repository.js';
 
@@ -152,7 +152,10 @@ export class AuthService {
     refreshToken: string,
     { sessionExpiresAt, now }: { sessionExpiresAt: Date; now: Date },
   ): LoginResult {
-    const accessToken = this.tokens.signAccessToken(user.id, now);
+    const accessToken = this.tokens.signAccessToken(
+      { userId: user.id, aud: 'wallet', permissions: USER_PERMISSIONS },
+      now,
+    );
     return {
       payload: {
         accessToken: accessToken.token,
