@@ -28,7 +28,15 @@ const CLIENT_ERROR_CODES = new Set([
   'OPERATION_RESOLUTION_FAILURE',
 ]);
 
-export function graphqlLoggingPlugin(): ApolloServerPlugin<GraphqlContext> {
+export interface GraphqlLoggingOptions {
+  /** The service's own business codes (e.g. `INVALID_CREDENTIALS`), logged like the codes above. */
+  clientErrorCodes?: readonly string[];
+}
+
+export function graphqlLoggingPlugin({
+  clientErrorCodes = [],
+}: GraphqlLoggingOptions = {}): ApolloServerPlugin<GraphqlContext> {
+  const clientCodes = new Set([...CLIENT_ERROR_CODES, ...clientErrorCodes]);
   return {
     requestDidStart() {
       return Promise.resolve({
@@ -55,7 +63,7 @@ export function graphqlLoggingPlugin(): ApolloServerPlugin<GraphqlContext> {
                   ? `HTTP_${status}`
                   : 'INTERNAL_SERVER_ERROR';
             const clientError =
-              CLIENT_ERROR_CODES.has(code) ||
+              clientCodes.has(code) ||
               (typeof status === 'number' && status >= 400 && status < 500);
             const fields = {
               context: 'GraphQL',
