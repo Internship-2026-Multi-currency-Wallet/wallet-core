@@ -210,7 +210,7 @@ describe('AuthService.login', () => {
   });
 
   const login = (service: AuthService, password = PASSWORD, email = 'artem@test.com') =>
-    service.login({ email, password }, NOW);
+    service.login({ email, password }, undefined, NOW);
 
   it('creates a session and returns an access token for the user', async () => {
     const { service, users, sessions } = setup({ credentials });
@@ -243,7 +243,7 @@ describe('AuthService.login', () => {
 
   it('closes the session of the cookie the browser still sent', async () => {
     const { service, sessions } = setup({ credentials });
-    await service.login({ email: 'artem@test.com', password: PASSWORD }, NOW, 'old-token');
+    await service.login({ email: 'artem@test.com', password: PASSWORD }, 'old-token', NOW);
     expect(sessions.revoke).toHaveBeenCalledWith(hashRefreshToken('old-token'), NOW);
   });
 
@@ -251,7 +251,7 @@ describe('AuthService.login', () => {
     const { service, sessions } = setup({ credentials });
     await login(service);
     await service
-      .login({ email: 'artem@test.com', password: 'Wrong1!pass' }, NOW, 'old-token')
+      .login({ email: 'artem@test.com', password: 'Wrong1!pass' }, 'old-token', NOW)
       .catch(() => undefined);
     expect(sessions.revoke).not.toHaveBeenCalled();
   });

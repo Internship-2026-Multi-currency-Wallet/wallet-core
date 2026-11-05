@@ -41,7 +41,7 @@ export class AuthResolver {
     @Context() context: GraphqlContext,
   ): Promise<AuthPayload> {
     const res = httpResponseOf(context);
-    const result = await this.auth.login(input, new Date(), readRefreshToken(context.req));
+    const result = await this.auth.login(input, readRefreshToken(context.req));
     return this.withCookie(res, result);
   }
 

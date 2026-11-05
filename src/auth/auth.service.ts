@@ -72,8 +72,8 @@ export class AuthService {
 
   async login(
     input: LoginInput,
-    now: Date = new Date(),
     previousRefreshToken?: string,
+    now: Date = new Date(),
   ): Promise<LoginResult> {
     if (input.password.length > PASSWORD_MAX_LENGTH) throw invalidCredentials();
 
