@@ -134,6 +134,58 @@ describe('StaffRepository (e2e, real MySQL)', () => {
     });
   });
 
+  describe('deadlock retry', () => {
+    const deadlock = () =>
+      Object.assign(new Error('Deadlock'), { errno: 1213, code: 'ER_LOCK_DEADLOCK' });
+
+    beforeEach(async () => {
+      await repo.insert(staff());
+      await repo.update(ADMIN_ID, { status: StaffStatus.ACTIVE }, at);
+    });
+
+    it('reruns the transaction after a deadlock, and drops the failed attempt', async () => {
+      let attempts = 0;
+      const result = await repo.transaction(async (tx) => {
+        attempts += 1;
+        if (attempts === 1) {
+          await tx.update(ADMIN_ID, { status: StaffStatus.DEACTIVATED }, at);
+          throw deadlock();
+        }
+        await tx.update(ADMIN_ID, { role: StaffRole.FINANCE }, at);
+        return 'second attempt';
+      });
+      expect(result).toBe('second attempt');
+      expect(attempts).toBe(2);
+      await expect(repo.findById(ADMIN_ID)).resolves.toMatchObject({
+        role: StaffRole.FINANCE,
+        status: StaffStatus.ACTIVE,
+      });
+    });
+
+    it('gives up after 3 attempts and rethrows the deadlock', async () => {
+      let attempts = 0;
+      const error = deadlock();
+      await expect(
+        repo.transaction(() => {
+          attempts += 1;
+          return Promise.reject(error);
+        }),
+      ).rejects.toBe(error);
+      expect(attempts).toBe(3);
+    });
+
+    it('does not rerun the transaction for other errors', async () => {
+      let attempts = 0;
+      await expect(
+        repo.transaction(() => {
+          attempts += 1;
+          return Promise.reject(new Error('rule broken'));
+        }),
+      ).rejects.toThrow('rule broken');
+      expect(attempts).toBe(1);
+    });
+  });
+
   describe('locking', () => {
     beforeEach(async () => {
       await repo.insert(staff());

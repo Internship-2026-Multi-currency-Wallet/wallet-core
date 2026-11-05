@@ -320,6 +320,16 @@ describe('StaffService.deactivate', () => {
     expect(repo.calls.slice(0, 2)).toEqual(['lockActiveAdminIds', 'lockById']);
   });
 
+  it('deactivates a member given in upper case, and revokes their sessions by the stored id', async () => {
+    const { service, repo } = setup();
+    repo.seed(ADMIN_ID, { role: StaffRole.ADMIN });
+    repo.seed(SUPPORT_ID, { role: StaffRole.SUPPORT });
+    await service.deactivate(DEV_ACTOR_ID, SUPPORT_ID.toUpperCase(), NOW);
+
+    expect(repo.records.get(SUPPORT_ID)?.status).toBe(StaffStatus.DEACTIVATED);
+    expect(repo.revocations).toEqual([{ staffId: SUPPORT_ID, at: NOW }]);
+  });
+
   it('refuses the sole admin deactivating their own id in upper case, and changes nothing', async () => {
     const { service, repo } = setup();
     repo.seed(ADMIN_ID, { role: StaffRole.ADMIN });

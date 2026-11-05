@@ -9,6 +9,8 @@ const STAFF = 'staff';
 const EMAIL_UNIQUE = 'staff_email_unique';
 const INVITATIONS = 'staff_invitations';
 const SESSIONS = 'staff_sessions';
+const ER_LOCK_DEADLOCK = 1213;
+const MAX_TRANSACTION_ATTEMPTS = 3;
 
 export interface NewInvitation {
   id: string;
@@ -83,12 +85,19 @@ export class StaffRepository {
 
   /** Runs `work` atomically with a repository bound to the transaction. */
   async transaction<T>(work: (tx: StaffRepository) => Promise<T>): Promise<T> {
-    return this.db.transaction((trx) => work(new StaffRepository(trx)));
+    // InnoDB gap locks can deadlock concurrent promotions and resends; a new attempt is safe.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await this.db.transaction((trx) => work(new StaffRepository(trx)));
+      } catch (error) {
+        if (attempt >= MAX_TRANSACTION_ATTEMPTS || !isDeadlock(error)) throw error;
+      }
+    }
   }
 
   /**
    * Every role or status change locks the active admins first, then its target, so these changes
-   * serialize and can't remove the last admin; call inside `transaction`.
+   * can't remove the last admin; a deadlock between them is retried in `transaction`.
    */
   async lockActiveAdminIds(): Promise<string[]> {
     return (await this.db(STAFF)
@@ -187,6 +196,12 @@ export class StaffRepository {
       .first()) as { staff_id: string };
     return row.staff_id;
   }
+}
+
+function isDeadlock(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { errno, code } = error as { errno?: unknown; code?: unknown };
+  return errno === ER_LOCK_DEADLOCK || code === 'ER_LOCK_DEADLOCK';
 }
 
 function toRecord(row: StaffRow): StaffRecord {
