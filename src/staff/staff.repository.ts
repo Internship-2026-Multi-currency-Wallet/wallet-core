@@ -64,7 +64,6 @@ interface StaffRow {
 export class StaffRepository {
   constructor(@Inject(KNEX) private readonly db: Knex) {}
 
-  /** A new staff member is always invited: the password is set when the invitation is accepted. */
   async insert(staff: NewStaff): Promise<InsertStaffResult> {
     try {
       await this.db(STAFF).insert({
@@ -82,18 +81,14 @@ export class StaffRepository {
     }
   }
 
-  /**
-   * Runs `work` in one database transaction with a repository bound to it; rolls back if it throws.
-   * Used for the last-admin rule: lock the active admins, check, then change.
-   */
+  /** Runs `work` atomically with a repository bound to the transaction. */
   async transaction<T>(work: (tx: StaffRepository) => Promise<T>): Promise<T> {
     return this.db.transaction((trx) => work(new StaffRepository(trx)));
   }
 
   /**
-   * Ids of the ACTIVE admins, locked (`FOR UPDATE`) until the transaction ends. Every role or status
-   * change locks the active admins first, then its target, so these changes serialize and can't
-   * remove the last admin. Call inside `transaction`.
+   * Every role or status change locks the active admins first, then its target, so these changes
+   * serialize and can't remove the last admin; call inside `transaction`.
    */
   async lockActiveAdminIds(): Promise<string[]> {
     return (await this.db(STAFF)
@@ -144,8 +139,7 @@ export class StaffRepository {
   }
 
   /**
-   * Ends the staff member's active sessions (role change, deactivation, password change). With
-   * `except`, that session (the caller's own) stays active.
+   * Ends the staff member's active sessions; with `except`, the caller's own session stays active.
    */
   async revokeSessions(
     staffId: string,
@@ -171,7 +165,6 @@ export class StaffRepository {
     });
   }
 
-  /** Ends every unused, still valid invitation of the staff member at `at` (resend). */
   async expireInvitations(staffId: string, at: Date): Promise<void> {
     await this.db(INVITATIONS)
       .where({ staff_id: staffId })
@@ -180,10 +173,7 @@ export class StaffRepository {
       .update({ expires_at: at });
   }
 
-  /**
-   * Marks the invitation used if it is unused and not expired at `at`; answers its staff id, or
-   * `null` (unknown, used, expired or replaced). One UPDATE, so two concurrent accepts cannot both win.
-   */
+  /** A conditional UPDATE prevents concurrent accepts from consuming the same invitation. */
   async consumeInvitation(tokenHash: string, at: Date): Promise<string | null> {
     const updated = await this.db(INVITATIONS)
       .where({ token_hash: tokenHash })

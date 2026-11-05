@@ -8,11 +8,6 @@ import { ChangeOwnStaffPasswordInput, InviteStaffInput } from './staff.inputs.js
 import { StaffMe, StaffMember } from './staff.model.js';
 import { StaffService } from './staff.service.js';
 
-/**
- * Staff management and the staff member's own account. Staff management is implemented;
- * `changeOwnStaffPassword` is still a stub (it throws until it is implemented).
- * Permissions are listed in `permissions.ts`.
- */
 @Resolver()
 export class StaffResolver {
   constructor(private readonly staff: StaffService) {}
