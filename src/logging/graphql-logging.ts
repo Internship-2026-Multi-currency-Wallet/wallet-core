@@ -35,34 +35,13 @@ const CLIENT_ERROR_CODES = new Set([
 const COERCED_VALUE = /(cannot represent [^:]*value): .*$/s;
 
 /**
- * A variable of a wrong shape is quoted whole (password included) before the last `; `, so a `; `
- * inside it only hides more.
+ * Everything after it is hidden: the client's variable (password included) is quoted there, and
+ * the reason after it can quote it again, so no part of that text can be trusted to be safe.
  */
-const VARIABLE_ERROR = /(got invalid value ).*?((?: at "[\w.[\]]*")?; )([^;]*)$/s;
-
-/** Reasons that name only fields and types; any other (an enum's, a scalar's) may quote the value. */
-const SAFE_REASON =
-  /^(?:Field "\w+" (?:is not defined by type|of required type|must be non-null)|Expected (?:non-nullable )?type "[\w![\]]+"(?: to be an object| not to be null)?\.$|Exactly one key)/;
-
-function withoutCoercedValue(text: string): string {
-  return text.replace(COERCED_VALUE, `$1: ${REDACTED}`);
-}
-
-function safeReason(reason: string): string {
-  if (SAFE_REASON.test(reason)) return reason;
-  const scrubbed = withoutCoercedValue(reason);
-  return scrubbed === reason ? REDACTED : scrubbed;
-}
+const VARIABLE_VALUE = /(got invalid value ).*$/s;
 
 function withoutValue(text: string): string {
-  if (VARIABLE_ERROR.test(text)) {
-    return text.replace(
-      VARIABLE_ERROR,
-      (_match, head: string, at: string, reason: string) =>
-        `${head}${REDACTED}${at}${safeReason(reason)}`,
-    );
-  }
-  return withoutCoercedValue(text);
+  return text.replace(VARIABLE_VALUE, `$1${REDACTED}`).replace(COERCED_VALUE, `$1: ${REDACTED}`);
 }
 
 /**

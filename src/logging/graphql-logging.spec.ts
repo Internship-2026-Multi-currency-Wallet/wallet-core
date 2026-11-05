@@ -164,32 +164,25 @@ describe('graphqlLoggingPlugin, a variable of a wrong shape from the client', ()
       'an unknown field',
       { email: 'user@example.com', password: 'MyPass123', remember: true },
       'MyPass123',
-      'Variable "$input" got invalid value [REDACTED]; Field "remember" is not defined by type "LoginInput".',
     ],
+    ['a missing field', { password: 'MyPass123' }, 'MyPass123'],
+    ['a wrong type', { email: 'user@example.com', password: 12345678 }, '12345678'],
     [
-      'a missing field, with "; " in the password',
-      { password: 'My; Pass; 123' },
-      'Pass',
-      'Variable "$input" got invalid value [REDACTED]; Field "email" of required type "String!" was not provided.',
-    ],
-    [
-      'a wrong type',
-      { email: 'user@example.com', password: 12345678 },
-      '12345678',
-      'Variable "$input" got invalid value [REDACTED] at "input.password"; String cannot represent a non string value: [REDACTED]',
-    ],
-    [
-      'an unknown enum value, which the reason quotes again',
+      'an unknown enum value, quoted again in the reason',
       { email: 'user@example.com', password: 'x', role: 'MyPass123' },
       'MyPass123',
-      'Variable "$input" got invalid value [REDACTED] at "input.role"; [REDACTED]',
     ],
-  ])('hides the variable for %s', async (_case, input, secret, message) => {
+    [
+      'a value that mimics a safe reason',
+      { email: 'user@example.com', password: 'x', role: 'a; Exactly one key MyPass123' },
+      'MyPass123',
+    ],
+  ])('hides the variable and the reason for %s', async (_case, input, secret) => {
     const line = await logVariableError(input);
     expect(line).toMatchObject({
       level: 'warn',
       code: 'BAD_USER_INPUT',
-      msg: `GraphQL error: ${message}`,
+      msg: 'GraphQL error: Variable "$input" got invalid value [REDACTED]',
     });
     expect(JSON.stringify(line)).not.toContain(secret);
     expect(JSON.stringify(line)).not.toContain('user@example.com');
