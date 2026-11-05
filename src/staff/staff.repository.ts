@@ -83,7 +83,6 @@ export class StaffRepository {
     }
   }
 
-  /** Runs `work` atomically with a repository bound to the transaction. */
   async transaction<T>(work: (tx: StaffRepository) => Promise<T>): Promise<T> {
     // InnoDB gap locks can deadlock concurrent promotions and resends; a new attempt is safe.
     for (let attempt = 1; ; attempt += 1) {
@@ -147,9 +146,6 @@ export class StaffRepository {
     return (await this.db(STAFF).where({ role: StaffRole.ADMIN }).first('id')) !== undefined;
   }
 
-  /**
-   * Ends the staff member's active sessions; with `except`, the caller's own session stays active.
-   */
   async revokeSessions(
     staffId: string,
     at: Date,
