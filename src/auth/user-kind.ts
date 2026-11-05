@@ -1,4 +1,3 @@
-/** Who the caller is: a wallet user or a back-office staff member. */
 export enum UserKind {
   CLIENT = 'client',
   STAFF = 'staff',
