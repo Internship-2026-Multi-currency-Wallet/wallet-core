@@ -54,35 +54,39 @@ export class StaffService {
       if (found.status !== StaffStatus.INVITED) {
         throw staffError(StaffErrorCode.NotInvited, STAFF_ERROR_MESSAGES.notInvited);
       }
-      await tx.expireInvitations(staffId, now);
-      await insertInvitation(tx, staffId, now);
+      await tx.expireInvitations(found.id, now);
+      await insertInvitation(tx, found.id, now);
       return found;
     });
-    this.logger.info({ audit: 'staff.resendInvitation', actorId, staffId }, 'staff action');
+    this.logger.info(
+      { audit: 'staff.resendInvitation', actorId, staffId: record.id },
+      'staff action',
+    );
     return toMember(record);
   }
 
   async deactivate(actorId: string, staffId: string, now: Date = new Date()): Promise<StaffMember> {
-    if (staffId === actorId) {
-      throw staffError(
-        StaffErrorCode.CannotDeactivateSelf,
-        STAFF_ERROR_MESSAGES.cannotDeactivateSelf,
-      );
-    }
     const { record, changed } = await this.staff.transaction(async (tx) => {
       const admins = await tx.lockActiveAdminIds();
       const target = await lockOrThrow(tx, staffId);
+      // Ids are case-insensitive in MySQL, so compare them in lower case.
+      if (target.id.toLowerCase() === actorId.toLowerCase()) {
+        throw staffError(
+          StaffErrorCode.CannotDeactivateSelf,
+          STAFF_ERROR_MESSAGES.cannotDeactivateSelf,
+        );
+      }
       if (target.status === StaffStatus.DEACTIVATED) return { record: target, changed: false };
       if (target.status === StaffStatus.ACTIVE && target.role === StaffRole.ADMIN) {
-        assertNotLastAdmin(admins, staffId);
+        assertNotLastAdmin(admins, target.id);
       }
-      await tx.update(staffId, { status: StaffStatus.DEACTIVATED }, now);
-      await tx.revokeSessions(staffId, now);
-      await tx.expireInvitations(staffId, now);
+      await tx.update(target.id, { status: StaffStatus.DEACTIVATED }, now);
+      await tx.revokeSessions(target.id, now);
+      await tx.expireInvitations(target.id, now);
       return { record: { ...target, status: StaffStatus.DEACTIVATED }, changed: true };
     });
     if (changed) {
-      this.logger.info({ audit: 'staff.deactivate', actorId, staffId }, 'staff action');
+      this.logger.info({ audit: 'staff.deactivate', actorId, staffId: record.id }, 'staff action');
     }
     return toMember(record);
   }
@@ -98,15 +102,15 @@ export class StaffService {
       const target = await lockOrThrow(tx, staffId);
       if (target.role === role) return { before: target, record: target };
       if (target.status === StaffStatus.ACTIVE && target.role === StaffRole.ADMIN) {
-        assertNotLastAdmin(admins, staffId);
+        assertNotLastAdmin(admins, target.id);
       }
-      await tx.update(staffId, { role }, now);
-      await tx.revokeSessions(staffId, now);
+      await tx.update(target.id, { role }, now);
+      await tx.revokeSessions(target.id, now);
       return { before: target, record: { ...target, role } };
     });
     if (before.role !== role) {
       this.logger.info(
-        { audit: 'staff.changeRole', actorId, staffId, from: before.role, to: role },
+        { audit: 'staff.changeRole', actorId, staffId: record.id, from: before.role, to: role },
         'staff action',
       );
     }

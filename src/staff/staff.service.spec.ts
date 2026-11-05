@@ -64,12 +64,17 @@ class FakeStaffRepository {
 
   findById(id: string): Promise<StaffRecord | undefined> {
     this.calls.push('findById');
-    return Promise.resolve(this.records.get(id));
+    return Promise.resolve(this.find(id));
   }
 
   lockById(id: string): Promise<StaffRecord | undefined> {
     this.calls.push('lockById');
-    return Promise.resolve(this.records.get(id));
+    return Promise.resolve(this.find(id));
+  }
+
+  /** Ids match in any case, as the MySQL id column does (case-insensitive collation). */
+  private find(id: string): StaffRecord | undefined {
+    return [...this.records.values()].find((r) => r.id.toLowerCase() === id.toLowerCase());
   }
 
   list(): Promise<StaffRecord[]> {
@@ -314,6 +319,27 @@ describe('StaffService.deactivate', () => {
 
     expect(repo.calls.slice(0, 2)).toEqual(['lockActiveAdminIds', 'lockById']);
   });
+
+  it('refuses the sole admin deactivating their own id in upper case, and changes nothing', async () => {
+    const { service, repo } = setup();
+    repo.seed(ADMIN_ID, { role: StaffRole.ADMIN });
+    const error = await graphqlErrorOf(service.deactivate(ADMIN_ID, ADMIN_ID.toUpperCase(), NOW));
+    expect(error.extensions).toEqual({ code: 'CANNOT_DEACTIVATE_SELF' });
+    expect(repo.records.get(ADMIN_ID)?.status).toBe(StaffStatus.ACTIVE);
+    expect(repo.revocations).toHaveLength(0);
+  });
+
+  it('refuses to deactivate the sole active admin given in upper case: LAST_ADMIN', async () => {
+    const { service, repo } = setup();
+    repo.seed(ADMIN_ID, { role: StaffRole.ADMIN });
+    repo.seed(SUPPORT_ID, { role: StaffRole.SUPPORT });
+    const error = await graphqlErrorOf(
+      service.deactivate(DEV_ACTOR_ID, ADMIN_ID.toUpperCase(), NOW),
+    );
+    expect(error.extensions).toEqual({ code: 'LAST_ADMIN' });
+    expect(repo.records.get(ADMIN_ID)?.status).toBe(StaffStatus.ACTIVE);
+    expect(repo.revocations).toHaveLength(0);
+  });
 });
 
 describe('StaffService.changeRole', () => {
@@ -373,6 +399,18 @@ describe('StaffService.changeRole', () => {
       service.changeRole(DEV_ACTOR_ID, SUPPORT_ID, StaffRole.FINANCE, NOW),
     );
     expect(error.extensions).toEqual({ code: 'STAFF_NOT_FOUND' });
+  });
+
+  it('refuses to demote the sole active admin given in upper case: LAST_ADMIN', async () => {
+    const { service, repo } = setup();
+    repo.seed(ADMIN_ID, { role: StaffRole.ADMIN });
+    repo.seed(SUPPORT_ID, { role: StaffRole.SUPPORT });
+    const error = await graphqlErrorOf(
+      service.changeRole(DEV_ACTOR_ID, ADMIN_ID.toUpperCase(), StaffRole.FINANCE, NOW),
+    );
+    expect(error.extensions).toEqual({ code: 'LAST_ADMIN' });
+    expect(repo.records.get(ADMIN_ID)?.role).toBe(StaffRole.ADMIN);
+    expect(repo.revocations).toHaveLength(0);
   });
 
   it('locks the active admins, then the target, before changing anything, also for a non-admin', async () => {
