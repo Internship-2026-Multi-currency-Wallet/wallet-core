@@ -1,6 +1,5 @@
 import type { Knex } from 'knex';
 
-/** Staff accounts, separate from users; passwords and tokens are stored only as hashes. */
 export async function up(knex: Knex): Promise<void> {
   // Role and status are plain strings so a new value needs no migration.
   await knex.schema.createTable('staff', (table) => {
@@ -32,8 +31,6 @@ export async function up(knex: Knex): Promise<void> {
     table.datetime('created_at', { precision: 3 }).notNullable();
   });
 
-  // A resend moves `expires_at` of older invitations to the resend time, so only the newest
-  // link works.
   await knex.schema.createTable('staff_invitations', (table) => {
     table.engine('InnoDB');
     table.charset('utf8mb4');
