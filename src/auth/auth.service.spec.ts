@@ -256,7 +256,7 @@ describe('AuthService.login', () => {
     expect(users.recordFailedLogin).toHaveBeenCalledWith(USER_ID, {
       now: NOW,
       maxFailedAttempts: 5,
-      lockUntil: LOCKED_UNTIL,
+      lockDurationMs: 15 * 60 * 1000,
     });
     expect(users.recordSuccessfulLogin).not.toHaveBeenCalled();
     expect(sessions.create).not.toHaveBeenCalled();

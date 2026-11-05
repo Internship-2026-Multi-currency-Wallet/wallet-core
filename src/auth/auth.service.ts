@@ -89,7 +89,7 @@ export class AuthService {
       const lockedUntil = await this.users.recordFailedLogin(user.id, {
         now,
         maxFailedAttempts: MAX_FAILED_LOGINS,
-        lockUntil: new Date(now.getTime() + LOGIN_LOCK_MS),
+        lockDurationMs: LOGIN_LOCK_MS,
       });
       this.logger.warn({ userId: user.id, locked: lockedUntil !== null }, 'login rejected');
       throw lockedUntil ? accountLocked(lockedUntil) : invalidCredentials();
