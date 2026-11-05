@@ -1,0 +1,10 @@
+/** Who the caller is: a wallet user or a back-office staff member. */
+export enum UserKind {
+  CLIENT = 'client',
+  STAFF = 'staff',
+}
+
+/** `bo` and `bo:…` only: `startsWith('bo')` would also take a client permission like `bonus`. */
+export function isStaffPermission(permission: string): boolean {
+  return permission === 'bo' || permission.startsWith('bo:');
+}

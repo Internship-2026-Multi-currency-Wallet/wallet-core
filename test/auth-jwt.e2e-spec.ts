@@ -25,7 +25,8 @@ describe('access token (e2e, DEV_AUTH=false)', () => {
     if (authorization) req.set('Authorization', authorization);
     return (await req.send({ query })).body as GqlBody;
   };
-  const me = (authorization?: string) => gql('{ me { id permissions strategy } }', authorization);
+  const me = (authorization?: string) =>
+    gql('{ me { id kind permissions strategy } }', authorization);
 
   beforeAll(async () => {
     app = await createApp({ DEV_AUTH: 'false' });
@@ -53,7 +54,7 @@ describe('access token (e2e, DEV_AUTH=false)', () => {
 
   it('authenticates a request with the access token from login', async () => {
     await expect(me(`Bearer ${accessToken}`)).resolves.toEqual({
-      data: { me: { id: userId, permissions: ['wallet'], strategy: 'jwt' } },
+      data: { me: { id: userId, kind: 'CLIENT', permissions: ['wallet'], strategy: 'jwt' } },
     });
   });
 
