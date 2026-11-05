@@ -139,7 +139,7 @@ describe('graphqlLoggingPlugin, a resolver returning a wrong type', () => {
 
 describe('graphqlLoggingPlugin, a variable of a wrong shape from the client', () => {
   const typeDefs =
-    'input LoginInput { email: String! password: String! } type Query { login(input: LoginInput!): Boolean }';
+    'enum Role { CLIENT } input LoginInput { email: String! password: String! role: Role } type Query { login(input: LoginInput!): Boolean }';
 
   /** Sends `login` through a real Apollo server with the plugin and returns the line it logged. */
   async function logVariableError(input: Record<string, unknown>): Promise<LogLine> {
@@ -178,7 +178,13 @@ describe('graphqlLoggingPlugin, a variable of a wrong shape from the client', ()
       '12345678',
       'Variable "$input" got invalid value [REDACTED] at "input.password"; String cannot represent a non string value: [REDACTED]',
     ],
-  ])('hides the variable for %s and keeps the reason', async (_case, input, secret, message) => {
+    [
+      'an unknown enum value, which the reason quotes again',
+      { email: 'user@example.com', password: 'x', role: 'MyPass123' },
+      'MyPass123',
+      'Variable "$input" got invalid value [REDACTED] at "input.role"; [REDACTED]',
+    ],
+  ])('hides the variable for %s', async (_case, input, secret, message) => {
     const line = await logVariableError(input);
     expect(line).toMatchObject({
       level: 'warn',
