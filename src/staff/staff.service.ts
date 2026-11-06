@@ -10,6 +10,11 @@ import { StaffMe, StaffMember, StaffStatus } from './staff.model.js';
 import { InsertStaffResult, type StaffRecord, StaffRepository } from './staff.repository.js';
 import { STAFF_ERROR_MESSAGES, StaffErrorCode, staffError } from './staff-errors.js';
 
+export interface InvitationResult {
+  member: StaffMember;
+  link: string;
+}
+
 const INVITATION_TTL_MS = 48 * 60 * 60 * 1000;
 
 @Injectable()
@@ -29,6 +34,14 @@ export class StaffService {
     input: InviteStaffInput,
     now: Date = new Date(),
   ): Promise<StaffMember> {
+    return (await this.inviteWithLink(actorId, input, now)).member;
+  }
+
+  async inviteWithLink(
+    actorId: string,
+    input: InviteStaffInput,
+    now: Date = new Date(),
+  ): Promise<InvitationResult> {
     const email = parseEmail(input.email);
     const id = randomUUID();
     const token = await this.staff.transaction(async (tx) => {
@@ -41,12 +54,15 @@ export class StaffService {
       }
       return insertInvitation(tx, id, now);
     });
-    await this.sendInvitation(id, email, token);
+    const link = await this.sendInvitation(id, email, token);
     this.logger.info(
       { audit: 'staff.invite', actorId, staffId: id, role: input.role },
       'staff action',
     );
-    return { id, email, role: input.role, status: StaffStatus.INVITED, createdAt: now };
+    return {
+      member: { id, email, role: input.role, status: StaffStatus.INVITED, createdAt: now },
+      link,
+    };
   }
 
   async resendInvitation(
@@ -54,6 +70,14 @@ export class StaffService {
     staffId: string,
     now: Date = new Date(),
   ): Promise<StaffMember> {
+    return (await this.resendInvitationWithLink(actorId, staffId, now)).member;
+  }
+
+  async resendInvitationWithLink(
+    actorId: string,
+    staffId: string,
+    now: Date = new Date(),
+  ): Promise<InvitationResult> {
     const { record, token } = await this.staff.transaction(async (tx) => {
       const found = await lockOrThrow(tx, staffId);
       if (found.status !== StaffStatus.INVITED) {
@@ -62,25 +86,23 @@ export class StaffService {
       await tx.expireInvitations(found.id, now);
       return { record: found, token: await insertInvitation(tx, found.id, now) };
     });
-    await this.sendInvitation(record.id, record.email, token);
+    const link = await this.sendInvitation(record.id, record.email, token);
     this.logger.info(
       { audit: 'staff.resendInvitation', actorId, staffId: record.id },
       'staff action',
     );
-    return toMember(record);
+    return { member: toMember(record), link };
   }
 
   /** Runs after the commit; a failed email must not fail the mutation, the admin can resend. */
-  private async sendInvitation(staffId: string, to: string, token: string): Promise<void> {
+  private async sendInvitation(staffId: string, to: string, token: string): Promise<string> {
+    const link = `${this.config.backofficeUrl}/accept-invitation?token=${token}`;
     try {
-      await this.email.send({
-        template: EmailTemplate.StaffInvitation,
-        to,
-        data: { link: `${this.config.backofficeUrl}/accept-invitation?token=${token}` },
-      });
+      await this.email.send({ template: EmailTemplate.StaffInvitation, to, data: { link } });
     } catch (err) {
       this.logger.warn({ err, staffId }, 'invitation email failed');
     }
+    return link;
   }
 
   async deactivate(actorId: string, staffId: string, now: Date = new Date()): Promise<StaffMember> {
@@ -157,7 +179,7 @@ function assertNotLastAdmin(admins: string[], staffId: string): void {
   }
 }
 
-function parseEmail(email: string): string {
+export function parseEmail(email: string): string {
   const result = registerInputSchema.shape.email.safeParse(email);
   if (result.success) return result.data;
   throw staffError(StaffErrorCode.BadUserInput, result.error.issues[0].message, { field: 'email' });

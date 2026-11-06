@@ -133,3 +133,22 @@ describe('AppConfig', () => {
     expect(AppConfig.fromEnv({ JWT_SECRET: 'y'.repeat(32) }).jwt.secret).toBe('y'.repeat(32));
   });
 });
+
+describe('BOOTSTRAP_ADMIN_EMAIL', () => {
+  it('is undefined when unset or empty', () => {
+    expect(AppConfig.fromEnv({}).bootstrapAdminEmail).toBeUndefined();
+    expect(AppConfig.fromEnv({ BOOTSTRAP_ADMIN_EMAIL: '' }).bootstrapAdminEmail).toBeUndefined();
+  });
+
+  it('is trimmed', () => {
+    expect(AppConfig.fromEnv({ BOOTSTRAP_ADMIN_EMAIL: '  a@b.co  ' }).bootstrapAdminEmail).toBe(
+      'a@b.co',
+    );
+  });
+
+  it('does not stop the app when the value is not an email', () => {
+    expect(AppConfig.fromEnv({ BOOTSTRAP_ADMIN_EMAIL: 'not-an-email' }).bootstrapAdminEmail).toBe(
+      'not-an-email',
+    );
+  });
+});

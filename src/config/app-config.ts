@@ -41,6 +41,8 @@ export class AppConfig {
   readonly corsOrigins: string[];
   /** Back office base URL (`BACKOFFICE_URL`) without trailing slashes. */
   readonly backofficeUrl: string;
+  /** `BOOTSTRAP_ADMIN_EMAIL`: the first admin to invite when none exists; undefined when unset or empty. */
+  readonly bootstrapAdminEmail: string | undefined;
   /** `LOG_LEVEL`: fatal, error, warn, info (default), debug, trace, silent. */
   readonly logLevel: LogLevel;
   readonly jwt: {
@@ -60,6 +62,7 @@ export class AppConfig {
     this.client = env.CLIENT;
     this.devAuth = env.DEV_AUTH;
     this.backofficeUrl = env.BACKOFFICE_URL.replace(/\/+$/, '');
+    this.bootstrapAdminEmail = env.BOOTSTRAP_ADMIN_EMAIL || undefined;
     this.logLevel = env.LOG_LEVEL;
     this.corsOrigins = env.CORS_ORIGINS.split(',')
       .map((origin) => origin.trim())

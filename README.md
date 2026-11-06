@@ -61,6 +61,7 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
 | `npm run test:e2e`                            | End-to-end tests (`test/*.e2e-spec.ts`) against real MySQL + Redis    |
 | `npm run test:cov`                            | Unit tests with coverage                                              |
 | `npm run schema:generate`                     | Write `schema.graphql` from the resolvers without starting the server |
+| `npm run staff:create-admin [-- email]`       | Invite the first admin or re-issue a link (link shown only locally)   |
 | `npm run migrate`                             | Apply pending Knex migrations                                         |
 | `npm run migrate:make -- <name>`              | Create `migrations/<timestamp>_<name>.ts`                             |
 | `npm run migrate:rollback` / `migrate:status` | Roll back the last batch / list migrations                            |
@@ -70,23 +71,24 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
 Validated at startup (`src/config/env.schema.ts`); an invalid value stops the service with a clear message.
 See `.env.example`.
 
-| Variable          | Default                                            | Meaning                                                                                              |
-| ----------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PORT`            | `3000`                                             | HTTP port                                                                                            |
-| `NODE_ENV`        | `development`                                      | `production` disables writing `schema.graphql`                                                       |
-| `APP_ENV`         | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                 |
-| `DATABASE_URL`    | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                       |
-| `REDIS_URL`       | `redis://localhost:6379`                           | Redis for events                                                                                     |
-| `CLIENT`          | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                             |
-| `DEV_AUTH`        | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT |
-| `CORS_ORIGINS`    | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                              |
-| `BACKOFFICE_URL`  | `http://localhost:5174`                            | Back office base URL (http or https), used in the links of staff emails                              |
-| `APP_VERSION`     | from `package.json`                                | Version reported by `health`                                                                         |
-| `LOG_LEVEL`       | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                              |
-| `JWT_SECRET`      | local-only value (`.env.example`)                  | HS256 secret shared with rates-service and treasury-service. Required with `NODE_ENV=production`     |
-| `JWT_ISSUER`      | `wallet-core`                                      | `iss` claim of the issued tokens                                                                     |
-| `JWT_ACCESS_TTL`  | `15m`                                              | Access token lifetime: `<number><s\|m\|h\|d>`                                                        |
-| `JWT_REFRESH_TTL` | `30d`                                              | Session (refresh token) lifetime, counted from login                                                 |
+| Variable                | Default                                            | Meaning                                                                                              |
+| ----------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `PORT`                  | `3000`                                             | HTTP port                                                                                            |
+| `NODE_ENV`              | `development`                                      | `production` disables writing `schema.graphql`                                                       |
+| `APP_ENV`               | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                 |
+| `DATABASE_URL`          | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                       |
+| `REDIS_URL`             | `redis://localhost:6379`                           | Redis for events                                                                                     |
+| `CLIENT`                | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                             |
+| `DEV_AUTH`              | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT |
+| `CORS_ORIGINS`          | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                              |
+| `BACKOFFICE_URL`        | `http://localhost:5174`                            | Back office base URL (http or https), used in the links of staff emails                              |
+| `BOOTSTRAP_ADMIN_EMAIL` | empty                                              | Invite this admin on start when no admin exists in any status (ignored otherwise)                    |
+| `APP_VERSION`           | from `package.json`                                | Version reported by `health`                                                                         |
+| `LOG_LEVEL`             | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                              |
+| `JWT_SECRET`            | local-only value (`.env.example`)                  | HS256 secret shared with rates-service and treasury-service. Required with `NODE_ENV=production`     |
+| `JWT_ISSUER`            | `wallet-core`                                      | `iss` claim of the issued tokens                                                                     |
+| `JWT_ACCESS_TTL`        | `15m`                                              | Access token lifetime: `<number><s\|m\|h\|d>`                                                        |
+| `JWT_REFRESH_TTL`       | `30d`                                              | Session (refresh token) lifetime, counted from login                                                 |
 
 ## GraphQL contract
 
