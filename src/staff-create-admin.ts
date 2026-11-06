@@ -1,9 +1,3 @@
-/**
- * Invites the first admin, or re-issues the invitation of an admin whose link expired.
- * The link is printed only with APP_ENV=local.
- *
- *   npm run staff:create-admin [-- email]
- */
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';

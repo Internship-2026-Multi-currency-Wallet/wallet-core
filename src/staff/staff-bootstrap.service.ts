@@ -15,7 +15,6 @@ export type CreateAdminResult =
 const BOOTSTRAP_ACTOR = 'system:bootstrap';
 const CLI_ACTOR = 'system:cli';
 
-/** Invites the first admin so a fresh deployment can be entered. */
 @Injectable()
 export class StaffBootstrapService implements OnApplicationBootstrap {
   constructor(

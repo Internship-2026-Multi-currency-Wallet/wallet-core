@@ -216,7 +216,7 @@ async function lockOrThrow(tx: StaffRepository, staffId: string): Promise<StaffR
   return record;
 }
 
-/** Only the SHA-256 of the token is stored; the token goes out by email only and is never logged. */
+/** Invitation tokens are credentials: only their SHA-256 is stored, and the plaintext goes only into the invitation link. */
 async function insertInvitation(tx: StaffRepository, staffId: string, now: Date): Promise<string> {
   const token = randomBytes(32).toString('base64url');
   await tx.insertInvitation({

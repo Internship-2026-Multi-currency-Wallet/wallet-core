@@ -39,9 +39,7 @@ export class AppConfig {
   /** `DEV_AUTH=true` enables the `Authorization: Dev <userId>:<permissions>` header. */
   readonly devAuth: boolean;
   readonly corsOrigins: string[];
-  /** Back office base URL (`BACKOFFICE_URL`) without trailing slashes. */
   readonly backofficeUrl: string;
-  /** `BOOTSTRAP_ADMIN_EMAIL`: the first admin to invite when none exists; undefined when unset or empty. */
   readonly bootstrapAdminEmail: string | undefined;
   /** `LOG_LEVEL`: fatal, error, warn, info (default), debug, trace, silent. */
   readonly logLevel: LogLevel;
