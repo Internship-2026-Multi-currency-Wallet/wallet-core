@@ -99,7 +99,7 @@ describe('wallet-core (e2e, DEV_AUTH=true)', () => {
       .get('/__test/whoami')
       .set('Authorization', 'Dev 7:bo:users')
       .expect(200);
-    expect(me.body).toEqual({ id: '7', permissions: ['bo:users'], strategy: 'dev' });
+    expect(me.body).toEqual({ id: '7', kind: 'staff', permissions: ['bo:users'], strategy: 'dev' });
   });
 
   it('@RequirePermission returns 403 without the permission and 200 with it', async () => {

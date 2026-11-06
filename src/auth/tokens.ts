@@ -2,10 +2,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { AppConfig } from '../config/app-config.js';
-import type { AccessTokenPayload } from './access-token.js';
+import type { AccessTokenPayload, TokenAudience } from './access-token.js';
 
-// Staff permissions come with staff accounts (E1-8).
 export const USER_PERMISSIONS: readonly string[] = ['wallet'];
+
+export interface AccessTokenSubject {
+  userId: string;
+  aud: TokenAudience;
+  permissions: readonly string[];
+}
 
 export interface IssuedAccessToken {
   token: string;
@@ -26,12 +31,13 @@ export class TokenService {
     private readonly config: AppConfig,
   ) {}
 
-  signAccessToken(userId: string, now: Date): IssuedAccessToken {
+  signAccessToken({ userId, aud, permissions }: AccessTokenSubject, now: Date): IssuedAccessToken {
     const iat = Math.floor(now.getTime() / 1000);
     const exp = iat + this.config.jwt.accessTtlSeconds;
     const payload: AccessTokenPayload = {
       sub: userId,
-      permissions: [...USER_PERMISSIONS],
+      aud,
+      permissions: [...permissions],
       iss: this.config.jwt.issuer,
       iat,
       exp,

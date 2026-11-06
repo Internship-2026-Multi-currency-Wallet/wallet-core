@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { JwtAuthStrategy } from './jwt-auth.strategy.js';
+import { UserKind } from './user-kind.js';
 
 const SECRET = 'unit-test-secret-0123456789-abcdefghij';
 const USER_ID = '0b9a3f4e-6c1d-4f7a-9e2b-8d5c3a1f0e7d';
@@ -18,6 +19,7 @@ function claims(overrides: Record<string, unknown> = {}): Record<string, unknown
   const iat = now();
   const payload: Record<string, unknown> = {
     sub: USER_ID,
+    aud: 'wallet',
     permissions: ['wallet'],
     iss: 'wallet-core',
     iat,
@@ -46,8 +48,30 @@ describe('JwtAuthStrategy', () => {
   it('returns the user from a wallet-core access token', async () => {
     await expect(authenticate(`Bearer ${sign()}`)).resolves.toEqual({
       id: USER_ID,
+      kind: UserKind.CLIENT,
       permissions: ['wallet'],
       strategy: 'jwt',
+    });
+  });
+
+  it('returns a staff member from a back-office token', async () => {
+    const token = sign(claims({ aud: 'backoffice', permissions: ['bo', 'bo:settings'] }));
+    await expect(authenticate(`Bearer ${token}`)).resolves.toMatchObject({
+      kind: UserKind.STAFF,
+      permissions: ['bo', 'bo:settings'],
+    });
+  });
+
+  it.each([
+    [
+      'a client token with a staff permission',
+      { aud: 'wallet', permissions: ['bo'] },
+      UserKind.CLIENT,
+    ],
+    ['a staff token without permissions', { aud: 'backoffice', permissions: [] }, UserKind.STAFF],
+  ])('takes the kind from aud only: %s', async (_case, overrides, kind) => {
+    await expect(authenticate(`Bearer ${sign(claims(overrides))}`)).resolves.toMatchObject({
+      kind,
     });
   });
 
@@ -61,6 +85,7 @@ describe('JwtAuthStrategy', () => {
   it('accepts a user without any permissions', async () => {
     await expect(authenticate(`Bearer ${sign(claims({ permissions: [] }))}`)).resolves.toEqual({
       id: USER_ID,
+      kind: UserKind.CLIENT,
       permissions: [],
       strategy: 'jwt',
     });
@@ -77,6 +102,14 @@ describe('JwtAuthStrategy', () => {
     const iat = now() - 20 * 60;
     await expectRejected(
       `Bearer ${sign(claims({ iat, exp: iat + 15 * 60 }))}`,
+      'Access token expired',
+    );
+  });
+
+  it('reports an expired token without aud as expired, not as invalid', async () => {
+    const iat = now() - 20 * 60;
+    await expectRejected(
+      `Bearer ${sign(claims({ aud: undefined, iat, exp: iat + 15 * 60 }))}`,
       'Access token expired',
     );
   });
@@ -113,6 +146,10 @@ describe('JwtAuthStrategy', () => {
     ['permissions is not an array', { permissions: 'wallet' }],
     ['permissions contains a non-string', { permissions: ['wallet', 1] }],
     ['without permissions', { permissions: undefined }],
+    ['without aud', { aud: undefined }],
+    ['with an unknown aud', { aud: 'admin' }],
+    ['with aud in another casing', { aud: 'Wallet' }],
+    ['with aud as an array, which JWT allows', { aud: ['wallet'] }],
   ])('rejects a token %s', async (_case, overrides) => {
     await expectRejected(`Bearer ${sign(claims(overrides))}`);
   });
@@ -133,6 +170,15 @@ describe('JwtAuthStrategy', () => {
       await expectRejected(`Bearer ${sign(claims({ sub: '42' }))}`);
       expect(warn).toHaveBeenCalledWith(
         { reason: 'invalid claims', claims: ['sub'] },
+        'access token rejected',
+      );
+    });
+
+    it('logs a missing aud as an invalid claim', async () => {
+      const warn = jest.spyOn(logger, 'warn');
+      await expectRejected(`Bearer ${sign(claims({ aud: undefined }))}`);
+      expect(warn).toHaveBeenCalledWith(
+        { reason: 'invalid claims', claims: ['aud'] },
         'access token rejected',
       );
     });

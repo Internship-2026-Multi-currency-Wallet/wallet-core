@@ -5,6 +5,7 @@ import { AuthGuard } from './auth.guard.js';
 import { DevAuthStrategy } from './dev-auth.strategy.js';
 import { Public } from './public.decorator.js';
 import type { RequestLike } from './request-context.js';
+import { UserKind } from './user-kind.js';
 
 class TestController {
   @Public()
@@ -31,7 +32,12 @@ describe('AuthGuard', () => {
     it('authenticates a dev header and stores the user on the request', async () => {
       const request: RequestLike = { headers: { authorization: 'Dev 5:wallet' } };
       await expect(guard.canActivate(httpContext('closed', request))).resolves.toBe(true);
-      expect(request.user).toEqual({ id: '5', permissions: ['wallet'], strategy: 'dev' });
+      expect(request.user).toEqual({
+        id: '5',
+        kind: UserKind.CLIENT,
+        permissions: ['wallet'],
+        strategy: 'dev',
+      });
     });
 
     it('rejects requests without credentials', async () => {
@@ -77,7 +83,9 @@ describe('AuthGuard', () => {
     const jwtLike: AuthStrategy = {
       name: 'jwt',
       authenticate: ({ authorization }) =>
-        authorization === 'Bearer good' ? { id: 'u1', permissions: [], strategy: 'jwt' } : null,
+        authorization === 'Bearer good'
+          ? { id: 'u1', kind: UserKind.CLIENT, permissions: [], strategy: 'jwt' }
+          : null,
     };
     const guard = new AuthGuard(reflector, [jwtLike, new DevAuthStrategy()]);
 

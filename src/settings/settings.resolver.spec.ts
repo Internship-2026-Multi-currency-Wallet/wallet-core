@@ -2,6 +2,7 @@ import { jest } from '@jest/globals';
 import { GraphQLError } from 'graphql';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
+import { UserKind } from '../auth/user-kind.js';
 import type { ClientSettingsService, EffectiveSetting } from './client-settings.service.js';
 import { SettingType } from './settings.model.js';
 import { SettingsResolver } from './settings.resolver.js';
@@ -106,7 +107,12 @@ describe('SettingsResolver (reads)', () => {
 });
 
 describe('SettingsResolver (writes and history)', () => {
-  const staff: AuthUser = { id: '42', permissions: ['bo:settings:modify'], strategy: 'dev' };
+  const staff: AuthUser = {
+    id: '42',
+    kind: UserKind.STAFF,
+    permissions: ['bo:settings:modify'],
+    strategy: 'dev',
+  };
 
   describe('updateSetting', () => {
     it('updates as the current staff user and returns the staff view of the setting', async () => {

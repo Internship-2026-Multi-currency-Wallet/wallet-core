@@ -137,6 +137,8 @@ authentication unless it is marked `@Public()`.
 
 Real users send the access token from `login`: `Authorization: Bearer <jwt>`. `JwtAuthStrategy` verifies it
 locally (HS256 with `JWT_SECRET`, issuer, expiry, claims), the same way rates-service and treasury-service do.
+The token's `aud` says who it is for: `wallet` gives `user.kind = 'client'`, `backoffice` gives `'staff'`
+(`KIND_BY_AUDIENCE` in `src/auth/access-token.ts`). A token without a known `aud` gets 401.
 
 With `DEV_AUTH=true` the `DevAuthStrategy` also accepts:
 
@@ -148,12 +150,13 @@ Authorization: Dev 100:bo:users,bo:users:modify
 
 It works for HTTP, GraphQL queries/mutations and GraphQL subscriptions (send `{ "Authorization": "Dev 1:wallet" }`
 as graphql-ws `connectionParams`). With `DEV_AUTH=false` only the Bearer token is accepted.
+The header has no user type yet (E1-13): a `bo` or `bo:…` permission makes the dev user `staff`, else `client`.
 
 `DEV_AUTH=true` is allowed only with `APP_ENV=local` or `staging`; in a client UAT (`*-uat`) the service refuses to start.
 
 ```ts
 @Query(() => Balance)
-balance(@CurrentUser() user: AuthUser) { /* user.id, user.permissions */ }
+balance(@CurrentUser() user: AuthUser) { /* user.id, user.kind, user.permissions */ }
 
 @Public()
 @Query(() => PublicSettings)
