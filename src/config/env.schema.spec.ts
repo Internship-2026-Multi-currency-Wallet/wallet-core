@@ -113,6 +113,24 @@ describe('AppConfig', () => {
     expect(config.corsOrigins).toEqual(['http://a', 'http://b']);
   });
 
+  it.each([
+    'https://bo.example.com/#/',
+    'https://bo.example.com/?a=1',
+    'https://bo.example.com/?',
+    'https://bo.example.com#',
+  ])('rejects BACKOFFICE_URL %s with a query or a fragment', (url) => {
+    expect(() => validateEnv({ BACKOFFICE_URL: url })).toThrow(
+      /BACKOFFICE_URL.*must not contain a query or a fragment/s,
+    );
+  });
+
+  it.each(['https://bo.example.com', 'https://bo.example.com/', 'https://bo.example.com/app/'])(
+    'accepts BACKOFFICE_URL %s',
+    (url) => {
+      expect(validateEnv({ BACKOFFICE_URL: url }).BACKOFFICE_URL).toBe(url);
+    },
+  );
+
   it('validates BACKOFFICE_URL as an http(s) URL and strips trailing slashes in AppConfig', () => {
     expect(validateEnv({}).BACKOFFICE_URL).toBe('http://localhost:5174');
     expect(() => validateEnv({ BACKOFFICE_URL: 'not a url' })).toThrow(/BACKOFFICE_URL/);
