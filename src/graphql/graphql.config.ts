@@ -3,6 +3,7 @@ import { ApolloDriver, type ApolloDriverConfig } from '@nestjs/apollo';
 import type { Response } from 'express';
 import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
+import { AuthErrorCode } from '../auth/auth-errors.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
 import { formatError, formatExecutionResult } from './format-error.js';
@@ -16,6 +17,8 @@ interface ContextInput {
   connectionParams?: Record<string, unknown>;
   extra?: { request?: unknown };
 }
+
+const CLIENT_ERROR_CODES = Object.values(AuthErrorCode);
 
 export interface GraphqlContext {
   req: RequestLike;
@@ -46,7 +49,7 @@ export function graphqlOptions(config: AppConfig, logger: PinoLogger): ApolloDri
       },
     },
     // Names the operation in the access log and logs resolver errors with the requestId.
-    plugins: [graphqlLoggingPlugin()],
+    plugins: [graphqlLoggingPlugin({ clientErrorCodes: CLIENT_ERROR_CODES })],
     // Unexpected errors reach the client as a bare INTERNAL_SERVER_ERROR (no SQL, no internals).
     formatError,
     // HTTP requests carry headers; websocket requests carry connectionParams.
