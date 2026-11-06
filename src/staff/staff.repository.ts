@@ -106,6 +106,15 @@ export class StaffRepository {
       .pluck('id')) as string[];
   }
 
+  /** Call inside `transaction`: every admin, in any status, so a concurrent first-admin insert waits. */
+  async lockAdminIds(): Promise<string[]> {
+    return (await this.db(STAFF)
+      .where({ role: StaffRole.ADMIN })
+      .orderBy('id')
+      .forUpdate()
+      .pluck('id')) as string[];
+  }
+
   async update(
     id: string,
     patch: { role?: StaffRole; status?: StaffStatus },

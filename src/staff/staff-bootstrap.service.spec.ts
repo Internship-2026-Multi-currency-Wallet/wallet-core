@@ -50,6 +50,12 @@ class FakeRepo {
     return Promise.resolve([...this.records.values()].some((r) => r.role === StaffRole.ADMIN));
   }
 
+  lockAdminIds(): Promise<string[]> {
+    return Promise.resolve(
+      [...this.records.values()].filter((r) => r.role === StaffRole.ADMIN).map((r) => r.id),
+    );
+  }
+
   findByEmail(email: string): Promise<StaffRecord | undefined> {
     this.touch();
     return Promise.resolve([...this.records.values()].find((r) => r.email === email));
@@ -189,6 +195,22 @@ describe('StaffBootstrapService.onApplicationBootstrap', () => {
     expect(allLogs(logger)).not.toContain('admin@test.com');
   });
 
+  it('creates nothing and logs the skip when an admin appears after the pre-check', async () => {
+    const { bootstrap, repo, sent, logger } = setup();
+    repo.seed(EXISTING_ID, { role: StaffRole.ADMIN });
+    repo.anyAdminExists = () => Promise.resolve(false);
+
+    await expect(bootstrap.bootstrapAdmin('admin@test.com')).resolves.toEqual({
+      outcome: 'adminExists',
+    });
+
+    expect(repo.records.size).toBe(1);
+    expect(repo.invitations).toHaveLength(0);
+    expect(sent).toHaveLength(0);
+    expect(logger.info).toHaveBeenCalledWith({}, 'bootstrap skipped: an admin already exists');
+    expect(allLogs(logger)).not.toContain('admin@test.com');
+  });
+
   it('does not touch the repository when the env is unset', async () => {
     const { bootstrap, repo, logger } = setup();
 
@@ -287,6 +309,19 @@ describe('StaffBootstrapService.createAdminOrReissue', () => {
 
     expect(result).toEqual({ outcome: 'adminExists' });
     expect(repo.records.size).toBe(1);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('reports adminExists when an admin appears after the pre-check', async () => {
+    const { bootstrap, repo, sent } = setup();
+    repo.seed(EXISTING_ID, { role: StaffRole.ADMIN });
+    repo.anyAdminExists = () => Promise.resolve(false);
+
+    const result = await bootstrap.createAdminOrReissue('new@test.com', NOW);
+
+    expect(result).toEqual({ outcome: 'adminExists' });
+    expect(repo.records.size).toBe(1);
+    expect(repo.invitations).toHaveLength(0);
     expect(sent).toHaveLength(0);
   });
 

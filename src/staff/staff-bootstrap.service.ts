@@ -49,11 +49,12 @@ export class StaffBootstrapService implements OnApplicationBootstrap {
       return { outcome: 'adminExists' };
     }
     try {
-      const { member, link } = await this.staff.inviteWithLink(
-        BOOTSTRAP_ACTOR,
-        { email: normalized, role: StaffRole.ADMIN },
-        now,
-      );
+      const invitation = await this.staff.inviteFirstAdmin(BOOTSTRAP_ACTOR, normalized, now);
+      if (invitation === undefined) {
+        this.logger.info({}, 'bootstrap skipped: an admin already exists');
+        return { outcome: 'adminExists' };
+      }
+      const { member, link } = invitation;
       this.logger.info({ staffId: member.id }, 'bootstrap admin invited');
       return { outcome: 'created', staffId: member.id, link };
     } catch (err) {
@@ -79,12 +80,9 @@ export class StaffBootstrapService implements OnApplicationBootstrap {
     }
     if (await this.repo.anyAdminExists()) return { outcome: 'adminExists' };
     try {
-      const { member, link } = await this.staff.inviteWithLink(
-        CLI_ACTOR,
-        { email: normalized, role: StaffRole.ADMIN },
-        now,
-      );
-      return { outcome: 'created', staffId: member.id, link };
+      const invitation = await this.staff.inviteFirstAdmin(CLI_ACTOR, normalized, now);
+      if (invitation === undefined) return { outcome: 'adminExists' };
+      return { outcome: 'created', staffId: invitation.member.id, link: invitation.link };
     } catch (err) {
       if (isStaffAlreadyExists(err)) return { outcome: 'emailTaken' };
       throw err;

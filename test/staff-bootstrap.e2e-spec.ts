@@ -5,6 +5,7 @@ import { AppModule } from '../src/app.module.js';
 import { AppConfig } from '../src/config/app-config.js';
 import { createKnex } from '../src/database/database.module.js';
 import { EMAIL_SENDER, type EmailMessage } from '../src/email/email-sender.js';
+import { StaffBootstrapService } from '../src/staff/staff-bootstrap.service.js';
 
 /** Admin bootstrap on application start, against real MySQL. */
 describe('staff bootstrap (e2e, real MySQL)', () => {
@@ -73,5 +74,52 @@ describe('staff bootstrap (e2e, real MySQL)', () => {
 
     expect(await db('staff').count({ n: '*' }).first()).toEqual({ n: 1 });
     expect(sent).toHaveLength(1);
+  });
+
+  describe('concurrent callers with different emails', () => {
+    let app: INestApplication;
+    let bootstrap: StaffBootstrapService;
+
+    beforeEach(async () => {
+      app = await startApp();
+      await clean();
+      sent.length = 0;
+      bootstrap = app.get(StaffBootstrapService);
+    });
+
+    afterEach(async () => {
+      await app.close();
+    });
+
+    it('creates exactly one admin when three bootstrapAdmin calls race', async () => {
+      const results = await Promise.all([
+        bootstrap.bootstrapAdmin('a@test.com'),
+        bootstrap.bootstrapAdmin('b@test.com'),
+        bootstrap.bootstrapAdmin('c@test.com'),
+      ]);
+
+      expect(results.map((r) => r.outcome).sort()).toEqual([
+        'adminExists',
+        'adminExists',
+        'created',
+      ]);
+      expect(await db('staff').where({ role: 'ADMIN' }).count({ n: '*' }).first()).toEqual({
+        n: 1,
+      });
+      expect(sent).toHaveLength(1);
+    });
+
+    it('creates exactly one admin when createAdminOrReissue races bootstrapAdmin', async () => {
+      const results = await Promise.all([
+        bootstrap.bootstrapAdmin('a@test.com'),
+        bootstrap.createAdminOrReissue('b@test.com'),
+      ]);
+
+      expect(results.map((r) => r.outcome).sort()).toEqual(['adminExists', 'created']);
+      expect(await db('staff').where({ role: 'ADMIN' }).count({ n: '*' }).first()).toEqual({
+        n: 1,
+      });
+      expect(sent).toHaveLength(1);
+    });
   });
 });

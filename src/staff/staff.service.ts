@@ -42,9 +42,27 @@ export class StaffService {
     input: InviteStaffInput,
     now: Date = new Date(),
   ): Promise<InvitationResult> {
+    return (await this.createInvitation(actorId, input, now, false))!;
+  }
+
+  async inviteFirstAdmin(
+    actorId: string,
+    email: string,
+    now: Date = new Date(),
+  ): Promise<InvitationResult | undefined> {
+    return this.createInvitation(actorId, { email, role: StaffRole.ADMIN }, now, true);
+  }
+
+  private async createInvitation(
+    actorId: string,
+    input: InviteStaffInput,
+    now: Date,
+    onlyIfNoAdmin: boolean,
+  ): Promise<InvitationResult | undefined> {
     const email = parseEmail(input.email);
     const id = randomUUID();
     const token = await this.staff.transaction(async (tx) => {
+      if (onlyIfNoAdmin && (await tx.lockAdminIds()).length > 0) return undefined;
       const result = await tx.insert({ id, email, role: input.role, createdAt: now });
       if (result === InsertStaffResult.EmailTaken) {
         throw staffError(
@@ -54,6 +72,7 @@ export class StaffService {
       }
       return insertInvitation(tx, id, now);
     });
+    if (token === undefined) return undefined;
     const link = await this.sendInvitation(id, email, token);
     this.logger.info(
       { audit: 'staff.invite', actorId, staffId: id, role: input.role },

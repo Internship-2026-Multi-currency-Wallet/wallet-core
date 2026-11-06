@@ -100,6 +100,15 @@ class FakeStaffRepository {
     return Promise.resolve(ids);
   }
 
+  lockAdminIds(): Promise<string[]> {
+    this.calls.push('lockAdminIds');
+    const ids = [...this.records.values()]
+      .filter((r) => r.role === StaffRole.ADMIN)
+      .map((r) => r.id)
+      .sort();
+    return Promise.resolve(ids);
+  }
+
   revokeSessions(staffId: string, at: Date): Promise<void> {
     this.calls.push('revokeSessions');
     this.revocations.push({ staffId, at });
@@ -700,5 +709,58 @@ describe('StaffService invitation emails', () => {
       const logged = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls]);
       expect(logged).not.toContain(tokenOf(message));
     }
+  });
+});
+
+describe('StaffService.inviteFirstAdmin', () => {
+  it('answers undefined and changes nothing when an admin appeared before the insert', async () => {
+    const { service, repo, logger, email } = setup();
+    repo.seed(SUPPORT_ID, { role: StaffRole.ADMIN, status: StaffStatus.INVITED });
+
+    const result = await service.inviteFirstAdmin(ADMIN_ID, 'late@test.com', NOW);
+
+    expect(result).toBeUndefined();
+    expect(repo.records.size).toBe(1);
+    expect(repo.invitations).toHaveLength(0);
+    expect(email.sent).toHaveLength(0);
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it('invites an ADMIN like inviteWithLink: one invitation, one email after the commit, one audit line', async () => {
+    const { service, repo, logger, email } = setup();
+
+    const result = await service.inviteFirstAdmin(ADMIN_ID, 'First@Test.com', NOW);
+
+    expect(result?.member).toEqual({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      email: 'first@test.com',
+      role: StaffRole.ADMIN,
+      status: StaffStatus.INVITED,
+      createdAt: NOW,
+    });
+    expect(repo.calls[0]).toBe('lockAdminIds');
+    expect(repo.invitations).toHaveLength(1);
+    expect(email.sent).toHaveLength(1);
+    expect(email.sent[0]).toMatchObject({ to: 'first@test.com', duringTransaction: false });
+    expect(result?.link).toBe(email.sent[0].data.link);
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith(
+      {
+        audit: 'staff.invite',
+        actorId: ADMIN_ID,
+        staffId: result?.member.id,
+        role: StaffRole.ADMIN,
+      },
+      'staff action',
+    );
+  });
+
+  it('still answers STAFF_ALREADY_EXISTS for an email taken by a non-admin', async () => {
+    const { service, repo } = setup();
+    repo.seed(SUPPORT_ID, { email: 'taken@test.com' });
+
+    const error = await graphqlErrorOf(service.inviteFirstAdmin(ADMIN_ID, 'taken@test.com', NOW));
+
+    expect(error.extensions).toEqual({ code: 'STAFF_ALREADY_EXISTS' });
   });
 });

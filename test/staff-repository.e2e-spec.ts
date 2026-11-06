@@ -123,6 +123,29 @@ describe('StaffRepository (e2e, real MySQL)', () => {
       await expect(repo.transaction((tx) => tx.lockActiveAdminIds())).resolves.toEqual([ADMIN_ID]);
     });
 
+    it('locks and answers the admins of every status, and no other role', async () => {
+      const DEACTIVATED_ID = '4f0d7a6c-2b8e-4d1f-9a5b-6e9c0d1e2f3a';
+      await repo.insert(staff({ id: DEACTIVATED_ID, email: 'gone@test.com' }));
+      await repo.update(DEACTIVATED_ID, { status: StaffStatus.DEACTIVATED }, changedAt);
+
+      const ids = await repo.transaction((tx) => tx.lockAdminIds());
+
+      expect(ids).toEqual([ADMIN_ID, OTHER_ID, DEACTIVATED_ID].sort());
+    });
+
+    it('keeps the admin rows locked inside the transaction, so another connection cannot lock them', async () => {
+      await repo.transaction(async (tx) => {
+        await tx.lockAdminIds();
+        const error = await db
+          .raw('SELECT id FROM staff WHERE id = ? FOR UPDATE NOWAIT', [OTHER_ID])
+          .then(
+            () => undefined,
+            (err: { code?: string; errno?: number }) => err,
+          );
+        expect(error).toMatchObject({ code: 'ER_LOCK_NOWAIT', errno: 3572 });
+      });
+    });
+
     it('applies nothing when the transaction fails', async () => {
       await expect(
         repo.transaction(async (tx) => {
