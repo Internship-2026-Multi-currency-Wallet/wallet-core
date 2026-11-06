@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { getRequest } from '../auth/request-context.js';
+import { UserKind, isStaffPermission } from '../auth/user-kind.js';
 import { REQUIRED_PERMISSIONS_KEY } from './require-permission.decorator.js';
 
 /** Global guard (runs after `AuthGuard`): enforces `@RequirePermission(...)`. */
@@ -27,6 +28,10 @@ export class PermissionGuard implements CanActivate {
     const missing = required.filter((permission) => !user.permissions.includes(permission));
     if (missing.length > 0) {
       throw new ForbiddenException(`Missing permission: ${missing.join(', ')}`);
+    }
+    // Second lock: a client never reaches a staff endpoint, even with a staff permission by mistake.
+    if (required.some(isStaffPermission) && user.kind !== UserKind.STAFF) {
+      throw new ForbiddenException('Staff only');
     }
     return true;
   }
