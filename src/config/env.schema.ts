@@ -57,6 +57,12 @@ export const envSchema = z
     CLIENT: z.enum(KNOWN_CLIENTS).default('demo'),
     DEV_AUTH: booleanFromString,
     CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174'),
+    BACKOFFICE_URL: z
+      .url({ protocol: /^https?$/ })
+      .refine((url) => !/[?#]/.test(url), 'must not contain a query or a fragment')
+      .default('http://localhost:5174'),
+    // Admin invited on start when no admin exists; not validated as an email so a typo cannot stop the app.
+    BOOTSTRAP_ADMIN_EMAIL: z.string().trim().optional(),
     APP_VERSION: z.string().optional(),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
     JWT_ISSUER: z.string().min(1).default('wallet-core'),

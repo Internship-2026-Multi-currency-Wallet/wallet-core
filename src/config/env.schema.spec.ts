@@ -113,6 +113,34 @@ describe('AppConfig', () => {
     expect(config.corsOrigins).toEqual(['http://a', 'http://b']);
   });
 
+  it.each([
+    'https://bo.example.com/#/',
+    'https://bo.example.com/?a=1',
+    'https://bo.example.com/?',
+    'https://bo.example.com#',
+  ])('rejects BACKOFFICE_URL %s with a query or a fragment', (url) => {
+    expect(() => validateEnv({ BACKOFFICE_URL: url })).toThrow(
+      /BACKOFFICE_URL.*must not contain a query or a fragment/s,
+    );
+  });
+
+  it.each(['https://bo.example.com', 'https://bo.example.com/', 'https://bo.example.com/app/'])(
+    'accepts BACKOFFICE_URL %s',
+    (url) => {
+      expect(validateEnv({ BACKOFFICE_URL: url }).BACKOFFICE_URL).toBe(url);
+    },
+  );
+
+  it('validates BACKOFFICE_URL as an http(s) URL and strips trailing slashes in AppConfig', () => {
+    expect(validateEnv({}).BACKOFFICE_URL).toBe('http://localhost:5174');
+    expect(() => validateEnv({ BACKOFFICE_URL: 'not a url' })).toThrow(/BACKOFFICE_URL/);
+    expect(() => validateEnv({ BACKOFFICE_URL: 'ftp://x' })).toThrow(/BACKOFFICE_URL/);
+    expect(AppConfig.fromEnv({}).backofficeUrl).toBe('http://localhost:5174');
+    expect(AppConfig.fromEnv({ BACKOFFICE_URL: 'https://bo.example.com//' }).backofficeUrl).toBe(
+      'https://bo.example.com',
+    );
+  });
+
   it('uses the local-only JWT secret when none is set', () => {
     expect(AppConfig.fromEnv({}).jwt).toEqual({
       issuer: 'wallet-core',
@@ -121,5 +149,24 @@ describe('AppConfig', () => {
       sessionTtlSeconds: 2_592_000,
     });
     expect(AppConfig.fromEnv({ JWT_SECRET: 'y'.repeat(32) }).jwt.secret).toBe('y'.repeat(32));
+  });
+});
+
+describe('BOOTSTRAP_ADMIN_EMAIL', () => {
+  it('is undefined when unset or empty', () => {
+    expect(AppConfig.fromEnv({}).bootstrapAdminEmail).toBeUndefined();
+    expect(AppConfig.fromEnv({ BOOTSTRAP_ADMIN_EMAIL: '' }).bootstrapAdminEmail).toBeUndefined();
+  });
+
+  it('is trimmed', () => {
+    expect(AppConfig.fromEnv({ BOOTSTRAP_ADMIN_EMAIL: '  a@b.co  ' }).bootstrapAdminEmail).toBe(
+      'a@b.co',
+    );
+  });
+
+  it('does not stop the app when the value is not an email', () => {
+    expect(AppConfig.fromEnv({ BOOTSTRAP_ADMIN_EMAIL: 'not-an-email' }).bootstrapAdminEmail).toBe(
+      'not-an-email',
+    );
   });
 });

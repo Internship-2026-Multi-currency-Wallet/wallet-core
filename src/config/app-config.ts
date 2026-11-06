@@ -39,6 +39,8 @@ export class AppConfig {
   /** `DEV_AUTH=true` enables the `Authorization: Dev <userId>:<permissions>` header. */
   readonly devAuth: boolean;
   readonly corsOrigins: string[];
+  readonly backofficeUrl: string;
+  readonly bootstrapAdminEmail: string | undefined;
   /** `LOG_LEVEL`: fatal, error, warn, info (default), debug, trace, silent. */
   readonly logLevel: LogLevel;
   readonly jwt: {
@@ -57,6 +59,8 @@ export class AppConfig {
     this.redisUrl = env.REDIS_URL;
     this.client = env.CLIENT;
     this.devAuth = env.DEV_AUTH;
+    this.backofficeUrl = env.BACKOFFICE_URL.replace(/\/+$/, '');
+    this.bootstrapAdminEmail = env.BOOTSTRAP_ADMIN_EMAIL || undefined;
     this.logLevel = env.LOG_LEVEL;
     this.corsOrigins = env.CORS_ORIGINS.split(',')
       .map((origin) => origin.trim())

@@ -1,18 +1,23 @@
+import { createHash } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
 import type { Knex } from 'knex';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
+import { AppModule } from '../src/app.module.js';
+import { AppConfig } from '../src/config/app-config.js';
 import { createKnex } from '../src/database/database.module.js';
+import { EMAIL_SENDER, type EmailMessage } from '../src/email/email-sender.js';
 import { StaffRole } from '../src/staff/permissions.js';
 import { StaffStatus } from '../src/staff/staff.model.js';
 import { StaffRepository } from '../src/staff/staff.repository.js';
-import { createApp } from './create-app.js';
 
 /** Staff management over GraphQL, against real MySQL (`npm run infra:up && npm run migrate`). */
 describe('staff management (e2e, DEV_AUTH=true, real MySQL)', () => {
   let app: INestApplication;
   let db: Knex;
   let repo: StaffRepository;
+  const sent: EmailMessage[] = [];
 
   interface GqlResponse {
     data: Record<string, unknown> | null;
@@ -64,12 +69,32 @@ describe('staff management (e2e, DEV_AUTH=true, real MySQL)', () => {
     (await db('staff_invitations').where({ staff_id: staffId }).pluck('token_hash')) as string[];
 
   beforeAll(async () => {
-    app = await createApp({ DEV_AUTH: 'true', CLIENT: 'demo' });
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(AppConfig)
+      .useValue(
+        AppConfig.fromEnv({
+          ...process.env,
+          DEV_AUTH: 'true',
+          CLIENT: 'demo',
+          BACKOFFICE_URL: 'https://bo.test/',
+        }),
+      )
+      .overrideProvider(EMAIL_SENDER)
+      .useValue({
+        send: (message: EmailMessage) => {
+          sent.push(message);
+          return Promise.resolve();
+        },
+      })
+      .compile();
+    app = moduleRef.createNestApplication({ logger: ['error', 'warn'] });
+    await app.init();
     db = createKnex(process.env.DATABASE_URL!);
     repo = new StaffRepository(db);
   });
 
   beforeEach(async () => {
+    sent.length = 0;
     // DELETE, not TRUNCATE: MySQL refuses to truncate a table referenced by a foreign key.
     await db('staff_sessions').delete();
     await db('staff_invitations').delete();
@@ -102,6 +127,38 @@ describe('staff management (e2e, DEV_AUTH=true, real MySQL)', () => {
     await expect(db('staff_invitations').select('staff_id')).resolves.toEqual([
       { staff_id: invited.id },
     ]);
+  });
+
+  it('inviting and resending each email one link whose token hashes to the stored invitation', async () => {
+    const invited = await gql(
+      'mutation { inviteStaff(input: { email: "New@Test.com", role: SUPPORT }) { id } }',
+      ADMIN,
+    );
+    const staffId = (invited.data?.inviteStaff as { id: string }).id;
+    await gql(`mutation { resendStaffInvitation(staffId: "${staffId}") { id } }`, ADMIN);
+
+    expect(sent).toHaveLength(2);
+    const hashes = await tokenHashesOf(staffId);
+    for (const message of sent) {
+      expect(message.template).toBe('staffInvitation');
+      expect(message.to).toBe('new@test.com');
+      expect(Object.keys(message.data)).toEqual(['link']);
+      const link = new URL(message.data.link);
+      expect(`${link.origin}${link.pathname}`).toBe('https://bo.test/accept-invitation');
+      const hash = createHash('sha256').update(link.searchParams.get('token')!).digest('hex');
+      expect(hashes).toContain(hash);
+    }
+    expect(sent[0].data.link).not.toBe(sent[1].data.link);
+  });
+
+  it('sends no email when the invited address is taken or the resend is refused', async () => {
+    await seed(SUPPORT_ID, 'taken@test.com', StaffRole.SUPPORT, StaffStatus.ACTIVE);
+    await gql(
+      'mutation { inviteStaff(input: { email: "taken@test.com", role: FINANCE }) { id } }',
+      ADMIN,
+    );
+    await gql(`mutation { resendStaffInvitation(staffId: "${SUPPORT_ID}") { id } }`, ADMIN);
+    expect(sent).toHaveLength(0);
   });
 
   it('answers STAFF_ALREADY_EXISTS for an email taken in another case', async () => {
