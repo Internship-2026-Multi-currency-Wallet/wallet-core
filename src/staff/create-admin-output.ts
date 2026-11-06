@@ -6,7 +6,7 @@ export function formatCreateAdminResult(result: CreateAdminResult, appEnv: AppEn
   const delivery =
     result.link !== undefined && appEnv === 'local'
       ? `Invitation link: ${result.link}`
-      : 'The invitation was sent by email.';
+      : 'An invitation email was requested.';
   switch (result.outcome) {
     case 'created':
       return `Admin invited. ${delivery}\n`;
@@ -18,7 +18,5 @@ export function formatCreateAdminResult(result: CreateAdminResult, appEnv: AppEn
       return 'This email already belongs to a staff member who cannot be re-invited, nothing changed.\n';
     case 'invalidEmail':
       return 'The email is not valid, nothing changed.\n';
-    case 'exists':
-      return 'An admin or a staff member with this email already exists, nothing changed.\n';
   }
 }

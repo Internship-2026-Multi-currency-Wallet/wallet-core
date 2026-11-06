@@ -10,7 +10,7 @@ import { StaffErrorCode } from './staff-errors.js';
 
 export type CreateAdminResult =
   | { outcome: 'created' | 'resent'; staffId: string; link: string }
-  | { outcome: 'exists' | 'adminExists' | 'emailTaken' | 'invalidEmail'; link?: undefined };
+  | { outcome: 'adminExists' | 'emailTaken' | 'invalidEmail'; link?: undefined };
 
 const BOOTSTRAP_ACTOR = 'system:bootstrap';
 const CLI_ACTOR = 'system:cli';
@@ -44,7 +44,10 @@ export class StaffBootstrapService implements OnApplicationBootstrap {
       this.logger.warn({}, 'BOOTSTRAP_ADMIN_EMAIL is not a valid email, no admin invited');
       return { outcome: 'invalidEmail' };
     }
-    if (await this.repo.anyAdminExists()) return { outcome: 'exists' };
+    if (await this.repo.anyAdminExists()) {
+      this.logger.info({}, 'bootstrap skipped: an admin already exists');
+      return { outcome: 'adminExists' };
+    }
     try {
       const { member, link } = await this.staff.inviteWithLink(
         BOOTSTRAP_ACTOR,
@@ -54,8 +57,12 @@ export class StaffBootstrapService implements OnApplicationBootstrap {
       this.logger.info({ staffId: member.id }, 'bootstrap admin invited');
       return { outcome: 'created', staffId: member.id, link };
     } catch (err) {
-      if (isStaffAlreadyExists(err)) return { outcome: 'exists' };
-      throw err;
+      if (!isStaffAlreadyExists(err)) throw err;
+      this.logger.warn(
+        {},
+        'bootstrap skipped: BOOTSTRAP_ADMIN_EMAIL belongs to a staff member who is not an admin, no admin was invited',
+      );
+      return { outcome: 'emailTaken' };
     }
   }
 
@@ -71,12 +78,17 @@ export class StaffBootstrapService implements OnApplicationBootstrap {
       return { outcome: 'resent', staffId: existing.id, link };
     }
     if (await this.repo.anyAdminExists()) return { outcome: 'adminExists' };
-    const { member, link } = await this.staff.inviteWithLink(
-      CLI_ACTOR,
-      { email: normalized, role: StaffRole.ADMIN },
-      now,
-    );
-    return { outcome: 'created', staffId: member.id, link };
+    try {
+      const { member, link } = await this.staff.inviteWithLink(
+        CLI_ACTOR,
+        { email: normalized, role: StaffRole.ADMIN },
+        now,
+      );
+      return { outcome: 'created', staffId: member.id, link };
+    } catch (err) {
+      if (isStaffAlreadyExists(err)) return { outcome: 'emailTaken' };
+      throw err;
+    }
   }
 
   private normalize(email: string): string | undefined {

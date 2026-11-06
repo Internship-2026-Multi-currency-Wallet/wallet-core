@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { jest } from '@jest/globals';
 import { GraphQLError } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
-import type { AppConfig } from '../config/app-config.js';
+import { AppConfig } from '../config/app-config.js';
 import { type EmailMessage, type EmailSender, EmailTemplate } from '../email/email-sender.js';
 import { StaffRole } from './permissions.js';
 import { StaffStatus } from './staff.model.js';
@@ -147,7 +147,7 @@ class RecordingEmailSender implements EmailSender {
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const tokenOf = (message: EmailMessage) => new URL(message.data.link).searchParams.get('token')!;
 
-function setup(backofficeUrl = 'https://bo.test') {
+function setup(backofficeUrl = 'https://bo.test', config?: AppConfig) {
   const repo = new FakeStaffRepository();
   const email = new RecordingEmailSender(repo);
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), setContext: jest.fn() };
@@ -155,7 +155,7 @@ function setup(backofficeUrl = 'https://bo.test') {
     repo as unknown as StaffRepository,
     logger as unknown as PinoLogger,
     email,
-    { backofficeUrl } as AppConfig,
+    config ?? ({ backofficeUrl } as AppConfig),
   );
   return { service, repo, logger, email };
 }
@@ -685,8 +685,7 @@ describe('StaffService invitation emails', () => {
     ['https://bo.test/', 'https://bo.test/accept-invitation?token='],
     ['https://bo.test///', 'https://bo.test/accept-invitation?token='],
   ])('builds the link from BACKOFFICE_URL %s with one slash', async (configured, prefix) => {
-    const normalized = configured.replace(/\/+$/, '');
-    const { service, email } = setup(normalized);
+    const { service, email } = setup(undefined, AppConfig.fromEnv({ BACKOFFICE_URL: configured }));
     await service.invite(ADMIN_ID, NEW, NOW);
     expect(email.sent[0].data.link.startsWith(prefix)).toBe(true);
   });

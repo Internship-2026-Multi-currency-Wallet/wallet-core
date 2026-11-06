@@ -157,17 +157,36 @@ describe('StaffBootstrapService.onApplicationBootstrap', () => {
     expect(sent).toHaveLength(0);
   });
 
-  it('creates nothing when a non-admin already has that email', async () => {
-    const { bootstrap, repo, sent } = setup();
+  it('creates nothing, warns without the email, when a non-admin already has that email', async () => {
+    const { bootstrap, repo, sent, logger } = setup();
     repo.seed(EXISTING_ID, { email: 'admin@test.com' });
 
     await expect(bootstrap.bootstrapAdmin('admin@test.com')).resolves.toEqual({
-      outcome: 'exists',
+      outcome: 'emailTaken',
     });
 
     expect(repo.records.size).toBe(1);
     expect(repo.records.get(EXISTING_ID)?.role).toBe(StaffRole.SUPPORT);
     expect(sent).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      {},
+      'bootstrap skipped: BOOTSTRAP_ADMIN_EMAIL belongs to a staff member who is not an admin, no admin was invited',
+    );
+    expect(allLogs(logger)).not.toContain('admin@test.com');
+  });
+
+  it('creates nothing, logs without the email, when an admin already exists', async () => {
+    const { bootstrap, repo, sent, logger } = setup();
+    repo.seed(EXISTING_ID, { role: StaffRole.ADMIN });
+
+    await expect(bootstrap.bootstrapAdmin('admin@test.com')).resolves.toEqual({
+      outcome: 'adminExists',
+    });
+
+    expect(repo.records.size).toBe(1);
+    expect(sent).toHaveLength(0);
+    expect(logger.info).toHaveBeenCalledWith({}, 'bootstrap skipped: an admin already exists');
+    expect(allLogs(logger)).not.toContain('admin@test.com');
   });
 
   it('does not touch the repository when the env is unset', async () => {
@@ -267,6 +286,23 @@ describe('StaffBootstrapService.createAdminOrReissue', () => {
     const result = await bootstrap.createAdminOrReissue('new@test.com', NOW);
 
     expect(result).toEqual({ outcome: 'adminExists' });
+    expect(repo.records.size).toBe(1);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('reports emailTaken when the email is taken between the lookup and the insert', async () => {
+    const { bootstrap, repo, sent } = setup();
+    const lookup = repo.findByEmail.bind(repo);
+    repo.findByEmail = async (email) => {
+      const found = await lookup(email);
+      repo.seed(EXISTING_ID, { email: 'new@test.com' });
+      return found;
+    };
+
+    await expect(bootstrap.createAdminOrReissue('new@test.com', NOW)).resolves.toEqual({
+      outcome: 'emailTaken',
+    });
+
     expect(repo.records.size).toBe(1);
     expect(sent).toHaveLength(0);
   });

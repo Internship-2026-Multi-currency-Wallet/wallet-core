@@ -26,13 +26,14 @@ describe('formatCreateAdminResult', () => {
   );
 
   it.each(['staging', 'kvitka-uat', 'wisla-uat'] as AppEnv[])(
-    'prints neither link nor token with APP_ENV=%s and says the email was sent',
+    'prints neither link nor token with APP_ENV=%s and says an email was requested',
     (appEnv) => {
       for (const outcome of ['created', 'resent'] as const) {
         const out = formatCreateAdminResult(withLink(outcome), appEnv);
         expect(out).not.toContain(LINK);
         expect(out).not.toContain(TOKEN);
-        expect(out).toContain('sent by email');
+        expect(out).toContain('An invitation email was requested.');
+        expect(out).not.toContain('sent');
       }
     },
   );

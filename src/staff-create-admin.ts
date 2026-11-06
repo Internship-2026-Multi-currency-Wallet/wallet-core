@@ -17,12 +17,21 @@ delete process.env.BOOTSTRAP_ADMIN_EMAIL;
 
 const email = process.argv[2] ?? envEmail;
 if (!email) {
-  process.stdout.write('Usage: npm run staff:create-admin -- <email>\n');
+  process.stderr.write('Usage: npm run staff:create-admin -- <email>\n');
   process.exit(1);
 }
 
 const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn'] });
-const result = await app.get(StaffBootstrapService).createAdminOrReissue(email);
-process.stdout.write(formatCreateAdminResult(result, app.get(AppConfig).appEnv));
-await app.close();
-process.exitCode = result.outcome === 'created' || result.outcome === 'resent' ? 0 : 1;
+try {
+  const result = await app.get(StaffBootstrapService).createAdminOrReissue(email);
+  process.stdout.write(formatCreateAdminResult(result, app.get(AppConfig).appEnv));
+  process.exitCode = result.outcome === 'created' || result.outcome === 'resent' ? 0 : 1;
+} catch (err) {
+  // Name only: database errors can carry SQL values.
+  process.stderr.write(
+    `staff:create-admin failed (${err instanceof Error ? err.name : 'unknown'})\n`,
+  );
+  process.exitCode = 1;
+} finally {
+  await app.close();
+}
