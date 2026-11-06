@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { KNEX } from '../database/database.module.js';
+import { isDeadlock } from '../database/deadlock.js';
 import { isUniqueViolation } from '../database/unique-violation.js';
 import { StaffRole } from './permissions.js';
 import { StaffStatus } from './staff.model.js';
@@ -9,7 +10,6 @@ const STAFF = 'staff';
 const EMAIL_UNIQUE = 'staff_email_unique';
 const INVITATIONS = 'staff_invitations';
 const SESSIONS = 'staff_sessions';
-const ER_LOCK_DEADLOCK = 1213;
 const MAX_TRANSACTION_ATTEMPTS = 3;
 
 export interface NewInvitation {
@@ -192,12 +192,6 @@ export class StaffRepository {
       .first()) as { staff_id: string };
     return row.staff_id;
   }
-}
-
-function isDeadlock(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const { errno, code } = error as { errno?: unknown; code?: unknown };
-  return errno === ER_LOCK_DEADLOCK || code === 'ER_LOCK_DEADLOCK';
 }
 
 function toRecord(row: StaffRow): StaffRecord {
