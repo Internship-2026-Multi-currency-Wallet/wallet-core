@@ -40,9 +40,25 @@ describe('wallet-core (e2e, DEV_AUTH=true)', () => {
   });
 
   it('query me returns the dev user', async () => {
-    const res = await gql(app, '{ me { id permissions strategy } }', 'Dev 1:wallet').expect(200);
-    expect(res.body.data.me).toEqual({ id: '1', permissions: ['wallet'], strategy: 'dev' });
+    const res = await gql(app, '{ me { id kind permissions strategy } }', 'Dev 1:wallet').expect(
+      200,
+    );
+    expect(res.body.data.me).toEqual({
+      id: '1',
+      kind: 'CLIENT',
+      permissions: ['wallet'],
+      strategy: 'dev',
+    });
   });
+
+  // The second header is the back-office dev user: staff permissions without a plain "bo".
+  it.each(['Dev 42:bo', 'Dev 100:bo:users,bo:users:modify'])(
+    'query me returns STAFF for %s',
+    async (authorization) => {
+      const res = await gql(app, '{ me { kind } }', authorization).expect(200);
+      expect(res.body.data.me).toEqual({ kind: 'STAFF' });
+    },
+  );
 
   it('query me without credentials is UNAUTHENTICATED', async () => {
     const res = await gql(app, '{ me { id } }');

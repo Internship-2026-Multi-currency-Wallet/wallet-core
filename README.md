@@ -96,7 +96,7 @@ The schema is **code-first**: resolvers and `@ObjectType`s are the source of tru
 - `npm run start:dev` and the e2e tests regenerate it; `npm run schema:generate` does it without a database.
 - A PR that changes the API must include the regenerated `schema.graphql`. That diff is what consumers review.
 
-Current API: `health { service version appEnv client db redis }` (public) and `me { id permissions strategy }`.
+Current API: `health { service version appEnv client db redis }` (public) and `me { id kind permissions strategy }`.
 
 ## Logging
 
