@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
+import { AppConfig } from '../config/app-config.js';
+import { EMAIL_SENDER, EmailTemplate, type EmailSender } from '../email/email-sender.js';
 import { registerInputSchema } from '../auth/register.schema.js';
 import { ROLE_PERMISSIONS, StaffRole } from './permissions.js';
 import type { InviteStaffInput } from './staff.inputs.js';
@@ -16,6 +18,8 @@ export class StaffService {
     private readonly staff: StaffRepository,
     // Not `@InjectPinoLogger`: its provider only exists if this file loads before LoggingModule.
     private readonly logger: PinoLogger,
+    @Inject(EMAIL_SENDER) private readonly email: EmailSender,
+    private readonly config: AppConfig,
   ) {
     logger.setContext(StaffService.name);
   }
@@ -27,7 +31,7 @@ export class StaffService {
   ): Promise<StaffMember> {
     const email = parseEmail(input.email);
     const id = randomUUID();
-    await this.staff.transaction(async (tx) => {
+    const token = await this.staff.transaction(async (tx) => {
       const result = await tx.insert({ id, email, role: input.role, createdAt: now });
       if (result === InsertStaffResult.EmailTaken) {
         throw staffError(
@@ -35,8 +39,9 @@ export class StaffService {
           STAFF_ERROR_MESSAGES.staffAlreadyExists,
         );
       }
-      await insertInvitation(tx, id, now);
+      return insertInvitation(tx, id, now);
     });
+    await this.sendInvitation(id, email, token);
     this.logger.info(
       { audit: 'staff.invite', actorId, staffId: id, role: input.role },
       'staff action',
@@ -49,20 +54,33 @@ export class StaffService {
     staffId: string,
     now: Date = new Date(),
   ): Promise<StaffMember> {
-    const record = await this.staff.transaction(async (tx) => {
+    const { record, token } = await this.staff.transaction(async (tx) => {
       const found = await lockOrThrow(tx, staffId);
       if (found.status !== StaffStatus.INVITED) {
         throw staffError(StaffErrorCode.NotInvited, STAFF_ERROR_MESSAGES.notInvited);
       }
       await tx.expireInvitations(found.id, now);
-      await insertInvitation(tx, found.id, now);
-      return found;
+      return { record: found, token: await insertInvitation(tx, found.id, now) };
     });
+    await this.sendInvitation(record.id, record.email, token);
     this.logger.info(
       { audit: 'staff.resendInvitation', actorId, staffId: record.id },
       'staff action',
     );
     return toMember(record);
+  }
+
+  /** Runs after the commit; a failed email must not fail the mutation, the admin can resend. */
+  private async sendInvitation(staffId: string, to: string, token: string): Promise<void> {
+    try {
+      await this.email.send({
+        template: EmailTemplate.StaffInvitation,
+        to,
+        data: { link: `${this.config.backofficeUrl}/accept-invitation?token=${token}` },
+      });
+    } catch (err) {
+      this.logger.warn({ err, staffId }, 'invitation email failed');
+    }
   }
 
   async deactivate(actorId: string, staffId: string, now: Date = new Date()): Promise<StaffMember> {
@@ -157,8 +175,8 @@ async function lockOrThrow(tx: StaffRepository, staffId: string): Promise<StaffR
   return record;
 }
 
-/** Only the SHA-256 of the token is stored; the token is never returned or logged. */
-async function insertInvitation(tx: StaffRepository, staffId: string, now: Date): Promise<void> {
+/** Only the SHA-256 of the token is stored; the token goes out by email only and is never logged. */
+async function insertInvitation(tx: StaffRepository, staffId: string, now: Date): Promise<string> {
   const token = randomBytes(32).toString('base64url');
   await tx.insertInvitation({
     id: randomUUID(),
@@ -167,6 +185,7 @@ async function insertInvitation(tx: StaffRepository, staffId: string, now: Date)
     expiresAt: new Date(now.getTime() + INVITATION_TTL_MS),
     createdAt: now,
   });
+  return token;
 }
 
 function toMember(record: StaffRecord): StaffMember {

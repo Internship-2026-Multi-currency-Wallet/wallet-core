@@ -80,6 +80,7 @@ See `.env.example`.
 | `CLIENT`          | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                             |
 | `DEV_AUTH`        | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT |
 | `CORS_ORIGINS`    | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                              |
+| `BACKOFFICE_URL`  | `http://localhost:5174`                            | Back office base URL (http or https), used in the links of staff emails                              |
 | `APP_VERSION`     | from `package.json`                                | Version reported by `health`                                                                         |
 | `LOG_LEVEL`       | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                              |
 | `JWT_SECRET`      | local-only value (`.env.example`)                  | HS256 secret shared with rates-service and treasury-service. Required with `NODE_ENV=production`     |

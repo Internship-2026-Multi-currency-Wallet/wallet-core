@@ -113,6 +113,16 @@ describe('AppConfig', () => {
     expect(config.corsOrigins).toEqual(['http://a', 'http://b']);
   });
 
+  it('validates BACKOFFICE_URL as an http(s) URL and strips trailing slashes in AppConfig', () => {
+    expect(validateEnv({}).BACKOFFICE_URL).toBe('http://localhost:5174');
+    expect(() => validateEnv({ BACKOFFICE_URL: 'not a url' })).toThrow(/BACKOFFICE_URL/);
+    expect(() => validateEnv({ BACKOFFICE_URL: 'ftp://x' })).toThrow(/BACKOFFICE_URL/);
+    expect(AppConfig.fromEnv({}).backofficeUrl).toBe('http://localhost:5174');
+    expect(AppConfig.fromEnv({ BACKOFFICE_URL: 'https://bo.example.com//' }).backofficeUrl).toBe(
+      'https://bo.example.com',
+    );
+  });
+
   it('uses the local-only JWT secret when none is set', () => {
     expect(AppConfig.fromEnv({}).jwt).toEqual({
       issuer: 'wallet-core',

@@ -57,6 +57,8 @@ export const envSchema = z
     CLIENT: z.enum(KNOWN_CLIENTS).default('demo'),
     DEV_AUTH: booleanFromString,
     CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174'),
+    // Base of the links in staff emails (`<BACKOFFICE_URL>/accept-invitation?token=...`).
+    BACKOFFICE_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:5174'),
     APP_VERSION: z.string().optional(),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
     JWT_ISSUER: z.string().min(1).default('wallet-core'),
