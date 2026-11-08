@@ -39,6 +39,7 @@ export function graphqlOptions(
 ): ApolloDriverConfig {
   logger.setContext('GraphQL');
   const wsLogging = subscriptionLoggingHooks(logger);
+  const countedSockets = new WeakSet<object>();
   return {
     driver: ApolloDriver,
     autoSchemaFile: config.isProduction ? true : SCHEMA_FILE,
@@ -53,11 +54,13 @@ export function graphqlOptions(
         ...wsLogging,
         onConnect: (ctx) => {
           wsLogging.onConnect(ctx);
-          metrics?.graphqlWsConnections.inc();
+          if (metrics && !countedSockets.has(ctx)) {
+            countedSockets.add(ctx);
+            metrics.graphqlWsConnections.inc();
+          }
         },
-        onDisconnect: (ctx, code) => {
-          wsLogging.onDisconnect(ctx, code);
-          metrics?.graphqlWsConnections.dec();
+        onClose: (ctx) => {
+          if (countedSockets.delete(ctx)) metrics?.graphqlWsConnections.dec();
         },
         // Apollo's formatError does not see websocket results: mask them the same way.
         onNext: (_ctx, _id, _payload, _args, result) => formatExecutionResult(result),
