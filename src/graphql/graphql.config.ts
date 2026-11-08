@@ -6,6 +6,8 @@ import { AppConfig } from '../config/app-config.js';
 import { AuthErrorCode } from '../auth/auth-errors.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
+import type { Metrics } from '../metrics/metrics.js';
+import { graphqlMetricsPlugin } from '../metrics/request-metrics.js';
 import { formatError, formatExecutionResult } from './format-error.js';
 
 /** Path of the committed GraphQL contract. Other repositories consume this file. */
@@ -30,8 +32,13 @@ export interface GraphqlContext {
  * Apollo, code-first. Outside production the schema is written to `schema.graphql`
  * (sorted, so diffs are stable) — commit it together with resolver changes.
  */
-export function graphqlOptions(config: AppConfig, logger: PinoLogger): ApolloDriverConfig {
+export function graphqlOptions(
+  config: AppConfig,
+  logger: PinoLogger,
+  metrics?: Metrics,
+): ApolloDriverConfig {
   logger.setContext('GraphQL');
+  const wsLogging = subscriptionLoggingHooks(logger);
   return {
     driver: ApolloDriver,
     autoSchemaFile: config.isProduction ? true : SCHEMA_FILE,
@@ -43,13 +50,24 @@ export function graphqlOptions(config: AppConfig, logger: PinoLogger): ApolloDri
     subscriptions: {
       'graphql-ws': {
         path: '/graphql',
-        ...subscriptionLoggingHooks(logger),
+        ...wsLogging,
+        onConnect: (ctx) => {
+          wsLogging.onConnect(ctx);
+          metrics?.graphqlWsConnections.inc();
+        },
+        onDisconnect: (ctx, code) => {
+          wsLogging.onDisconnect(ctx, code);
+          metrics?.graphqlWsConnections.dec();
+        },
         // Apollo's formatError does not see websocket results: mask them the same way.
         onNext: (_ctx, _id, _payload, _args, result) => formatExecutionResult(result),
       },
     },
     // Names the operation in the access log and logs resolver errors with the requestId.
-    plugins: [graphqlLoggingPlugin({ clientErrorCodes: CLIENT_ERROR_CODES })],
+    plugins: [
+      graphqlLoggingPlugin({ clientErrorCodes: CLIENT_ERROR_CODES }),
+      ...(metrics ? [graphqlMetricsPlugin(metrics)] : []),
+    ],
     // Unexpected errors reach the client as a bare INTERNAL_SERVER_ERROR (no SQL, no internals).
     formatError,
     // HTTP requests carry headers; websocket requests carry connectionParams.

@@ -32,6 +32,7 @@ export class AppConfig {
   /** Environment (`APP_ENV`): local, staging, kvitka-uat, wisla-uat. Prefix of all Redis keys. */
   readonly appEnv: AppEnv;
   readonly port: number;
+  readonly metricsPort: number;
   readonly databaseUrl: string;
   readonly redisUrl: string;
   /** The client this deployment serves (`CLIENT` env). */
@@ -53,6 +54,7 @@ export class AppConfig {
     this.nodeEnv = env.NODE_ENV;
     this.appEnv = env.APP_ENV;
     this.port = env.PORT;
+    this.metricsPort = env.METRICS_PORT;
     this.databaseUrl = env.DATABASE_URL;
     this.redisUrl = env.REDIS_URL;
     this.client = env.CLIENT;

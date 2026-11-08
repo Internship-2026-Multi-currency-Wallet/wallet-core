@@ -63,10 +63,20 @@ export class EventPublisher {
     /** Environment prefix (`APP_ENV`). */
     private readonly prefix: string,
     private readonly context: EventContext = NO_EVENT_CONTEXT,
+    private readonly onPublished: (name: EventName) => void = () => undefined,
   ) {}
 
   /** Returns the stream entry id for stream events, `null` for pub/sub events. */
   async publish<N extends EventName>(name: N, payload: EventPayloads[N]): Promise<string | null> {
+    const id = await this.send(name, payload);
+    this.onPublished(name);
+    return id;
+  }
+
+  private async send<N extends EventName>(
+    name: N,
+    payload: EventPayloads[N],
+  ): Promise<string | null> {
     const definition = EVENTS[name];
     const meta: EventMeta = { ...this.context.current(), publishedAt: new Date().toISOString() };
     if (definition.transport === 'pubsub') {

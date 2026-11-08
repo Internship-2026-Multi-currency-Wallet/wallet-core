@@ -73,6 +73,7 @@ See `.env.example`.
 | Variable          | Default                                            | Meaning                                                                                              |
 | ----------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `PORT`            | `3000`                                             | HTTP port                                                                                            |
+| `METRICS_PORT`    | `9464`                                             | Internal port of `GET /metrics` (see [Metrics](#metrics)). Must differ from `PORT`                   |
 | `NODE_ENV`        | `development`                                      | `production` disables writing `schema.graphql`                                                       |
 | `APP_ENV`         | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                 |
 | `DATABASE_URL`    | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                       |
@@ -125,6 +126,47 @@ this.logger.error({ err, conversionId }, 'conversion failed'); // pass errors as
   request objects on purpose.
 - **`LOG_LEVEL`**: `fatal`, `error`, `warn`, `info` (default), `debug`, `trace`, `silent` (e2e tests default to `silent`).
 - Do not use `console.*` or `new Logger()` from `@nestjs/common` in application code.
+
+## Metrics
+
+Prometheus metrics via [`prom-client`](https://github.com/siimon/prom-client) (`src/metrics/`). Alloy scrapes them
+every 15 s and Grafana shows them on the _Server_ and _Services_ dashboards (see the handbook's `metrics.md`).
+
+- **Where**: `GET /metrics` on its own small HTTP server on `METRICS_PORT` (default `9464`), not on `PORT`. That port
+  has no public domain, so the metrics are not reachable from the internet; `GET /metrics` on the app port is a 404.
+  If the port is busy, the service starts anyway and logs an error. Running several backends from source, give
+  each its own port (`METRICS_PORT=9465 npm run start:dev`).
+- **Labels on every series**: `service` (`wallet-core`) and `env` (`APP_ENV`).
+
+| Metric                          | Type      | Labels              | Meaning                                                                   |
+| ------------------------------- | --------- | ------------------- | ------------------------------------------------------------------------- |
+| `http_requests_total`           | counter   | `operation, status` | HTTP requests, except `/health`, `/metrics` and CORS preflights           |
+| `http_request_duration_seconds` | histogram | `operation`         | Request duration; buckets 5 ms … 10 s                                     |
+| `graphql_errors_total`          | counter   | `operation, code`   | Failed GraphQL requests by the error code the client sees (once per code) |
+| `graphql_ws_connections`        | gauge     | —                   | Open GraphQL websocket connections                                        |
+| `events_published_total`        | counter   | `type`              | Events published through `EventPublisher`                                 |
+| `process_*`, `nodejs_*`         | default   | —                   | CPU, memory, heap, event-loop lag, GC, start time (prom-client defaults)  |
+
+- **`operation`**: the GraphQL operation as in the access log (`query Me`, `mutation Convert`), or the route of a REST
+  request (`POST /diagnostics/ping`). Anonymous or unparsable GraphQL, requests that matched no route and names past
+  the cap of 100 distinct values all go into one bucket, `(unknown)`: operation names come from the client.
+- **Adding a metric**: inject `Metrics` and create it once, in the constructor or factory, with bounded labels only:
+
+```ts
+constructor(@Inject(Metrics) metrics: Metrics) {
+  this.published = metrics.counter({
+    name: 'events_published_total',
+    help: 'Events published, by event type',
+    labelNames: ['type'],
+  });
+}
+
+this.published.inc({ type: name });
+```
+
+- **Label rules**: every distinct label value is a new time series in Prometheus. Never use user ids, request ids,
+  amounts, emails or free text as label values; those belong in logs.
+- **Check locally**: `curl localhost:9464/metrics`.
 
 ## Seams
 
@@ -267,6 +309,7 @@ src/
   config/        env validation + AppConfig
   database/      Knex (KNEX token)    redis/   ioredis (REDIS token)
   graphql/       Apollo options
+  metrics/       Prometheus registry, request metrics, GET /metrics on METRICS_PORT
 migrations/      Knex migrations (timestamped)
 test/            e2e tests
 schema.graphql   generated GraphQL contract (committed)
