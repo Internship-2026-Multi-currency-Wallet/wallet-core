@@ -17,7 +17,10 @@ export function operationName(req: CountedRequest | undefined): string | undefin
   const op = req?.graphqlOperation;
   if (op) return op.name ? `${op.type} ${op.name}` : undefined;
   const path = req?.route?.path;
-  return typeof path === 'string' ? `${req?.method} ${path}` : undefined;
+  if (typeof path !== 'string' || path.includes('*') || path.startsWith('/graphql')) {
+    return undefined;
+  }
+  return `${req?.method} ${path}`;
 }
 
 export function requestMetricsMiddleware(metrics: Metrics) {

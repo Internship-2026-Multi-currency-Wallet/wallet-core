@@ -35,8 +35,11 @@ export class MetricsServer implements OnApplicationBootstrap, OnApplicationShutd
         );
         resolve();
       });
-      this.server.listen(this.config.metricsPort, () => {
-        this.logger.info({ port: this.port }, `Metrics on :${this.port}/metrics`);
+      this.server.listen(this.config.metricsPort, this.config.metricsHost, () => {
+        this.logger.info(
+          { host: this.config.metricsHost, port: this.port },
+          `Metrics on ${this.config.metricsHost}:${this.port}/metrics`,
+        );
         resolve();
       });
     });

@@ -74,6 +74,7 @@ See `.env.example`.
 | ----------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `PORT`            | `3000`                                             | HTTP port                                                                                            |
 | `METRICS_PORT`    | `9464`                                             | Internal port of `GET /metrics` (see [Metrics](#metrics)). Must differ from `PORT`                   |
+| `METRICS_HOST`    | `127.0.0.1` (Docker image: `0.0.0.0`)              | Address `GET /metrics` listens on                                                                    |
 | `NODE_ENV`        | `development`                                      | `production` disables writing `schema.graphql`                                                       |
 | `APP_ENV`         | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                 |
 | `DATABASE_URL`    | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                       |
@@ -132,10 +133,13 @@ this.logger.error({ err, conversionId }, 'conversion failed'); // pass errors as
 Prometheus metrics via [`prom-client`](https://github.com/siimon/prom-client) (`src/metrics/`). Alloy scrapes them
 every 15 s and Grafana shows them on the _Server_ and _Services_ dashboards (see the handbook's `metrics.md`).
 
-- **Where**: `GET /metrics` on its own small HTTP server on `METRICS_PORT` (default `9464`), not on `PORT`. That port
-  has no public domain, so the metrics are not reachable from the internet; `GET /metrics` on the app port is a 404.
-  If the port is busy, the service starts anyway and logs an error. Running several backends from source, give
-  each its own port (`METRICS_PORT=9465 npm run start:dev`).
+- **Where**: `GET /metrics` on its own small HTTP server on `METRICS_PORT` (default `9464`), not on `PORT`;
+  `GET /metrics` on the app port is a 404. If the port is busy, the service starts anyway and logs an error. Running
+  several backends from source, give each its own port (`METRICS_PORT=9465 npm run start:dev`).
+- **Who can reach it**: run directly on a machine, the server listens on `127.0.0.1` only (`METRICS_HOST`). The
+  Docker image sets `METRICS_HOST=0.0.0.0`: the port is not published, so only containers on the same Docker
+  network (Alloy, on the server: other apps on `dokploy-network`) reach it, never the internet. Traefik routes the
+  public domain to `PORT` only. Metrics carry no ids, amounts or secrets.
 - **Labels on every series**: `service` (`wallet-core`) and `env` (`APP_ENV`).
 
 | Metric                          | Type      | Labels              | Meaning                                                                   |

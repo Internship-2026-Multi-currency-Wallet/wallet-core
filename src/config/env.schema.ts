@@ -53,6 +53,7 @@ export const envSchema = z
     APP_ENV: z.enum(APP_ENVS).default('local'),
     PORT: z.coerce.number().int().positive().default(3000),
     METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(9464),
+    METRICS_HOST: z.string().min(1).default('127.0.0.1'),
     DATABASE_URL: z.url().default('mysql://wallet:wallet@localhost:3306/wallet_core'),
     REDIS_URL: z.url().default('redis://localhost:6379'),
     CLIENT: z.enum(KNOWN_CLIENTS).default('demo'),

@@ -87,6 +87,21 @@ describe('metrics (e2e)', () => {
     expect(valueOf(await scrape(), 'http_requests_total', labels)).toBe(before + 1);
   });
 
+  it('puts unparsable GraphQL and unrouted requests into the unknown bucket', async () => {
+    const errors = { operation: '(unknown)', code: 'GRAPHQL_PARSE_FAILED' };
+    const before = await scrape();
+    await request(server).post('/graphql').send({ query: 'query Broken {' }).expect(400);
+    await request(server).get('/no-such-route').expect(404);
+    const after = await scrape();
+    expect(valueOf(after, 'graphql_errors_total', errors)).toBe(
+      valueOf(before, 'graphql_errors_total', errors) + 1,
+    );
+    expect(valueOf(after, 'http_requests_total', { operation: '(unknown)', status: '404' })).toBe(
+      valueOf(before, 'http_requests_total', { operation: '(unknown)', status: '404' }) + 1,
+    );
+    expect(after).not.toContain('splat');
+  });
+
   it('does not count /health and /metrics', async () => {
     const before = total(await scrape(), 'http_requests_total');
     await request(server).get('/health');

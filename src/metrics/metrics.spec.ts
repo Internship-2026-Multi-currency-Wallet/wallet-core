@@ -45,6 +45,11 @@ describe('operationName', () => {
     );
     expect(operationName({ method: 'GET' })).toBeUndefined();
   });
+
+  it('puts unresolved GraphQL and unrouted requests into the unknown bucket', () => {
+    expect(operationName({ method: 'POST', route: { path: '{/*splat}' } })).toBeUndefined();
+    expect(operationName({ method: 'POST', route: { path: '/graphql' } })).toBeUndefined();
+  });
 });
 
 describe('graphqlErrorCode', () => {

@@ -33,6 +33,7 @@ export class AppConfig {
   readonly appEnv: AppEnv;
   readonly port: number;
   readonly metricsPort: number;
+  readonly metricsHost: string;
   readonly databaseUrl: string;
   readonly redisUrl: string;
   /** The client this deployment serves (`CLIENT` env). */
@@ -55,6 +56,7 @@ export class AppConfig {
     this.appEnv = env.APP_ENV;
     this.port = env.PORT;
     this.metricsPort = env.METRICS_PORT;
+    this.metricsHost = env.METRICS_HOST;
     this.databaseUrl = env.DATABASE_URL;
     this.redisUrl = env.REDIS_URL;
     this.client = env.CLIENT;
