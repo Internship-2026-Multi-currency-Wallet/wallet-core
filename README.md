@@ -232,6 +232,17 @@ const { mid } = await this.rates.getRate('USD', 'UAH'); // '41.50000000'
 Bound to `FixedRatesClient` (fixed UAH/USD/EUR/PLN/USDT rates, exact cross rates via USD). When `rates-service`
 is live, bind the real client in `RatesModule`.
 
+### Email — `src/email`
+
+```ts
+constructor(private readonly email: EmailService) {}
+await this.email.send('staffInvitation', to, { link });
+```
+
+Bound to `FakeEmailService`: it records into `sent` and delivers nothing; it logs the link only when `APP_ENV=local`,
+never the recipient. Real delivery (queue + Resend/SMTP) comes later. In tests override `EmailService` with
+`new FakeEmailService(...)` or read `app.get(EmailService).sent`.
+
 ### Events — `src/events`
 
 `catalog.ts` is the typed contract for Redis events, **identical in all three backends**:
@@ -262,6 +273,7 @@ src/
   permissions/   @RequirePermission + guard
   settings/      ClientSettingsService (settingsCatalog defaults + DB overrides) and the settings API
   rates/         RatesClient + FixedRatesClient
+  email/         EmailService contract + FakeEmailService
   events/        event catalog + publisher/subscriber
   health/        GET /health and `health` query
   config/        env validation + AppConfig
