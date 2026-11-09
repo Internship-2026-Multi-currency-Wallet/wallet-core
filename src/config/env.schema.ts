@@ -65,6 +65,10 @@ export const envSchema = z
     JWT_ACCESS_TTL: durationInSeconds('15m'),
     // Lifetime of a session (refresh token), counted from login.
     JWT_REFRESH_TTL: durationInSeconds('30d'),
+    // Global rate limit: window length and requests per window (anonymous: per IP, logged in: per id).
+    THROTTLE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+    THROTTLE_LIMIT_ANONYMOUS: z.coerce.number().int().positive().default(120),
+    THROTTLE_LIMIT_USER: z.coerce.number().int().positive().default(600),
   })
   .superRefine((env, ctx) => {
     // Every deployed image runs with NODE_ENV=production, so a server cannot fall back to the
