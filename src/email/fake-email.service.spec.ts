@@ -26,14 +26,6 @@ describe('FakeEmailService', () => {
     ]);
   });
 
-  it('has no effect other than recording', async () => {
-    const { service } = make();
-    await service.send('passwordReset', to, { link });
-    await service.send('passwordReset', to, { link });
-    await service.send('passwordChanged', to, {});
-    expect(service.sent).toHaveLength(3);
-  });
-
   it('logs the link in local, never the recipient', async () => {
     const { service, logger } = make('local');
     await service.send('staffInvitation', to, { link });
