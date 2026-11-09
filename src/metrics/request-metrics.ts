@@ -1,10 +1,15 @@
 import type { ApolloServerPlugin } from '@apollo/server';
+import type { INestApplication } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
-import type { GraphQLFormattedError } from 'graphql';
+import { type DocumentNode, type GraphQLFormattedError, Kind } from 'graphql';
 import type { GraphqlOperationInfo } from '../logging/logger.options.js';
-import type { Metrics } from './metrics.js';
+import { Metrics } from './metrics.js';
 
 const NOT_COUNTED = new Set(['/health', '/metrics']);
+
+function normalizedPath(url: string): string {
+  return (url.split('?')[0] ?? '').toLowerCase().replace(/\/+$/, '') || '/';
+}
 const CLIENT_CLOSED = 499;
 
 interface CountedRequest {
@@ -25,8 +30,7 @@ export function operationName(req: CountedRequest | undefined): string | undefin
 
 export function requestMetricsMiddleware(metrics: Metrics) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const path = req.originalUrl.split('?')[0];
-    if (req.method === 'OPTIONS' || NOT_COUNTED.has(path)) {
+    if (req.method === 'OPTIONS' || NOT_COUNTED.has(normalizedPath(req.originalUrl))) {
       next();
       return;
     }
@@ -41,9 +45,41 @@ export function requestMetricsMiddleware(metrics: Metrics) {
   };
 }
 
+export function useRequestMetrics(app: INestApplication): void {
+  app.use(requestMetricsMiddleware(app.get(Metrics)));
+}
+
 export function graphqlErrorCode(error: GraphQLFormattedError): string {
   const code = error.extensions?.code;
   return typeof code === 'string' ? code : 'INTERNAL_SERVER_ERROR';
+}
+
+export function wsOperationName(
+  document: DocumentNode | undefined,
+  operationName?: string | null,
+): string | undefined {
+  const operations = (document?.definitions ?? []).filter(
+    (definition) => definition.kind === Kind.OPERATION_DEFINITION,
+  );
+  const operation = operationName
+    ? operations.find((candidate) => candidate.name?.value === operationName)
+    : operations.length === 1
+      ? operations[0]
+      : undefined;
+  const name = operation?.name?.value;
+  return operation && name ? `${operation.operation} ${name}` : undefined;
+}
+
+export function countGraphqlErrors(
+  metrics: Metrics,
+  operationName: string | undefined,
+  errors: readonly GraphQLFormattedError[] | undefined,
+): void {
+  if (!errors?.length) return;
+  const operation = metrics.operation(operationName);
+  for (const code of new Set(errors.map(graphqlErrorCode))) {
+    metrics.graphqlErrors.inc({ operation, code });
+  }
 }
 
 export function graphqlMetricsPlugin(
@@ -56,12 +92,7 @@ export function graphqlMetricsPlugin(
           const { body } = response;
           const errors =
             body.kind === 'single' ? body.singleResult.errors : body.initialResult.errors;
-          if (errors?.length) {
-            const operation = metrics.operation(operationName(contextValue.req));
-            for (const code of new Set(errors.map(graphqlErrorCode))) {
-              metrics.graphqlErrors.inc({ operation, code });
-            }
-          }
+          countGraphqlErrors(metrics, operationName(contextValue.req), errors);
           return Promise.resolve();
         },
       });

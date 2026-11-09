@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { MAX_OPERATIONS, Metrics, UNKNOWN_OPERATION } from './metrics.js';
-import { graphqlErrorCode, operationName } from './request-metrics.js';
+import { parse } from 'graphql';
+import { graphqlErrorCode, operationName, wsOperationName } from './request-metrics.js';
 
 describe('Metrics.operation', () => {
   it('keeps names until the cap, then sends new ones to the unknown bucket', () => {
@@ -56,5 +57,19 @@ describe('graphqlErrorCode', () => {
   it('uses the code the client sees, else INTERNAL_SERVER_ERROR', () => {
     expect(graphqlErrorCode({ message: 'x', extensions: { code: 'FORBIDDEN' } })).toBe('FORBIDDEN');
     expect(graphqlErrorCode({ message: 'x' })).toBe('INTERNAL_SERVER_ERROR');
+  });
+});
+
+describe('wsOperationName', () => {
+  it('names the selected operation like the HTTP path', () => {
+    const document = parse('query A { a } mutation B { b }');
+    expect(wsOperationName(document, 'B')).toBe('mutation B');
+    expect(wsOperationName(parse('subscription S { s }'))).toBe('subscription S');
+  });
+
+  it('gives anonymous, ambiguous and missing operations no name', () => {
+    expect(wsOperationName(parse('{ a }'))).toBeUndefined();
+    expect(wsOperationName(parse('query A { a } query B { b }'))).toBeUndefined();
+    expect(wsOperationName(undefined, 'A')).toBeUndefined();
   });
 });

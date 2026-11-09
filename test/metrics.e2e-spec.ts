@@ -1,6 +1,9 @@
 import type { INestApplication } from '@nestjs/common';
+import type { AddressInfo } from 'node:net';
+import { createClient } from 'graphql-ws';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
+import WebSocket from 'ws';
 import { MetricsServer } from '../src/metrics/metrics-server.js';
 import { createApp } from './create-app.js';
 
@@ -23,6 +26,7 @@ describe('metrics (e2e)', () => {
   let app: INestApplication;
   let server: App;
   let metricsUrl: string;
+  let wsUrl: string;
 
   const scrape = async (): Promise<string> => (await fetch(metricsUrl)).text();
   const me = (auth?: string) => {
@@ -32,7 +36,10 @@ describe('metrics (e2e)', () => {
 
   beforeAll(async () => {
     app = await createApp({ DEV_AUTH: 'true', APP_ENV: 'local' });
+    await app.listen(0);
     server = app.getHttpServer() as App;
+    const { port } = (server as unknown as { address(): AddressInfo }).address();
+    wsUrl = `ws://localhost:${port}/graphql`;
     metricsUrl = `http://127.0.0.1:${app.get(MetricsServer).port}/metrics`;
   });
 
@@ -110,6 +117,66 @@ describe('metrics (e2e)', () => {
     const after = await scrape();
     expect(total(after, 'http_requests_total')).toBe(before);
     expect(after).not.toContain('/health');
+  });
+
+  it('counts and times requests rejected by the body parser', async () => {
+    const before = await scrape();
+    await request(server)
+      .post('/graphql')
+      .set('Content-Type', 'application/json')
+      .send('{')
+      .expect(400);
+    await request(server)
+      .post('/graphql')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify({ query: `{ ${'a'.repeat(300_000)} }` }))
+      .expect(413);
+    const after = await scrape();
+    for (const status of ['400', '413']) {
+      const labels = { operation: '(unknown)', status };
+      expect(valueOf(after, 'http_requests_total', labels)).toBe(
+        valueOf(before, 'http_requests_total', labels) + 1,
+      );
+    }
+    expect(
+      valueOf(after, 'http_request_duration_seconds_count', { operation: '(unknown)' }),
+    ).toBeGreaterThanOrEqual(
+      valueOf(before, 'http_request_duration_seconds_count', { operation: '(unknown)' }) + 2,
+    );
+  });
+
+  it('does not count /health in other spellings', async () => {
+    const before = total(await scrape(), 'http_requests_total');
+    await request(server).get('/health/');
+    await request(server).get('/HEALTH');
+    await request(server).get('/Health?probe=1');
+    expect(total(await scrape(), 'http_requests_total')).toBe(before);
+  });
+
+  it('counts GraphQL errors of an operation sent over the websocket', async () => {
+    const labels = { operation: 'query Me', code: 'INTERNAL_SERVER_ERROR' };
+    const before = valueOf(await scrape(), 'graphql_errors_total', labels);
+    const client = createClient({ url: wsUrl, webSocketImpl: WebSocket, retryAttempts: 0 });
+    await new Promise<void>((resolve, reject) => {
+      client.subscribe(
+        { query: 'query Me { me { id } }', operationName: 'Me' },
+        { next: () => undefined, error: reject, complete: resolve },
+      );
+    }).finally(() => void client.dispose());
+    expect(valueOf(await scrape(), 'graphql_errors_total', labels)).toBe(before + 1);
+  });
+
+  it('counts GraphQL errors rejected before execution over the websocket', async () => {
+    const labels = { operation: 'query Broken', code: 'INTERNAL_SERVER_ERROR' };
+    const before = valueOf(await scrape(), 'graphql_errors_total', labels);
+    const client = createClient({ url: wsUrl, webSocketImpl: WebSocket, retryAttempts: 0 });
+    await new Promise<void>((resolve) => {
+      client.subscribe(
+        { query: 'query Broken { noSuchField }', operationName: 'Broken' },
+        { next: () => undefined, error: () => resolve(), complete: resolve },
+      );
+    }).finally(() => void client.dispose());
+    expect(valueOf(await scrape(), 'graphql_errors_total', labels)).toBe(before + 1);
   });
 
   it('counts published events (the example of a feature metric)', async () => {

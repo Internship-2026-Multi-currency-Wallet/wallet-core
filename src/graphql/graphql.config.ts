@@ -1,13 +1,18 @@
 import { join } from 'node:path';
 import { ApolloDriver, type ApolloDriverConfig } from '@nestjs/apollo';
 import type { Response } from 'express';
+import { type DocumentNode, type GraphQLError, parse } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { AuthErrorCode } from '../auth/auth-errors.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
 import type { Metrics } from '../metrics/metrics.js';
-import { graphqlMetricsPlugin } from '../metrics/request-metrics.js';
+import {
+  countGraphqlErrors,
+  graphqlMetricsPlugin,
+  wsOperationName,
+} from '../metrics/request-metrics.js';
 import { formatError, formatExecutionResult } from './format-error.js';
 
 /** Path of the committed GraphQL contract. Other repositories consume this file. */
@@ -28,6 +33,14 @@ export interface GraphqlContext {
   res?: Response;
 }
 
+function parseQuery(query: string | undefined): DocumentNode | undefined {
+  try {
+    return query ? parse(query) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Apollo, code-first. Outside production the schema is written to `schema.graphql`
  * (sorted, so diffs are stable) — commit it together with resolver changes.
@@ -40,6 +53,21 @@ export function graphqlOptions(
   logger.setContext('GraphQL');
   const wsLogging = subscriptionLoggingHooks(logger);
   const countedSockets = new WeakSet<object>();
+  const onProtocolError = (
+    _ctx: unknown,
+    _id: string,
+    payload: { query?: string; operationName?: string | null },
+    errors: readonly GraphQLError[],
+  ): undefined => {
+    if (metrics) {
+      countGraphqlErrors(
+        metrics,
+        wsOperationName(parseQuery(payload.query), payload.operationName),
+        errors.map((error) => error.toJSON()),
+      );
+    }
+    return undefined;
+  };
   return {
     driver: ApolloDriver,
     autoSchemaFile: config.isProduction ? true : SCHEMA_FILE,
@@ -63,7 +91,18 @@ export function graphqlOptions(
           if (countedSockets.delete(ctx)) metrics?.graphqlWsConnections.dec();
         },
         // Apollo's formatError does not see websocket results: mask them the same way.
-        onNext: (_ctx, _id, _payload, _args, result) => formatExecutionResult(result),
+        onNext: (_ctx, _id, _payload, args, result) => {
+          const formatted = formatExecutionResult(result);
+          if (metrics) {
+            countGraphqlErrors(
+              metrics,
+              wsOperationName(args.document, args.operationName),
+              (formatted ?? result).errors,
+            );
+          }
+          return formatted;
+        },
+        ...{ onError: onProtocolError },
       },
     },
     // Names the operation in the access log and logs resolver errors with the requestId.
