@@ -70,22 +70,23 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
 Validated at startup (`src/config/env.schema.ts`); an invalid value stops the service with a clear message.
 See `.env.example`.
 
-| Variable          | Default                                            | Meaning                                                                                              |
-| ----------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PORT`            | `3000`                                             | HTTP port                                                                                            |
-| `NODE_ENV`        | `development`                                      | `production` disables writing `schema.graphql`                                                       |
-| `APP_ENV`         | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                 |
-| `DATABASE_URL`    | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                       |
-| `REDIS_URL`       | `redis://localhost:6379`                           | Redis for events                                                                                     |
-| `CLIENT`          | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                             |
-| `DEV_AUTH`        | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT |
-| `CORS_ORIGINS`    | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                              |
-| `APP_VERSION`     | from `package.json`                                | Version reported by `health`                                                                         |
-| `LOG_LEVEL`       | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                              |
-| `JWT_SECRET`      | local-only value (`.env.example`)                  | HS256 secret shared with rates-service and treasury-service. Required with `NODE_ENV=production`     |
-| `JWT_ISSUER`      | `wallet-core`                                      | `iss` claim of the issued tokens                                                                     |
-| `JWT_ACCESS_TTL`  | `15m`                                              | Access token lifetime: `<number><s\|m\|h\|d>`                                                        |
-| `JWT_REFRESH_TTL` | `30d`                                              | Session (refresh token) lifetime, counted from login                                                 |
+| Variable                | Default                                            | Meaning                                                                                                  |
+| ----------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `PORT`                  | `3000`                                             | HTTP port                                                                                                |
+| `NODE_ENV`              | `development`                                      | `production` disables writing `schema.graphql`                                                           |
+| `APP_ENV`               | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                     |
+| `DATABASE_URL`          | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                           |
+| `REDIS_URL`             | `redis://localhost:6379`                           | Redis for events                                                                                         |
+| `CLIENT`                | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                                 |
+| `DEV_AUTH`              | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT     |
+| `EMAIL_PREVIEW_ENABLED` | `false`                                            | Serve email template previews at `/dev/email-preview`. Refused at startup when `APP_ENV` is a client UAT |
+| `CORS_ORIGINS`          | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                                  |
+| `APP_VERSION`           | from `package.json`                                | Version reported by `health`                                                                             |
+| `LOG_LEVEL`             | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                                  |
+| `JWT_SECRET`            | local-only value (`.env.example`)                  | HS256 secret shared with rates-service and treasury-service. Required with `NODE_ENV=production`         |
+| `JWT_ISSUER`            | `wallet-core`                                      | `iss` claim of the issued tokens                                                                         |
+| `JWT_ACCESS_TTL`        | `15m`                                              | Access token lifetime: `<number><s\|m\|h\|d>`                                                            |
+| `JWT_REFRESH_TTL`       | `30d`                                              | Session (refresh token) lifetime, counted from login                                                     |
 
 ## GraphQL contract
 
@@ -243,6 +244,18 @@ Bound to `FakeEmailService`: it delivers nothing, keeps the last 1000 calls in `
 (never the link or recipient). Real delivery (queue + Resend/SMTP) comes later. In tests read recordings via
 `(app.get(EmailService) as FakeEmailService).sent`, or override `EmailService` with your own `FakeEmailService`
 instance.
+
+**Preview.** With `EMAIL_PREVIEW_ENABLED=true` (only `local` and `staging`; `.env.example` enables it) the service
+serves `GET /dev/email-preview` (list of templates) and `GET /dev/email-preview/<name>` (the rendered HTML with
+sample data). No authentication; with the flag off both answer 404.
+
+**Adding a template:**
+
+1. Add its data type to `EmailTemplates` in `src/email/email.service.ts`.
+2. Create `src/email/templates/<name>.ts` exporting a function that returns `Content` (`subject`, `text`, body).
+3. Register it in `builders` and `sampleData` in `src/email/templates/index.ts`.
+4. Check it in the preview at `/dev/email-preview/<name>`.
+5. Add a render test to `src/email/templates/render.spec.ts`.
 
 ### Events — `src/events`
 

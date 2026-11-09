@@ -49,6 +49,30 @@ describe('validateEnv', () => {
   });
 });
 
+describe('validateEnv: EMAIL_PREVIEW_ENABLED', () => {
+  it('is off by default', () => {
+    expect(validateEnv({}).EMAIL_PREVIEW_ENABLED).toBe(false);
+  });
+
+  it('allows true on local and staging', () => {
+    expect(
+      validateEnv({ APP_ENV: 'local', EMAIL_PREVIEW_ENABLED: 'true' }).EMAIL_PREVIEW_ENABLED,
+    ).toBe(true);
+    expect(
+      validateEnv({ APP_ENV: 'staging', EMAIL_PREVIEW_ENABLED: 'true' }).EMAIL_PREVIEW_ENABLED,
+    ).toBe(true);
+  });
+
+  it.each(['kvitka-uat', 'wisla-uat'])('refuses true in %s', (appEnv) => {
+    expect(() => validateEnv({ APP_ENV: appEnv, EMAIL_PREVIEW_ENABLED: 'true' })).toThrow(
+      /EMAIL_PREVIEW_ENABLED/,
+    );
+    expect(
+      validateEnv({ APP_ENV: appEnv, EMAIL_PREVIEW_ENABLED: 'false' }).EMAIL_PREVIEW_ENABLED,
+    ).toBe(false);
+  });
+});
+
 describe('validateEnv: JWT', () => {
   const SECRET = 'x'.repeat(32);
 
