@@ -1,25 +1,24 @@
 import { jest } from '@jest/globals';
 import { type ExecutionContext, HttpStatus } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ThrottlerException, type ThrottlerStorage } from '@nestjs/throttler';
+import { SkipThrottle, ThrottlerException, type ThrottlerStorage } from '@nestjs/throttler';
 import { GraphQLError } from 'graphql';
+import type { Redis } from 'ioredis';
 import type { PinoLogger } from 'nestjs-pino';
 import type { AuthUser } from '../auth/auth-user.js';
 import { UserKind } from '../auth/user-kind.js';
 import { AppConfig } from '../config/app-config.js';
-import { createRedis } from '../redis/redis.module.js';
 import { GlobalThrottlerGuard } from './global-throttler.guard.js';
 import { throttlerOptions } from './throttling.module.js';
+import type { ThrottlerStorageRecord } from './window-throttler-storage.js';
 
-type StorageRecord = Awaited<ReturnType<ThrottlerStorage['increment']>>;
-
-const OK: StorageRecord = {
+const OK: ThrottlerStorageRecord = {
   totalHits: 1,
   timeToExpire: 59,
   isBlocked: false,
   timeToBlockExpire: 0,
 };
-const BLOCKED: StorageRecord = {
+const BLOCKED: ThrottlerStorageRecord = {
   totalHits: 4,
   timeToExpire: 30,
   isBlocked: true,
@@ -45,6 +44,16 @@ class TestController {
   handler(): void {}
 }
 
+@SkipThrottle()
+class SkippedController {
+  handler(): void {}
+}
+
+class SkippedHandlerController {
+  @SkipThrottle()
+  handler(): void {}
+}
+
 function user(id: string, kind: UserKind): AuthUser {
   return { id, kind, permissions: [], strategy: 'jwt' };
 }
@@ -58,25 +67,32 @@ function request(overrides: Partial<FakeRequest> = {}): FakeRequest {
   };
 }
 
-function baseContext(type: string, args: unknown[]): ExecutionContext {
+type Controller =
+  typeof TestController | typeof SkippedController | typeof SkippedHandlerController;
+
+function baseContext(type: string, args: unknown[], controller: Controller): ExecutionContext {
   return {
     getType: () => type,
     getArgs: () => args,
-    getHandler: () => TestController.prototype.handler,
-    getClass: () => TestController,
+    getHandler: () => controller.prototype.handler,
+    getClass: () => controller,
   } as unknown as ExecutionContext;
 }
 
-function httpContext(req: FakeRequest, res: object): ExecutionContext {
+function httpContext(
+  req: FakeRequest,
+  res: object,
+  controller: Controller = TestController,
+): ExecutionContext {
   return {
-    ...baseContext('http', []),
+    ...baseContext('http', [], controller),
     switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }),
   } as unknown as ExecutionContext;
 }
 
 /** `res` is left out for websocket operations, like the real GraphQL context does. */
 function graphqlContext(req: FakeRequest, res?: object): ExecutionContext {
-  return baseContext('graphql', [{}, {}, { req, res }, {}]);
+  return baseContext('graphql', [{}, {}, { req, res }, {}], TestController);
 }
 
 function setup() {
@@ -84,7 +100,11 @@ function setup() {
   storage.increment.mockResolvedValue(OK);
   const logger = { warn: jest.fn(), setContext: jest.fn() };
   const options = {
-    ...throttlerOptions(config, createRedis(config.redisUrl), logger as unknown as PinoLogger),
+    ...throttlerOptions(
+      config,
+      { status: 'ready' } as unknown as Redis,
+      logger as unknown as PinoLogger,
+    ),
     storage,
   };
   const guard = new GlobalThrottlerGuard(
@@ -222,9 +242,13 @@ describe('GlobalThrottlerGuard', () => {
       expect(storage.increment).not.toHaveBeenCalled();
     });
 
-    it.each(['/health', '/metrics'])('does not count REST %s', async (path) => {
+    it.each([
+      ['a class', SkippedController],
+      ['a handler', SkippedHandlerController],
+    ])('does not count a route whose %s is marked @SkipThrottle()', async (_name, controller) => {
       const { guard, storage, res } = await readyGuard();
-      await expect(guard.canActivate(httpContext(request({ path }), res))).resolves.toBe(true);
+      storage.increment.mockResolvedValue(BLOCKED);
+      await expect(guard.canActivate(httpContext(request(), res, controller))).resolves.toBe(true);
       expect(storage.increment).not.toHaveBeenCalled();
     });
   });

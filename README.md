@@ -103,9 +103,9 @@ Current API: `health { service version appEnv client db redis }` (public) and `m
 
 ## Rate limits
 
-Every request is counted against a key, and once the limit is reached further requests are refused until the
-window ends. The global guard lives in `src/throttling` (`@nestjs/throttler` with our own Redis storage). It runs
-after `AuthGuard`, so it knows who the caller is.
+Every request that reaches a resolver or a controller is counted against a key, and once the limit is reached
+further requests are refused until the window ends. The global guard lives in `src/throttling` (`@nestjs/throttler`
+with our own Redis storage). It runs after `AuthGuard`, so it knows who the caller is.
 
 | Caller          | Key              | Default limit per window |
 | --------------- | ---------------- | ------------------------ |
@@ -125,9 +125,12 @@ there (the mentor does it in Dokploy) and redeploy.
   share them and they survive a restart. Each service counts on its own.
 - **Client IP.** Express trusts one proxy hop (`trust proxy = 1`, `src/configure-app.ts`, because Traefik is the
   only proxy), so the IP is the last `X-Forwarded-For` entry. A client cannot invent a new IP by adding entries.
-- **Not counted:** `GET /health`, `GET /metrics` and everything that arrives over the WebSocket (subscriptions).
-  The GraphQL query `health` is counted like any other query. Requests that `AuthGuard` rejects with 401 are not
-  counted either (known limit, follow-up).
+- **Not counted:** `GET /health` (the controller is marked `@SkipThrottle()`; a future metrics endpoint needs it too)
+  and everything that arrives over the WebSocket (subscriptions).
+  The GraphQL query `health` is counted like any other query.
+- **Known limits (follow-ups):** a guard runs only when a resolver or controller is about to be called, so these
+  requests are not counted: refused by `AuthGuard` (401) or `PermissionGuard` (403), GraphQL introspection
+  (`__schema`, `__type`), and GraphQL documents that cannot be parsed or fail validation.
 - **Redis down.** Requests pass without a limit and a warning is logged at most once a minute.
 - An allowed response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` (seconds left);
   a refused one carries `Retry-After`.

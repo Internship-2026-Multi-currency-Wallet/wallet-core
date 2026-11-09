@@ -2,7 +2,7 @@ import type { ThrottlerStorage } from '@nestjs/throttler';
 import type { Redis } from 'ioredis';
 
 // The library does not export this type from its index.
-type ThrottlerStorageRecord = Awaited<ReturnType<ThrottlerStorage['increment']>>;
+export type ThrottlerStorageRecord = Awaited<ReturnType<ThrottlerStorage['increment']>>;
 
 // One script: INCR and the expiry must not be separated, or a crash between them leaves a counter that never expires.
 const INCREMENT_SCRIPT = `
@@ -35,8 +35,10 @@ export class WindowThrottlerStorage implements ThrottlerStorage {
       throw new TypeError('Unexpected reply from the rate limit script');
     }
     const [hits, pttl] = reply as [number, number];
-    const seconds = Math.ceil(pttl / 1000);
     const isBlocked = hits > limit;
+    const remaining = Math.ceil(pttl / 1000);
+    // In the last millisecond PTTL can be 0, and `Retry-After: 0` would invite an immediate retry.
+    const seconds = isBlocked ? Math.max(1, remaining) : remaining;
     return {
       totalHits: hits,
       timeToExpire: seconds,

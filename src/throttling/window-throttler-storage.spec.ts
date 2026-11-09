@@ -43,6 +43,16 @@ describe('WindowThrottlerStorage', () => {
     });
   });
 
+  it('never reports a blocked record as expiring in 0 seconds', async () => {
+    const { storage } = setup([6, 0]);
+
+    await expect(storage.increment(KEY, TTL_MS, 5, 0, 'default')).resolves.toMatchObject({
+      isBlocked: true,
+      timeToExpire: 1,
+      timeToBlockExpire: 1,
+    });
+  });
+
   it.each([
     [59_001, 60],
     [1, 1],

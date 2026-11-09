@@ -150,10 +150,12 @@ describe('global rate limit (e2e)', () => {
     const ip = randomIp();
 
     for (let i = 0; i < 10; i++) {
-      const res = await request(app.getHttpServer() as App)
-        .get('/health')
-        .set('X-Forwarded-For', ip);
-      expect(res.status).not.toBe(429);
+      for (const path of ['/health', '/health/']) {
+        const res = await request(app.getHttpServer() as App)
+          .get(path)
+          .set('X-Forwarded-For', ip);
+        expect(res.status).not.toBe(429);
+      }
     }
   });
 

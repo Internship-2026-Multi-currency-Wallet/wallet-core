@@ -3,6 +3,8 @@ import type { Redis } from 'ioredis';
 import { createRedis } from '../src/redis/redis.module.js';
 import { WindowThrottlerStorage } from '../src/throttling/window-throttler-storage.js';
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** The Lua script and the window semantics against a real Redis. */
 describe('WindowThrottlerStorage (e2e, real Redis)', () => {
   let redis: Redis;
@@ -39,8 +41,10 @@ describe('WindowThrottlerStorage (e2e, real Redis)', () => {
     const key = newKey();
 
     await storage.increment(key, 1000, 1, 0, 'default');
+    // Hit mid-window: a block counted from this hit (not the window) would still refuse the third call.
+    await sleep(600);
     const refused = await storage.increment(key, 1000, 1, 0, 'default');
-    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await sleep(450);
     const afterWindow = await storage.increment(key, 1000, 1, 0, 'default');
 
     expect(refused.isBlocked).toBe(true);

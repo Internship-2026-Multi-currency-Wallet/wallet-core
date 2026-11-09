@@ -19,13 +19,10 @@ import { AppConfig } from '../config/app-config.js';
 import type { GraphqlContext } from '../graphql/graphql.config.js';
 import { tooManyRequestsError } from './throttle-errors.js';
 
-const UNLIMITED_PATHS = new Set(['/health', '/metrics']);
-
 const COUNTED = Symbol('throttleCounted');
 
 interface ThrottledRequest extends RequestLike {
   ip?: string;
-  path?: string;
   [COUNTED]?: Promise<boolean>;
 }
 
@@ -55,8 +52,7 @@ export class GlobalThrottlerGuard extends ThrottlerGuard {
       // Websocket operations have no Express request, so there is no client IP to count.
       return Promise.resolve(graphqlContext(context).res === undefined);
     }
-    const { req } = this.getRequestResponse(context);
-    return Promise.resolve(req.path !== undefined && UNLIMITED_PATHS.has(req.path));
+    return Promise.resolve(false);
   }
 
   override async canActivate(context: ExecutionContext): Promise<boolean> {

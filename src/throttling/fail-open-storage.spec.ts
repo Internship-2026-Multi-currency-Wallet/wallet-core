@@ -3,16 +3,15 @@ import type { ThrottlerStorage } from '@nestjs/throttler';
 import type { Redis } from 'ioredis';
 import type { PinoLogger } from 'nestjs-pino';
 import { FailOpenThrottlerStorage } from './fail-open-storage.js';
+import type { ThrottlerStorageRecord } from './window-throttler-storage.js';
 
-type StorageRecord = Awaited<ReturnType<ThrottlerStorage['increment']>>;
-
-const COUNTED: StorageRecord = {
+const COUNTED: ThrottlerStorageRecord = {
   totalHits: 3,
   timeToExpire: 40,
   isBlocked: false,
   timeToBlockExpire: 0,
 };
-const ALLOWED: StorageRecord = {
+const ALLOWED: ThrottlerStorageRecord = {
   totalHits: 0,
   timeToExpire: 0,
   isBlocked: false,
@@ -56,13 +55,67 @@ describe('FailOpenThrottlerStorage', () => {
 
   it('allows the request and warns with the error when the inner storage fails', async () => {
     const { inner, logger, increment } = setup('ready');
-    const err = new Error('connection reset');
-    inner.increment.mockRejectedValue(err);
+    inner.increment.mockRejectedValue(new Error('connection reset'));
     await expect(increment()).resolves.toEqual(ALLOWED);
     expect(logger.warn).toHaveBeenCalledWith(
-      { redisStatus: 'ready', err },
+      { redisStatus: 'ready', err: { name: 'Error', message: 'connection reset' } },
       'rate limiter unavailable, requests are not limited',
     );
+  });
+
+  it('logs only the name and message of an error, not the command it carries', async () => {
+    const { inner, logger, increment } = setup('ready');
+    const err = Object.assign(new Error('READONLY'), {
+      command: { name: 'eval', args: ['local hits = redis.call', 'prod:throttle:ip:203.0.113.5'] },
+    });
+    inner.increment.mockRejectedValue(err);
+    await increment();
+    expect(logger.warn).toHaveBeenCalledWith(
+      { redisStatus: 'ready', err: { name: 'Error', message: 'READONLY' } },
+      'rate limiter unavailable, requests are not limited',
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('203.0.113.5');
+  });
+
+  it('logs a non-Error rejection as a string', async () => {
+    const { inner, logger, increment } = setup('ready');
+    inner.increment.mockRejectedValue('boom');
+    await increment();
+    expect(logger.warn).toHaveBeenCalledWith(
+      { redisStatus: 'ready', err: 'boom' },
+      'rate limiter unavailable, requests are not limited',
+    );
+  });
+
+  describe('when the inner storage never answers', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('allows the request after 300 ms and warns once', async () => {
+      const { inner, logger, increment } = setup('ready');
+      inner.increment.mockReturnValue(new Promise<ThrottlerStorageRecord>(() => {}));
+      const result = increment();
+      await jest.advanceTimersByTimeAsync(299);
+      expect(logger.warn).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toEqual(ALLOWED);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(
+        { redisStatus: 'ready', err: { name: 'Error', message: 'rate limit storage timeout' } },
+        'rate limiter unavailable, requests are not limited',
+      );
+    });
+
+    it('leaves no timer behind when the inner storage answers in time', async () => {
+      const { increment } = setup('ready');
+      await expect(increment()).resolves.toBe(COUNTED);
+      expect(jest.getTimerCount()).toBe(0);
+    });
   });
 
   it('warns at most once per minute', async () => {
