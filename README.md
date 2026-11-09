@@ -101,6 +101,59 @@ The schema is **code-first**: resolvers and `@ObjectType`s are the source of tru
 
 Current API: `health { service version appEnv client db redis }` (public) and `me { id kind permissions strategy }`.
 
+## Rate limits
+
+Every request is counted against a key, and once the limit is reached further requests are refused until the
+window ends. The global guard lives in `src/throttling` (`@nestjs/throttler` with our own Redis storage). It runs
+after `AuthGuard`, so it knows who the caller is.
+
+| Caller          | Key              | Default limit per window |
+| --------------- | ---------------- | ------------------------ |
+| Not logged in   | `ip:<client IP>` | 120                      |
+| Logged-in user  | `user:<id>`      | 600                      |
+| Logged-in staff | `staff:<id>`     | 600                      |
+
+The window is 60 seconds. Limits and window come from `THROTTLE_LIMIT_ANONYMOUS`, `THROTTLE_LIMIT_USER` and
+`THROTTLE_TTL_SECONDS` (see the environment variables above). To change a limit on an environment, set the variable
+there (the mentor does it in Dokploy) and redeploy.
+
+- **Fixed window.** The first request starts the window. Once the limit is exceeded, requests are refused until that
+  window ends: limit hit at 0:10 of a 60 s window means refused until 1:00, not until 1:10. `Retry-After` is the
+  number of seconds left in the window.
+- **One HTTP request counts once**, however many top-level fields a GraphQL request has.
+- **Shared and per service.** Counters live in Redis under `<APP_ENV>:throttle:<key>`, so all instances of a service
+  share them and they survive a restart. Each service counts on its own.
+- **Client IP.** Express trusts one proxy hop (`trust proxy = 1`, `src/configure-app.ts`, because Traefik is the
+  only proxy), so the IP is the last `X-Forwarded-For` entry. A client cannot invent a new IP by adding entries.
+- **Not counted:** `GET /health`, `GET /metrics` and everything that arrives over the WebSocket (subscriptions).
+  The GraphQL query `health` is counted like any other query. Requests that `AuthGuard` rejects with 401 are not
+  counted either (known limit, follow-up).
+- **Redis down.** Requests pass without a limit and a warning is logged at most once a minute.
+- An allowed response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` (seconds left);
+  a refused one carries `Retry-After`.
+
+### Error format (the contract for frontends)
+
+GraphQL (the HTTP status stays 200, as for any GraphQL error):
+
+```json
+{
+  "errors": [
+    {
+      "message": "Too many requests, try again later",
+      "extensions": { "code": "TOO_MANY_REQUESTS", "retryAfterSeconds": 42 }
+    }
+  ]
+}
+```
+
+REST: status `429` and the header `Retry-After: 42`. In both cases the number is the seconds until the window ends;
+wait that long before retrying.
+
+| Code                | When                        | Extra fields        |
+| ------------------- | --------------------------- | ------------------- |
+| `TOO_MANY_REQUESTS` | the limit of the key is hit | `retryAfterSeconds` |
+
 ## Logging
 
 Structured JSON logs via [`nestjs-pino`](https://github.com/iamolegga/nestjs-pino) (`src/logging/`). One line per
