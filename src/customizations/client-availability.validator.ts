@@ -28,9 +28,7 @@ import { fieldRulesOf } from './client-field-availability.js';
  * schema cannot show: `restrictClientFields` checks the fields themselves, when the schema is built).
  * Everything is collected and reported in one error, before the application serves anything.
  *
- * Not registered anywhere yet: listing it in `CustomizationsCoreModule` is part of the integration
- * step. It needs `DiscoveryModule` (imported by that module) and runs at `onApplicationBootstrap`,
- * when every provider and the GraphQL schema exist.
+ * Runs at `onApplicationBootstrap`, when every provider and the GraphQL schema exist.
  *
  * Rejected (each is a restriction that would silently NOT apply, or apply to something it was not
  * meant for):

@@ -221,7 +221,7 @@ apps (`publicSettings`); staff read and change all of them (`staffSettings`, `up
 ### Current client — `AppConfig`
 
 `AppConfig.client` is the `CLIENT` this deployment serves. Inject `AppConfig` instead of reading `process.env`.
-The client customization module (hooks, client-only endpoints) is a separate task.
+Client-specific behaviour (hooks, client-only endpoints and fields) is described in [CUSTOMIZATIONS.md](CUSTOMIZATIONS.md).
 
 ### Rates — `src/rates`
 

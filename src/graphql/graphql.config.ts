@@ -5,6 +5,7 @@ import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { AuthErrorCode } from '../auth/auth-errors.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
+import { restrictClientFields } from '../customizations/client-field-availability.js';
 import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
 import { formatError, formatExecutionResult } from './format-error.js';
 
@@ -52,6 +53,8 @@ export function graphqlOptions(config: AppConfig, logger: PinoLogger): ApolloDri
     plugins: [graphqlLoggingPlugin({ clientErrorCodes: CLIENT_ERROR_CODES })],
     // Unexpected errors reach the client as a bare INTERNAL_SERVER_ERROR (no SQL, no internals).
     formatError,
+    // Nest runs no guards on field resolvers, so field restrictions are applied to the schema.
+    transformSchema: restrictClientFields(config.client),
     // HTTP requests carry headers; websocket requests carry connectionParams.
     // Both end up as `context.req.headers`, which the auth guard reads.
     context: ({ req, res, connectionParams }: ContextInput): GraphqlContext => ({
