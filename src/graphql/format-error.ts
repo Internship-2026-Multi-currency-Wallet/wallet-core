@@ -58,12 +58,14 @@ export function formatExecutionResult(
  * graphql-ws `onError`: errors raised before execution (parse, validation) are the client's fault
  * and are told apart from a failure of a running subscription by having no `originalError`. Only
  * the second kind can carry internals, because graphql-ws copies the original message into it.
+ * `cause` is checked too because graphql-ws attaches the original there with graphql 17, and
+ * missing it would send the original message to the client unmasked.
  */
 export function formatProtocolErrors(
   errors: readonly GraphQLError[],
 ): { error: GraphQLFormattedError; fromClient: boolean }[] {
   return errors.map((error) =>
-    error.originalError
+    error.originalError || (error as { cause?: unknown }).cause
       ? { error: formatError(error.toJSON(), error), fromClient: false }
       : {
           error: {

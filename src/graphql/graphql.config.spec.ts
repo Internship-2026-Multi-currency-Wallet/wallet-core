@@ -103,4 +103,13 @@ describe('graphqlOptions websocket protocol errors', () => {
       'graphql_errors_total{operation="subscription ticks",code="INTERNAL_SERVER_ERROR"',
     );
   });
+
+  it('masks a subscription failure wrapped the graphql 17 way (cause, no originalError)', () => {
+    const { onError } = setup();
+    const leak = new Error("Duplicate entry 'artem@test.com'");
+    const wrapped = Object.assign(new GraphQLError(leak.message), { cause: leak });
+    const result = onError({}, '1', { query: 'subscription S { ticks }' }, [wrapped]);
+    expect(result).toMatchObject([{ extensions: { code: 'INTERNAL_SERVER_ERROR' } }]);
+    expect(JSON.stringify(result)).not.toContain('artem@test.com');
+  });
 });
