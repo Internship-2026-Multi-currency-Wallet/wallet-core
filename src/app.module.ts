@@ -7,6 +7,7 @@ import { AppConfig } from './config/app-config.js';
 import { ConfigModule } from './config/config.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module.js';
+import { EmailModule } from './email/email.module.js';
 import { EventsModule } from './events/events.module.js';
 import { graphqlOptions } from './graphql/graphql.config.js';
 import { HealthModule } from './health/health.module.js';
@@ -40,6 +41,7 @@ import { ThrottlingModule } from './throttling/throttling.module.js';
     ThrottlingModule,
     ClientSettingsModule,
     RatesModule,
+    EmailModule,
     // Features
     HealthModule,
     DiagnosticsModule,
