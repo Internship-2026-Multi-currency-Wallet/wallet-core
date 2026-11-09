@@ -1,8 +1,12 @@
 import type { ApolloServerPlugin } from '@apollo/server';
 import type { INestApplication } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
-import { type DocumentNode, type GraphQLFormattedError, Kind } from 'graphql';
-import type { GraphqlOperationInfo } from '../logging/logger.options.js';
+import {
+  type DocumentNode,
+  type GraphQLFormattedError,
+  Kind,
+  type OperationDefinitionNode,
+} from 'graphql';
 import { Metrics } from './metrics.js';
 
 const NOT_COUNTED = new Set(['/health', '/metrics']);
@@ -14,13 +18,21 @@ const CLIENT_CLOSED = 499;
 
 interface CountedRequest {
   method?: string;
-  graphqlOperation?: GraphqlOperationInfo;
+  metricsOperation?: string;
   route?: { path?: unknown };
 }
 
+/**
+ * Labelled by the first root field, not by the client's operation name: field names are bounded by
+ * the schema, while any client can invent operation names and fill the label cap with them.
+ */
+function graphqlOperationLabel(operation: OperationDefinitionNode): string | undefined {
+  const field = operation.selectionSet.selections.find((node) => node.kind === Kind.FIELD);
+  return field ? `${operation.operation} ${field.name.value}` : undefined;
+}
+
 export function operationName(req: CountedRequest | undefined): string | undefined {
-  const op = req?.graphqlOperation;
-  if (op) return op.name ? `${op.type} ${op.name}` : undefined;
+  if (req?.metricsOperation) return req.metricsOperation;
   const path = req?.route?.path;
   if (typeof path !== 'string' || path.includes('*') || path.startsWith('/graphql')) {
     return undefined;
@@ -66,8 +78,7 @@ export function wsOperationName(
     : operations.length === 1
       ? operations[0]
       : undefined;
-  const name = operation?.name?.value;
-  return operation && name ? `${operation.operation} ${name}` : undefined;
+  return operation && graphqlOperationLabel(operation);
 }
 
 export function countGraphqlErrors(
@@ -88,6 +99,12 @@ export function graphqlMetricsPlugin(
   return {
     requestDidStart() {
       return Promise.resolve({
+        didResolveOperation({ contextValue, operation }) {
+          if (contextValue.req && operation) {
+            contextValue.req.metricsOperation = graphqlOperationLabel(operation);
+          }
+          return Promise.resolve();
+        },
         willSendResponse({ contextValue, response }) {
           const { body } = response;
           const errors =

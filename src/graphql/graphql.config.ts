@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { ApolloDriver, type ApolloDriverConfig } from '@nestjs/apollo';
 import type { Response } from 'express';
-import { type DocumentNode, type GraphQLError, parse } from 'graphql';
+import { type DocumentNode, type GraphQLError, type GraphQLFormattedError, parse } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { AuthErrorCode } from '../auth/auth-errors.js';
@@ -13,7 +13,7 @@ import {
   graphqlMetricsPlugin,
   wsOperationName,
 } from '../metrics/request-metrics.js';
-import { formatError, formatExecutionResult } from './format-error.js';
+import { formatError, formatExecutionResult, formatProtocolErrors } from './format-error.js';
 
 /** Path of the committed GraphQL contract. Other repositories consume this file. */
 export const SCHEMA_FILE = join(process.cwd(), 'schema.graphql');
@@ -58,15 +58,19 @@ export function graphqlOptions(
     _id: string,
     payload: { query?: string; operationName?: string | null },
     errors: readonly GraphQLError[],
-  ): undefined => {
+  ): GraphQLFormattedError[] => {
+    const formatted = formatProtocolErrors(errors);
     if (metrics) {
+      const fromClient = formatted.filter((item) => item.fromClient).map((item) => item.error);
+      const fromServer = formatted.filter((item) => !item.fromClient).map((item) => item.error);
+      countGraphqlErrors(metrics, undefined, fromClient);
       countGraphqlErrors(
         metrics,
         wsOperationName(parseQuery(payload.query), payload.operationName),
-        errors.map((error) => error.toJSON()),
+        fromServer,
       );
     }
-    return undefined;
+    return formatted.map((item) => item.error);
   };
   return {
     driver: ApolloDriver,
@@ -102,6 +106,8 @@ export function graphqlOptions(
           }
           return formatted;
         },
+        // Nest's config type omits onError but passes every option on to graphql-ws, so this works;
+        // the spread keeps the type check from rejecting it.
         ...{ onError: onProtocolError },
       },
     },

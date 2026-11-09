@@ -151,9 +151,14 @@ every 15 s and Grafana shows them on the _Server_ and _Services_ dashboards (see
 | `events_published_total`        | counter   | `type`              | Events published through `EventPublisher`                                 |
 | `process_*`, `nodejs_*`         | default   | —                   | CPU, memory, heap, event-loop lag, GC, start time (prom-client defaults)  |
 
-- **`operation`**: the GraphQL operation as in the access log (`query Me`, `mutation Convert`), or the route of a REST
-  request (`POST /diagnostics/ping`). Anonymous or unparsable GraphQL, requests that matched no route and names past
-  the cap of 100 distinct values all go into one bucket, `(unknown)`: operation names come from the client.
+- **`operation`**: the operation type and its first root field (`query me`, `mutation convert`), or the route of a
+  REST request (`POST /diagnostics/ping`). The client's own operation name is not used, because any client can
+  invent names and every new one would be a new time series. Unparsable GraphQL, requests that matched no route and
+  anything past the cap of 100 distinct values go into one bucket, `(unknown)`.
+- **Websocket operations**: they add to `graphql_errors_total` but not to `http_requests_total`, so an error ratio
+  for an operation that also runs over the websocket can go above 100%. A subscription counts a code once per event
+  that fails, not once per subscription. Errors raised before execution (parse, validation) are
+  `GRAPHQL_VALIDATION_FAILED` under `(unknown)`, as over HTTP.
 - **Adding a metric**: inject `Metrics` and create it once, in the constructor or factory, with bounded labels only:
 
 ```ts

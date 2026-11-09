@@ -53,3 +53,24 @@ export function formatExecutionResult(
   if (!result.errors) return undefined;
   return { ...result, errors: result.errors.map((error) => formatError(error.toJSON(), error)) };
 }
+
+/**
+ * graphql-ws `onError`: errors raised before execution (parse, validation) are the client's fault
+ * and are told apart from a failure of a running subscription by having no `originalError`. Only
+ * the second kind can carry internals, because graphql-ws copies the original message into it.
+ */
+export function formatProtocolErrors(
+  errors: readonly GraphQLError[],
+): { error: GraphQLFormattedError; fromClient: boolean }[] {
+  return errors.map((error) =>
+    error.originalError
+      ? { error: formatError(error.toJSON(), error), fromClient: false }
+      : {
+          error: {
+            ...error.toJSON(),
+            extensions: { ...error.extensions, code: 'GRAPHQL_VALIDATION_FAILED' },
+          },
+          fromClient: true,
+        },
+  );
+}

@@ -30,14 +30,8 @@ describe('Metrics.operation', () => {
 });
 
 describe('operationName', () => {
-  it('names GraphQL operations like the access log', () => {
-    expect(operationName({ graphqlOperation: { type: 'mutation', name: 'Convert' } })).toBe(
-      'mutation Convert',
-    );
-  });
-
-  it('puts anonymous GraphQL operations into the unknown bucket', () => {
-    expect(operationName({ graphqlOperation: { type: 'query', name: null } })).toBeUndefined();
+  it('uses the operation label the Apollo plugin stored on the request', () => {
+    expect(operationName({ metricsOperation: 'mutation convert' })).toBe('mutation convert');
   });
 
   it('names REST requests by method and route pattern, not by the raw path', () => {
@@ -61,14 +55,14 @@ describe('graphqlErrorCode', () => {
 });
 
 describe('wsOperationName', () => {
-  it('names the selected operation like the HTTP path', () => {
-    const document = parse('query A { a } mutation B { b }');
-    expect(wsOperationName(document, 'B')).toBe('mutation B');
-    expect(wsOperationName(parse('subscription S { s }'))).toBe('subscription S');
+  it('labels the selected operation by its root field, whatever the client calls it', () => {
+    const document = parse('query A { a } mutation Junk123 { convert { id } }');
+    expect(wsOperationName(document, 'Junk123')).toBe('mutation convert');
+    expect(wsOperationName(parse('subscription S { s }'))).toBe('subscription s');
+    expect(wsOperationName(parse('{ me { id } }'))).toBe('query me');
   });
 
-  it('gives anonymous, ambiguous and missing operations no name', () => {
-    expect(wsOperationName(parse('{ a }'))).toBeUndefined();
+  it('gives ambiguous and missing operations no label', () => {
     expect(wsOperationName(parse('query A { a } query B { b }'))).toBeUndefined();
     expect(wsOperationName(undefined, 'A')).toBeUndefined();
   });

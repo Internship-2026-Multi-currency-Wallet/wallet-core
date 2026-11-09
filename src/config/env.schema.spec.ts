@@ -122,4 +122,12 @@ describe('AppConfig', () => {
     });
     expect(AppConfig.fromEnv({ JWT_SECRET: 'y'.repeat(32) }).jwt.secret).toBe('y'.repeat(32));
   });
+
+  it('allows METRICS_PORT=0 only in tests', () => {
+    expect(validateEnv({ NODE_ENV: 'test', METRICS_PORT: '0' }).METRICS_PORT).toBe(0);
+    expect(() => validateEnv({ NODE_ENV: 'production', METRICS_PORT: '0' })).toThrow(
+      /METRICS_PORT/,
+    );
+    expect(() => validateEnv({ METRICS_PORT: '0' })).toThrow(/METRICS_PORT/);
+  });
 });

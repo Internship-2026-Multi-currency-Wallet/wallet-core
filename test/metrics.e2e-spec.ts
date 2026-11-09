@@ -61,7 +61,7 @@ describe('metrics (e2e)', () => {
   });
 
   it('counts and times a GraphQL query under its operation name', async () => {
-    const labels = { operation: 'query Me', status: '200' };
+    const labels = { operation: 'query me', status: '200' };
     const before = await scrape();
     await me('Dev 1:wallet').expect(200);
     const after = await scrape();
@@ -69,29 +69,30 @@ describe('metrics (e2e)', () => {
       valueOf(before, 'http_requests_total', labels) + 1,
     );
     expect(
-      valueOf(after, 'http_request_duration_seconds_count', { operation: 'query Me' }),
+      valueOf(after, 'http_request_duration_seconds_count', { operation: 'query me' }),
     ).toBeGreaterThan(
-      valueOf(before, 'http_request_duration_seconds_count', { operation: 'query Me' }),
+      valueOf(before, 'http_request_duration_seconds_count', { operation: 'query me' }),
     );
   });
 
   it('counts a failing operation in graphql_errors_total by its code', async () => {
-    const labels = { operation: 'query Me', code: 'UNAUTHENTICATED' };
+    const labels = { operation: 'query me', code: 'UNAUTHENTICATED' };
     const before = valueOf(await scrape(), 'graphql_errors_total', labels);
     const res = await me();
     expect((res.body as { errors?: unknown[] }).errors).toHaveLength(1);
     expect(valueOf(await scrape(), 'graphql_errors_total', labels)).toBe(before + 1);
   });
 
-  it('puts anonymous operations into the unknown bucket', async () => {
-    const labels = { operation: '(unknown)', status: '200' };
-    const before = valueOf(await scrape(), 'http_requests_total', labels);
-    await request(server)
-      .post('/graphql')
-      .send({ query: '{ me { id } }' })
-      .set('Authorization', 'Dev 1:wallet')
-      .expect(200);
-    expect(valueOf(await scrape(), 'http_requests_total', labels)).toBe(before + 1);
+  it('labels operations by root field, so client-chosen names cannot add labels', async () => {
+    const labels = { operation: 'query me', status: '200' };
+    const before = await scrape();
+    for (const query of ['{ me { id } }', 'query Junk1 { me { id } }', 'query Junk2 { me { id } }'])
+      await request(server).post('/graphql').send({ query }).set('Authorization', 'Dev 1:wallet');
+    const after = await scrape();
+    expect(valueOf(after, 'http_requests_total', labels)).toBe(
+      valueOf(before, 'http_requests_total', labels) + 3,
+    );
+    expect(after).not.toContain('Junk');
   });
 
   it('puts unparsable GraphQL and unrouted requests into the unknown bucket', async () => {
@@ -154,7 +155,7 @@ describe('metrics (e2e)', () => {
   });
 
   it('counts GraphQL errors of an operation sent over the websocket', async () => {
-    const labels = { operation: 'query Me', code: 'INTERNAL_SERVER_ERROR' };
+    const labels = { operation: 'query me', code: 'INTERNAL_SERVER_ERROR' };
     const before = valueOf(await scrape(), 'graphql_errors_total', labels);
     const client = createClient({ url: wsUrl, webSocketImpl: WebSocket, retryAttempts: 0 });
     await new Promise<void>((resolve, reject) => {
@@ -167,7 +168,7 @@ describe('metrics (e2e)', () => {
   });
 
   it('counts GraphQL errors rejected before execution over the websocket', async () => {
-    const labels = { operation: 'query Broken', code: 'INTERNAL_SERVER_ERROR' };
+    const labels = { operation: '(unknown)', code: 'GRAPHQL_VALIDATION_FAILED' };
     const before = valueOf(await scrape(), 'graphql_errors_total', labels);
     const client = createClient({ url: wsUrl, webSocketImpl: WebSocket, retryAttempts: 0 });
     await new Promise<void>((resolve) => {

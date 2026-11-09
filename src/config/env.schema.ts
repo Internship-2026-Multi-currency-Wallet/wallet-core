@@ -85,6 +85,14 @@ export const envSchema = z
         message: 'must not be the local-only secret in production',
       });
     }
+    // 0 is a random port that Alloy cannot scrape; only the e2e tests use it.
+    if (env.METRICS_PORT === 0 && env.NODE_ENV !== 'test') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['METRICS_PORT'],
+        message: 'must be between 1 and 65535 (0 is only allowed when NODE_ENV=test)',
+      });
+    }
     if (env.METRICS_PORT === env.PORT) {
       ctx.addIssue({
         code: 'custom',
