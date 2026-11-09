@@ -1,14 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import type { PinoLogger } from 'nestjs-pino';
-import type { AppConfig } from '../config/app-config.js';
-import { FakeEmailService } from './fake-email.service.js';
+import { FakeEmailService, MAX_RECORDED_EMAILS } from './fake-email.service.js';
 
-const make = (appEnv = 'local') => {
+const make = () => {
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), setContext: jest.fn() };
-  const service = new FakeEmailService(
-    { appEnv } as unknown as AppConfig,
-    logger as unknown as PinoLogger,
-  );
+  const service = new FakeEmailService(logger as unknown as PinoLogger);
   return { service, logger };
 };
 
@@ -26,35 +22,25 @@ describe('FakeEmailService', () => {
     ]);
   });
 
-  it('logs the link in local, never the recipient', async () => {
-    const { service, logger } = make('local');
-    await service.send('staffInvitation', to, { link });
-    expect(logger.info).toHaveBeenCalledWith(
-      { template: 'staffInvitation', link },
-      'email recorded, not sent',
-    );
-    expect(JSON.stringify(logger.info.mock.calls)).not.toContain(to);
-  });
-
-  it.each(['staging', 'kvitka-uat', 'wisla-uat'])('logs only the template in %s', async (env) => {
-    const { service, logger } = make(env);
+  it('logs only the template, never the link, token or recipient', async () => {
+    const { service, logger } = make();
     await service.send('staffInvitation', to, { link });
     expect(logger.info).toHaveBeenCalledWith(
       { template: 'staffInvitation' },
       'email recorded, not sent',
     );
-    const logged = JSON.stringify(logger.info.mock.calls);
+    const logged = JSON.stringify(Object.values(logger).flatMap((fn) => fn.mock.calls));
     expect(logged).not.toContain('SECRET123');
     expect(logged).not.toContain(to);
   });
 
-  it('logs only the template for passwordChanged, even locally', async () => {
-    const { service, logger } = make('local');
-    await service.send('passwordChanged', to, {});
-    expect(logger.info).toHaveBeenCalledWith(
-      { template: 'passwordChanged' },
-      'email recorded, not sent',
-    );
+  it('keeps only the newest MAX_RECORDED_EMAILS entries in call order', async () => {
+    const { service } = make();
+    const total = MAX_RECORDED_EMAILS + 5;
+    for (let i = 1; i <= total; i++) await service.send('passwordChanged', `u${i}@example.com`, {});
+    expect(service.sent).toHaveLength(MAX_RECORDED_EMAILS);
+    expect(service.sent[0]?.to).toBe('u6@example.com');
+    expect(service.sent.at(-1)?.to).toBe(`u${total}@example.com`);
   });
 
   it('rejects wrong shapes at compile time', async () => {
