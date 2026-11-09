@@ -6,6 +6,7 @@ import { AppConfig } from '../config/app-config.js';
 import { AuthErrorCode } from '../auth/auth-errors.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
+import { ThrottleErrorCode } from '../throttling/throttle-errors.js';
 import { formatError, formatExecutionResult } from './format-error.js';
 
 /** Path of the committed GraphQL contract. Other repositories consume this file. */
@@ -18,7 +19,7 @@ interface ContextInput {
   extra?: { request?: unknown };
 }
 
-const CLIENT_ERROR_CODES = Object.values(AuthErrorCode);
+const CLIENT_ERROR_CODES = [...Object.values(AuthErrorCode), ...Object.values(ThrottleErrorCode)];
 
 export interface GraphqlContext {
   req: RequestLike;
