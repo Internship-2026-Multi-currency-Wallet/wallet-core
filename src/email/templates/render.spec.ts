@@ -67,6 +67,27 @@ describe('renderEmail', () => {
     expect(html).toContain('A&quot;&lt;b&gt;&amp;&#39;');
   });
 
+  it.each(['staffInvitation', 'passwordReset'] as const)(
+    'renders the button text in white on the primary background for %s',
+    (template) => {
+      const { html } = renderEmail(template, { link: 'https://app.example/x' }, brand);
+      const style = /<a href="[^"]*" style="([^"]*background:[^"]*)"/.exec(html)?.[1] ?? '';
+      const colors = [...style.matchAll(/(?:^|;)color:([^;]+)(?=;)/g)].map((m) => m[1]);
+      expect(colors.at(-1)).toBe('#FFFFFF');
+    },
+  );
+
+  it.each(templates)(
+    'shows the brand name in the header only as the logo alt for %s',
+    (template) => {
+      const { html } = renderEmail(template, sampleData[template], brand);
+      const header = /<td[^>]*>(<img [^>]*>[^<]*)<\/td>/.exec(html)?.[1] ?? '';
+      expect(header).toContain(`alt="${brand.name}"`);
+      expect(header.replace(/<img [^>]*>/, '')).not.toContain(brand.name);
+      expect(html).not.toContain(`>${brand.name}</span>`);
+    },
+  );
+
   it('renders passwordChanged with empty data', () => {
     const out = renderEmail('passwordChanged', {}, brand);
     expect(out.html).toContain('If this wasn&#39;t you, contact support.');
