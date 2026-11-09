@@ -28,10 +28,7 @@ interface ThrottledRequest extends RequestLike {
 
 type ThrottledGraphqlContext = GraphqlContext & { req: ThrottledRequest };
 
-/**
- * Global rate limit: one counter per caller (`user:<id>`, `staff:<id>` or `ip:<ip>`) for the whole
- * service. Must run after `AuthGuard`, which sets `req.user`.
- */
+/** Must run after `AuthGuard` so caller keys use the authenticated identity. */
 @Injectable()
 export class GlobalThrottlerGuard extends ThrottlerGuard {
   constructor(
@@ -39,8 +36,7 @@ export class GlobalThrottlerGuard extends ThrottlerGuard {
     @InjectThrottlerStorage() storage: ThrottlerStorage,
     reflector: Reflector,
     private readonly config: AppConfig,
-    // Plain `PinoLogger`, not `@InjectPinoLogger`: that provider only exists if this file loads before
-    // LoggingModule. Named `pinoLogger` because ThrottlerGuard already has a `logger` field.
+    // Plain `PinoLogger`, not `@InjectPinoLogger`: that provider only exists if this file loads before LoggingModule.
     private readonly pinoLogger: PinoLogger,
   ) {
     super(options, storage, reflector);
@@ -58,8 +54,7 @@ export class GlobalThrottlerGuard extends ThrottlerGuard {
   override async canActivate(context: ExecutionContext): Promise<boolean> {
     if (await this.shouldSkip(context)) return true;
     const { req } = this.getRequestResponse(context);
-    // GraphQL runs the guard once per top-level field, concurrently: the shared Promise (not a
-    // flag) makes one HTTP request count once.
+    // GraphQL runs the guard once per top-level field, concurrently, so a shared Promise (not a flag) counts the request once.
     const counted = req[COUNTED];
     if (counted) return counted;
     const result = super.canActivate(context);

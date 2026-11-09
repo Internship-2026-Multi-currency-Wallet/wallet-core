@@ -15,11 +15,7 @@ end
 return { hits, ttl }
 `;
 
-/**
- * Fixed-window counter in Redis: the first hit starts the window, and once the limit is exceeded
- * requests are refused until the window ends. `blockDuration` and `throttlerName` are ignored on
- * purpose: the window itself is the block, so the refusal never outlasts it.
- */
+/** The refusal never outlasts the window, so `blockDuration` is ignored. */
 export class WindowThrottlerStorage implements ThrottlerStorage {
   constructor(private readonly redis: Redis) {}
 

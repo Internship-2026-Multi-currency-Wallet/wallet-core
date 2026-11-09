@@ -1,5 +1,4 @@
-// @nestjs/throttler is CommonJS and requires the ESM @nestjs/common and @nestjs/core; Jest rejects
-// that as a require cycle unless they are already evaluated.
+// CommonJS @nestjs/throttler requires the ESM Nest packages, which Jest rejects as a require cycle unless they are already loaded.
 await import('@nestjs/common');
 await import('@nestjs/core');
 

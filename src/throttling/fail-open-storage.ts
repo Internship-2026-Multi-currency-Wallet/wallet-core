@@ -4,6 +4,8 @@ import type { PinoLogger } from 'nestjs-pino';
 import type { ThrottlerStorageRecord } from './window-throttler-storage.js';
 
 const WARN_INTERVAL_MS = 60_000;
+// A timed-out command is not cancelled, so without a pause new ones would pile up on the shared ioredis client.
+const COOLDOWN_MS = 10_000;
 // ioredis has no command timeout and a frozen connection keeps status `ready`, so without this every request would hang.
 const STORAGE_TIMEOUT_MS = 300;
 
@@ -34,13 +36,10 @@ function loggableError(err: unknown): LoggableError | string {
   return err instanceof Error ? { name: err.name, message: err.message } : String(err);
 }
 
-/**
- * Wraps the inner storage so that a broken limiter never takes the service down (fail open).
- * While Redis is not connected the inner storage is not called at all: ioredis would otherwise
- * hold every request for its command retries before failing.
- */
+/** A broken or stuck limiter must never take the service down, so every failure lets the request through. */
 export class FailOpenThrottlerStorage implements ThrottlerStorage {
   private lastWarningAt: number | null = null;
+  private skipRedisUntil = 0;
 
   constructor(
     private readonly inner: ThrottlerStorage,
@@ -56,7 +55,8 @@ export class FailOpenThrottlerStorage implements ThrottlerStorage {
     blockDuration: number,
     throttlerName: string,
   ): Promise<ThrottlerStorageRecord> {
-    // 'wait' is lazyConnect before the first command: the call below connects.
+    if (this.now() < this.skipRedisUntil) return ALLOW;
+    // While disconnected ioredis would hold the request for its command retries; 'wait' (lazyConnect) is fine because the call connects.
     if (this.redis.status !== 'ready' && this.redis.status !== 'wait') {
       this.warn({ redisStatus: this.redis.status });
       return ALLOW;
@@ -64,6 +64,7 @@ export class FailOpenThrottlerStorage implements ThrottlerStorage {
     try {
       return await withTimeout(this.inner.increment(key, ttl, limit, blockDuration, throttlerName));
     } catch (err) {
+      this.skipRedisUntil = this.now() + COOLDOWN_MS;
       this.warn({ redisStatus: this.redis.status, err: loggableError(err) });
       return ALLOW;
     }

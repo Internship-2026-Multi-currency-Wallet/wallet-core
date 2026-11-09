@@ -5,7 +5,6 @@ import { WindowThrottlerStorage } from '../src/throttling/window-throttler-stora
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The Lua script and the window semantics against a real Redis. */
 describe('WindowThrottlerStorage (e2e, real Redis)', () => {
   let redis: Redis;
   let storage: WindowThrottlerStorage;

@@ -47,7 +47,6 @@ export class AppConfig {
     accessTtlSeconds: number;
     sessionTtlSeconds: number;
   };
-  /** Global rate limit: window length and requests per window for anonymous callers (per IP) and users. */
   readonly throttle: { ttlSeconds: number; limitAnonymous: number; limitUser: number };
 
   constructor(env: Env) {

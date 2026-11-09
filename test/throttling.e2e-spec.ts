@@ -19,8 +19,7 @@ interface GqlBody {
   errors?: { extensions: Record<string, unknown> }[];
 }
 
-// Counters live in the real Redis and every spec calls from 127.0.0.1, so each test uses its own
-// client IP (the last X-Forwarded-For entry, because of `trust proxy = 1`) and its own user ids.
+// Counters live in the real Redis and all specs call from 127.0.0.1, so each test sets its own X-Forwarded-For IP and user ids.
 const randomIp = (): string => `10.${randomInt(256)}.${randomInt(256)}.${randomInt(256)}`;
 const devAuth = (id: string, permissions: string) => ({
   Authorization: `Dev ${id}:${permissions}`,

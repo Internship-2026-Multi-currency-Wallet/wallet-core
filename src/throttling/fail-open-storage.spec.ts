@@ -118,6 +118,75 @@ describe('FailOpenThrottlerStorage', () => {
     });
   });
 
+  describe('cooldown after a failure', () => {
+    it('skips the inner storage for 10 seconds and calls it again afterwards', async () => {
+      const { inner, increment, advance } = setup('ready');
+      inner.increment.mockRejectedValueOnce(new Error('connection reset'));
+      await increment();
+      expect(inner.increment).toHaveBeenCalledTimes(1);
+
+      advance(9_999);
+      await expect(increment()).resolves.toEqual(ALLOWED);
+      await expect(increment()).resolves.toEqual(ALLOWED);
+      expect(inner.increment).toHaveBeenCalledTimes(1);
+
+      advance(1);
+      await expect(increment()).resolves.toBe(COUNTED);
+      expect(inner.increment).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not warn for requests skipped during the cooldown', async () => {
+      const { inner, logger, increment, advance } = setup('ready');
+      inner.increment.mockRejectedValueOnce(new Error('connection reset'));
+      await increment();
+      advance(5_000);
+      await increment();
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts a new cooldown when the call after the previous one fails again', async () => {
+      const { inner, increment, advance } = setup('ready');
+      inner.increment.mockRejectedValue(new Error('connection reset'));
+      await increment();
+      advance(10_000);
+      await increment();
+      expect(inner.increment).toHaveBeenCalledTimes(2);
+      advance(9_999);
+      await increment();
+      expect(inner.increment).toHaveBeenCalledTimes(2);
+    });
+
+    it('applies after a timeout too', async () => {
+      jest.useFakeTimers();
+      try {
+        const { inner, increment, advance } = setup('ready');
+        inner.increment.mockReturnValueOnce(new Promise<ThrottlerStorageRecord>(() => {}));
+        const first = increment();
+        await jest.advanceTimersByTimeAsync(300);
+        await expect(first).resolves.toEqual(ALLOWED);
+
+        advance(5_000);
+        await expect(increment()).resolves.toEqual(ALLOWED);
+        expect(inner.increment).toHaveBeenCalledTimes(1);
+
+        advance(5_000);
+        await expect(increment()).resolves.toBe(COUNTED);
+        expect(inner.increment).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('never opens after successful calls', async () => {
+      const { inner, increment, advance } = setup('ready');
+      await increment();
+      advance(1);
+      await increment();
+      await increment();
+      expect(inner.increment).toHaveBeenCalledTimes(3);
+    });
+  });
+
   it('warns at most once per minute', async () => {
     const { logger, increment, advance } = setup('end');
     await increment();
