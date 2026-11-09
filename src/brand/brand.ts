@@ -1,5 +1,4 @@
-// Every client branch overrides this file: client branches ship their own copy.
-// Shared code must never hard-code names or colours.
+// Client branches replace this file so shared templates stay brand-independent.
 export interface Brand {
   name: string;
   senderName: string;

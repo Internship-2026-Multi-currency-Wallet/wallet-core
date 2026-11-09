@@ -10,7 +10,6 @@ const NOT_FOUND = 'Not found';
 const escapeHtml = (value: string): string =>
   value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/** Dev-only preview of the email templates rendered with sample data. Off unless EMAIL_PREVIEW_ENABLED. */
 @Controller('dev/email-preview')
 export class EmailPreviewController {
   constructor(private readonly config: AppConfig) {}
