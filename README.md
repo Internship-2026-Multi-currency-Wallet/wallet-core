@@ -239,9 +239,10 @@ constructor(private readonly email: EmailService) {}
 await this.email.send('staffInvitation', to, { link });
 ```
 
-Bound to `FakeEmailService`: it records into `sent` and delivers nothing; it logs the link only when `APP_ENV=local`,
-never the recipient. Real delivery (queue + Resend/SMTP) comes later. In tests override `EmailService` with
-`new FakeEmailService(...)` or read `app.get(EmailService).sent`.
+Bound to `FakeEmailService`: it delivers nothing, keeps the last 1000 calls in `sent`, and logs only the template
+(never the link or recipient). Real delivery (queue + Resend/SMTP) comes later. In tests read recordings via
+`(app.get(EmailService) as FakeEmailService).sent`, or override `EmailService` with your own `FakeEmailService`
+instance.
 
 ### Events — `src/events`
 
