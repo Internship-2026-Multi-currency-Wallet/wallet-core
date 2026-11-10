@@ -59,7 +59,7 @@ export const envSchema = z
     EMAIL_PREVIEW_ENABLED: booleanFromString,
     EMAIL_TRANSPORT: z.enum(['resend', 'smtp', 'fake']).default('smtp'),
     EMAIL_FROM: z.email().default('no-reply@wallet.shatori.com'),
-    RESEND_API_KEY: z.string().optional(),
+    RESEND_API_KEY: z.string().trim().min(1).optional(),
     SMTP_URL: z
       .url()
       .refine((value) => /^smtps?:\/\//i.test(value), 'must use the smtp: or smtps: scheme')

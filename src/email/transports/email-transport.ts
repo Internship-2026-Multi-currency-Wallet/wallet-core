@@ -26,6 +26,6 @@ export class EmailTransportError extends Error {
   }
 }
 
-/** Keeps a provider-supplied label only if it is short and identifier-like. */
+/** Provider text may contain addresses or tokens and ends up in logs, so only identifier-like labels pass. */
 export const safeLabel = (value: unknown): string | undefined =>
   typeof value === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value) ? value : undefined;

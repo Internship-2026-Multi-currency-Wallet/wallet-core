@@ -35,17 +35,18 @@ export class ResendTransport implements EmailTransport {
     }
     if (res.ok) return;
     let errorName: string | undefined;
+    let bodyUnreadable = false;
     try {
       errorName = safeLabel(((await res.json()) as { name?: unknown }).name);
     } catch {
-      // the body is optional diagnostics only
+      bodyUnreadable = true; // the body is optional diagnostics only
     }
     throw new EmailTransportError(
       'resend',
       res.status >= 500 ||
         res.status === 429 ||
         // Resend asks to retry later: our 10s timeout fired while the first request was in flight
-        (res.status === 409 && errorName === 'concurrent_idempotent_requests'),
+        (res.status === 409 && (errorName === 'concurrent_idempotent_requests' || bodyUnreadable)),
       res.status,
       errorName,
     );

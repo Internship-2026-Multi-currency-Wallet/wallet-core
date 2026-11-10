@@ -71,4 +71,12 @@ describe('SmtpTransport', () => {
     const err = await failure(transport);
     expect(err).toMatchObject({ retryable: false, errorName: 'EENVELOPE' });
   });
+
+  it.each([
+    [451, true],
+    [550, false],
+  ])('lets reply code %i decide for EENVELOPE (retryable %p)', async (code, retryable) => {
+    const { transport } = setup({ code: 'EENVELOPE', responseCode: code });
+    expect(await failure(transport)).toMatchObject({ retryable, status: code });
+  });
 });
