@@ -338,6 +338,27 @@ describe('StaffBootstrapService.createAdminOrReissue', () => {
     expect(sent).toHaveLength(0);
   });
 
+  it('reports emailTaken when the invited admin becomes support between the lookup and the resend', async () => {
+    const { bootstrap, repo, sent } = setup();
+    await bootstrap.bootstrapAdmin('admin@test.com', NOW);
+    const [id] = [...repo.records.keys()];
+    sent.length = 0;
+    const lookup = repo.findByEmail.bind(repo);
+    repo.findByEmail = async (email) => {
+      const found = await lookup(email);
+      repo.records.set(id, { ...repo.records.get(id)!, role: StaffRole.SUPPORT });
+      return found;
+    };
+
+    await expect(bootstrap.createAdminOrReissue('admin@test.com', LATER)).resolves.toEqual({
+      outcome: 'emailTaken',
+    });
+
+    expect(repo.invitations).toHaveLength(1);
+    expect(repo.invitations[0].expired).toBeUndefined();
+    expect(sent).toHaveLength(0);
+  });
+
   it('reports an invalid email', async () => {
     const { bootstrap, repo } = setup();
 

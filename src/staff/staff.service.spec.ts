@@ -265,6 +265,23 @@ describe('StaffService.resendInvitation', () => {
     expect(repo.invitations).toHaveLength(0);
   });
 
+  it('answers NOT_INVITED, rotating nothing, when the member has another role than expected', async () => {
+    const { service, repo } = setup();
+    const { id } = await service.invite(
+      ADMIN_ID,
+      { email: 'new@test.com', role: StaffRole.SUPPORT },
+      NOW,
+    );
+
+    const error = await graphqlErrorOf(
+      service.resendInvitationWithLink(ADMIN_ID, id, NOW, StaffRole.ADMIN),
+    );
+
+    expect(error.extensions).toEqual({ code: 'NOT_INVITED' });
+    expect(repo.invitations).toHaveLength(1);
+    expect(repo.invitations[0].expired).toBeUndefined();
+  });
+
   it('answers STAFF_NOT_FOUND for an unknown staff id', async () => {
     const { service } = setup();
     const error = await graphqlErrorOf(service.resendInvitation(ADMIN_ID, SUPPORT_ID, NOW));

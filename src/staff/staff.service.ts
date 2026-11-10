@@ -96,10 +96,14 @@ export class StaffService {
     actorId: string,
     staffId: string,
     now: Date = new Date(),
+    expectedRole?: StaffRole,
   ): Promise<InvitationResult> {
     const { record, token } = await this.staff.transaction(async (tx) => {
       const found = await lockOrThrow(tx, staffId);
-      if (found.status !== StaffStatus.INVITED) {
+      if (
+        found.status !== StaffStatus.INVITED ||
+        (expectedRole !== undefined && found.role !== expectedRole)
+      ) {
         throw staffError(StaffErrorCode.NotInvited, STAFF_ERROR_MESSAGES.notInvited);
       }
       await tx.expireInvitations(found.id, now);

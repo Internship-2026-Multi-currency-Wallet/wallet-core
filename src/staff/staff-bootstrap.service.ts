@@ -74,8 +74,19 @@ export class StaffBootstrapService implements OnApplicationBootstrap {
       if (existing.status !== StaffStatus.INVITED || existing.role !== StaffRole.ADMIN) {
         return { outcome: 'emailTaken' };
       }
-      const { link } = await this.staff.resendInvitationWithLink(CLI_ACTOR, existing.id, now);
-      return { outcome: 'resent', staffId: existing.id, link };
+      try {
+        const { link } = await this.staff.resendInvitationWithLink(
+          CLI_ACTOR,
+          existing.id,
+          now,
+          StaffRole.ADMIN,
+        );
+        return { outcome: 'resent', staffId: existing.id, link };
+      } catch (err) {
+        // The member changed role or status after the read above; the locked check caught it.
+        if (isNotInvited(err)) return { outcome: 'emailTaken' };
+        throw err;
+      }
     }
     if (await this.repo.anyAdminExists()) return { outcome: 'adminExists' };
     try {
@@ -95,6 +106,10 @@ export class StaffBootstrapService implements OnApplicationBootstrap {
       return undefined;
     }
   }
+}
+
+function isNotInvited(err: unknown): boolean {
+  return err instanceof GraphQLError && err.extensions.code === StaffErrorCode.NotInvited;
 }
 
 function isStaffAlreadyExists(err: unknown): boolean {
