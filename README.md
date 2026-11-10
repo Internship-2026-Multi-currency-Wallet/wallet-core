@@ -78,7 +78,7 @@ See `.env.example`.
 | `NODE_ENV`              | `development`                                      | `production` disables writing `schema.graphql`                                                           |
 | `APP_ENV`               | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                     |
 | `DATABASE_URL`          | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                           |
-| `REDIS_URL`             | `redis://localhost:6379`                           | Redis for events                                                                                         |
+| `REDIS_URL`             | `redis://localhost:6379`                           | Redis for events and the email queue                                                                     |
 | `CLIENT`                | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                                 |
 | `DEV_AUTH`              | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT     |
 | `EMAIL_PREVIEW_ENABLED` | `false`                                            | Serve email template previews at `/dev/email-preview`. Refused at startup when `APP_ENV` is a client UAT |
@@ -302,18 +302,18 @@ instance. No BullMQ objects are created in fake mode.
 
 **Delivery.** With `EMAIL_TRANSPORT=resend|smtp`, `send()` only enqueues a job on the BullMQ queue `email` (Redis keys
 `<APP_ENV>:email:*`) and resolves once it is stored; if Redis does not answer within 5 s it rejects with
-`EmailEnqueueError`. `EmailWorker` (5 concurrent jobs) renders the template and sends it through the transport with the
+`EmailEnqueueError`; such a send may still be delivered later if Redis comes back (the add can land late), so do not
+treat it as "definitely not sent". `EmailWorker` (5 concurrent jobs) renders the template and sends it through the transport with the
 idempotency key `<APP_ENV>/<job id>`, so a re-run does not duplicate mail on Resend. A failed send is retried up to
 8 attempts with exponential backoff (5 s, 10 s, 20 s, ...). A permanent transport error (`retryable: false`) fails the
 job at once. Failed jobs are kept for 7 days (at most 1000). Logs carry job id, template and attempt, never the
 recipient, data or link.
 
-**Local delivery with Mailpit.** Until `ops` ships it, run Mailpit yourself
+**Local delivery with Mailpit.** If `ops` does not start Mailpit yet, run it yourself
 (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`), set `EMAIL_TRANSPORT=smtp` and `SMTP_URL=smtp://localhost:1025`
 (as in `.env.example`), then read the mail at http://localhost:8025.
 
 Notes: the e2e tests and a local dev server share the `local:email` queue, so do not run both at the same time.
-`staff:create-admin` boots `AppModule`, so it starts a worker briefly (accepted).
 
 **Preview.** With `EMAIL_PREVIEW_ENABLED=true` (only `local` and `staging`; `.env.example` enables it) the service
 serves `GET /dev/email-preview` (list of templates) and `GET /dev/email-preview/<name>` (the rendered HTML with

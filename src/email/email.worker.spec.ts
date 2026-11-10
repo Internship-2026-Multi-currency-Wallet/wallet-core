@@ -47,7 +47,7 @@ describe('EmailWorker.process', () => {
     const { worker, logger, job } = setup(() => Promise.reject(err));
     await expect(worker.process(job(1))).rejects.toBe(err);
     expect(logger.warn).toHaveBeenCalledWith(
-      { err, jobId: 'job-1', template: 'staffInvitation', attemptsMade: 2 },
+      { err, jobId: 'job-1', template: 'staffInvitation', attempt: 2 },
       'email send failed',
     );
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(to);

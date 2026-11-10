@@ -9,7 +9,6 @@ import { EmailService } from '../src/email/email.service.js';
 import { EmailWorker } from '../src/email/email.worker.js';
 import { FakeEmailService } from '../src/email/fake-email.service.js';
 import { EmailEnqueueError, QueuedEmailService } from '../src/email/queued-email.service.js';
-import { redisConnectionOptions } from '../src/email/redis-connection.js';
 import {
   EMAIL_TRANSPORT_CLIENT,
   EmailTransportError,
@@ -40,7 +39,7 @@ describe('email delivery (e2e)', () => {
   const clean = () => inspect.obliterate({ force: true });
 
   beforeAll(async () => {
-    inspect = new Queue('email', { prefix, connection: redisConnectionOptions(config.redisUrl) });
+    inspect = new Queue('email', { prefix, connection: { url: config.redisUrl } });
     redis = new Redis(config.redisUrl);
     await clean();
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -59,7 +58,6 @@ describe('email delivery (e2e)', () => {
   });
 
   afterAll(async () => {
-    // Behavior 8: closing with the worker running must not hang.
     await app.close();
     await clean();
     await inspect.close();
@@ -83,6 +81,9 @@ describe('email delivery (e2e)', () => {
   });
 
   it('stores queue keys under <APP_ENV>:email:', async () => {
+    behavior = () => Promise.resolve();
+    await app.get(EmailService).send('passwordChanged', to, {});
+    await waitFor(() => calls.length === 1, 5000);
     const keys = await redis.keys(`${prefix}:email:*`);
     expect(keys.length).toBeGreaterThan(0);
     expect(await redis.keys('bull:email:*')).toEqual([]);

@@ -9,7 +9,7 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { brand } from '../brand/brand.js';
 import { AppConfig } from '../config/app-config.js';
 import { EMAIL_QUEUE, type EmailJobData } from './queued-email.service.js';
-import { queuePrefix, redisConnectionOptions } from './redis-connection.js';
+import { queuePrefix } from './redis-connection.js';
 import { renderEmail } from './templates/index.js';
 import {
   EMAIL_TRANSPORT_CLIENT,
@@ -29,7 +29,7 @@ export class EmailWorker implements OnApplicationBootstrap, OnApplicationShutdow
     if (config.email.transport === 'fake' || !transport) return;
     this.worker = new Worker<EmailJobData>(EMAIL_QUEUE, (job) => this.process(job), {
       prefix: queuePrefix(config.appEnv),
-      connection: redisConnectionOptions(config.redisUrl, { maxRetriesPerRequest: null }),
+      connection: { url: config.redisUrl, maxRetriesPerRequest: null },
       concurrency: 5,
       autorun: false,
     });
@@ -63,10 +63,10 @@ export class EmailWorker implements OnApplicationBootstrap, OnApplicationShutdow
         idempotencyKey: `${this.config.appEnv}/${job.id}`,
       });
     } catch (err) {
-      const attemptsMade = job.attemptsMade + 1;
+      const attempt = job.attemptsMade + 1;
       const permanent = err instanceof EmailTransportError && !err.retryable;
-      const exhausted = attemptsMade >= (job.opts.attempts ?? 1);
-      const failure = { err, ...fields, attemptsMade };
+      const exhausted = attempt >= (job.opts.attempts ?? 1);
+      const failure = { err, ...fields, attempt };
       if (permanent || exhausted) this.logger.error(failure, 'email send failed');
       else this.logger.warn(failure, 'email send failed');
       if (permanent) throw new UnrecoverableError((err as Error).message);
