@@ -62,6 +62,13 @@ describe('wsOperationName', () => {
     expect(wsOperationName(parse('{ me { id } }'))).toBe('query me');
   });
 
+  it('finds the root field inside inline fragments and fragment spreads', () => {
+    expect(wsOperationName(parse('query Q { ... on Query { me { id } } }'))).toBe('query me');
+    expect(wsOperationName(parse('query Q { ...Root } fragment Root on Query { me { id } }'))).toBe(
+      'query me',
+    );
+  });
+
   it('gives ambiguous and missing operations no label', () => {
     expect(wsOperationName(parse('query A { a } query B { b }'))).toBeUndefined();
     expect(wsOperationName(undefined, 'A')).toBeUndefined();
