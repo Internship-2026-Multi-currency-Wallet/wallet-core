@@ -26,7 +26,13 @@ const booleanFromString = z
 export const LOCAL_JWT_SECRET = 'local-only-jwt-secret-change-me-0123456789';
 
 const DEFAULT_BACKOFFICE_URL = 'http://localhost:5174';
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '0.0.0.0']);
+const LOCAL_HOSTS = new Set(['localhost', '[::1]', '0.0.0.0']);
+
+// URL() already normalizes 127.1, 0x7f.1 and [0:0:0:0:0:0:0:1]; a trailing dot and 127.0.0.0/8 it keeps.
+function isLocalHost(url: string): boolean {
+  const host = new URL(url).hostname.replace(/\.$/, '').toLowerCase();
+  return LOCAL_HOSTS.has(host) || host.endsWith('.localhost') || /^127(\.\d{1,3}){3}$/.test(host);
+}
 
 const SECONDS_PER_UNIT = { s: 1, m: 60, h: 3600, d: 86400 } as const;
 type DurationUnit = keyof typeof SECONDS_PER_UNIT;
@@ -114,7 +120,7 @@ export const envSchema = z
           message:
             'is required when NODE_ENV=production (the base URL of the back office, used in invitation links)',
         });
-      } else if (LOCAL_HOSTS.has(new URL(env.BACKOFFICE_URL).hostname)) {
+      } else if (isLocalHost(env.BACKOFFICE_URL)) {
         ctx.addIssue({
           code: 'custom',
           path: ['BACKOFFICE_URL'],

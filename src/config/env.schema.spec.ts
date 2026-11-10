@@ -303,10 +303,28 @@ describe('AppConfig', () => {
       'http://127.0.0.1:8080',
       'http://[::1]:5174/bo',
       'http://0.0.0.0',
+      'http://localhost.:5174',
+      'http://127.0.0.2:5174',
+      'http://127.255.255.254',
+      'http://app.localhost',
+      'http://LOCALHOST./x',
     ])('refuses the local host %s', (url) => {
       expect(() => validateEnv({ ...production, BACKOFFICE_URL: url })).toThrow(
         /BACKOFFICE_URL: must not point to a local host/,
       );
+    });
+
+    it.each([
+      'https://127.example.com',
+      'https://notlocalhost.example.com',
+      'https://localhost.example.com',
+    ])('accepts the non-local host %s', (url) => {
+      const env = {
+        ...production,
+        EMAIL_TRANSPORT: 'fake',
+        BACKOFFICE_URL: url,
+      };
+      expect(validateEnv(env).BACKOFFICE_URL).toBe(url);
     });
 
     it.each(['staging', 'local'])('accepts a real URL with APP_ENV=%s', (appEnv) => {
