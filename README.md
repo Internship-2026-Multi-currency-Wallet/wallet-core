@@ -295,10 +295,25 @@ constructor(private readonly email: EmailService) {}
 await this.email.send('staffInvitation', to, { link });
 ```
 
-Bound to `FakeEmailService`: it delivers nothing, keeps the last 1000 calls in `sent`, and logs only the template
-(never the link or recipient). Real delivery (queue + Resend/SMTP) comes later. In tests read recordings via
+With `EMAIL_TRANSPORT=fake` (the default for tests) it is bound to `FakeEmailService`: it delivers nothing, keeps the
+last 1000 calls in `sent`, and logs only the template (never the link or recipient). In tests read recordings via
 `(app.get(EmailService) as FakeEmailService).sent`, or override `EmailService` with your own `FakeEmailService`
-instance.
+instance. No BullMQ objects are created in fake mode.
+
+**Delivery.** With `EMAIL_TRANSPORT=resend|smtp`, `send()` only enqueues a job on the BullMQ queue `email` (Redis keys
+`<APP_ENV>:email:*`) and resolves once it is stored; if Redis does not answer within 5 s it rejects with
+`EmailEnqueueError`. `EmailWorker` (5 concurrent jobs) renders the template and sends it through the transport with the
+idempotency key `<APP_ENV>/<job id>`, so a re-run does not duplicate mail on Resend. A failed send is retried up to
+8 attempts with exponential backoff (5 s, 10 s, 20 s, ...). A permanent transport error (`retryable: false`) fails the
+job at once. Failed jobs are kept for 7 days (at most 1000). Logs carry job id, template and attempt, never the
+recipient, data or link.
+
+**Local delivery with Mailpit.** Until `ops` ships it, run Mailpit yourself
+(`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`), set `EMAIL_TRANSPORT=smtp` and `SMTP_URL=smtp://localhost:1025`
+(as in `.env.example`), then read the mail at http://localhost:8025.
+
+Notes: the e2e tests and a local dev server share the `local:email` queue, so do not run both at the same time.
+`staff:create-admin` boots `AppModule`, so it starts a worker briefly (accepted).
 
 **Preview.** With `EMAIL_PREVIEW_ENABLED=true` (only `local` and `staging`; `.env.example` enables it) the service
 serves `GET /dev/email-preview` (list of templates) and `GET /dev/email-preview/<name>` (the rendered HTML with
@@ -342,7 +357,7 @@ src/
   permissions/   @RequirePermission + guard
   settings/      ClientSettingsService (settingsCatalog defaults + DB overrides) and the settings API
   rates/         RatesClient + FixedRatesClient
-  email/         EmailService contract + FakeEmailService
+  email/         EmailService contract, queue + worker, FakeEmailService
   events/        event catalog + publisher/subscriber
   health/        GET /health and `health` query
   config/        env validation + AppConfig
