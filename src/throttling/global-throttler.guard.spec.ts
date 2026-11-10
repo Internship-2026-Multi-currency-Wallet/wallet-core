@@ -126,25 +126,27 @@ async function readyGuard() {
 
 describe('GlobalThrottlerGuard', () => {
   describe('counter key', () => {
-    it('counts a client user under user:<id>, prefixed with APP_ENV', async () => {
+    it('counts a client user under user:<id>, prefixed with APP_ENV and the service name', async () => {
       const { guard, storage, res } = await readyGuard();
       const req = request({ user: user('42', UserKind.CLIENT) });
       await expect(guard.canActivate(graphqlContext(req, res))).resolves.toBe(true);
       expect(storage.increment).toHaveBeenCalledTimes(1);
-      expect(storage.increment.mock.calls[0]?.[0]).toBe('staging:throttle:user:42');
+      expect(storage.increment.mock.calls[0]?.[0]).toBe('staging:throttle:wallet-core:user:42');
     });
 
     it('counts staff under staff:<id>', async () => {
       const { guard, storage, res } = await readyGuard();
       const req = request({ user: user('7', UserKind.STAFF) });
       await guard.canActivate(graphqlContext(req, res));
-      expect(storage.increment.mock.calls[0]?.[0]).toBe('staging:throttle:staff:7');
+      expect(storage.increment.mock.calls[0]?.[0]).toBe('staging:throttle:wallet-core:staff:7');
     });
 
     it('counts an anonymous caller under ip:<ip>', async () => {
       const { guard, storage, res } = await readyGuard();
       await guard.canActivate(graphqlContext(request(), res));
-      expect(storage.increment.mock.calls[0]?.[0]).toBe('staging:throttle:ip:203.0.113.5');
+      expect(storage.increment.mock.calls[0]?.[0]).toBe(
+        'staging:throttle:wallet-core:ip:203.0.113.5',
+      );
     });
 
     it('uses one counter for every endpoint', async () => {

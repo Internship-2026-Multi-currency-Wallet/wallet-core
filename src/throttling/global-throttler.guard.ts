@@ -78,9 +78,9 @@ export class GlobalThrottlerGuard extends ThrottlerGuard {
     return `ip:${await super.getTracker(req)}`;
   }
 
-  // No class or handler name in the key: every endpoint shares one counter.
+  // No handler name, so all endpoints share one counter; the service name separates backends sharing one Redis.
   protected override generateKey(_context: ExecutionContext, tracker: string): string {
-    return `${this.config.appEnv}:throttle:${tracker}`;
+    return `${this.config.appEnv}:throttle:${this.config.serviceName}:${tracker}`;
   }
 
   protected override throwThrottlingException(

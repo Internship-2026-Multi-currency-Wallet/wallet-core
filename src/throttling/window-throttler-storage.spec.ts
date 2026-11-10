@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import type { Redis } from 'ioredis';
 import { WindowThrottlerStorage } from './window-throttler-storage.js';
 
-const KEY = 'staging:throttle:user:42';
+const KEY = 'staging:throttle:wallet-core:user:42';
 const TTL_MS = 60_000;
 
 function setup(reply: unknown) {

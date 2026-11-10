@@ -122,8 +122,9 @@ there (the mentor does it in Dokploy) and redeploy.
   window ends: limit hit at 0:10 of a 60 s window means refused until 1:00, not until 1:10. `Retry-After` is the
   number of seconds left in the window.
 - **One HTTP request counts once**, however many top-level fields a GraphQL request has.
-- **Shared and per service.** Counters live in Redis under `<APP_ENV>:throttle:<key>`, so all instances of a service
-  share them and they survive a restart. Each service counts on its own.
+- **Shared and per service.** Counters live in Redis under `<APP_ENV>:throttle:<service>:<key>` (e.g.
+  `staging:throttle:wallet-core:user:42`), so all instances of a service share them and they survive a restart.
+  The service name in the key makes each service count on its own, although all backends share one Redis.
 - **Client IP.** Express trusts one proxy hop (`trust proxy = 1`, `src/configure-app.ts`, because Traefik is the
   only proxy), so the IP is the last `X-Forwarded-For` entry. A client cannot invent a new IP by adding entries.
 - **Not counted:** `GET /health` (the controller is marked `@SkipThrottle()`; a future metrics endpoint needs it too)
