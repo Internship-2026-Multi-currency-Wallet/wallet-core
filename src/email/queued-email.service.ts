@@ -57,7 +57,7 @@ export class QueuedEmailService extends EmailService implements OnApplicationShu
               attempts: 8,
               backoff: { type: 'exponential', delay: 5000 },
               removeOnComplete: true,
-              removeOnFail: { age: 7 * 24 * 3600, count: 1000 },
+              removeOnFail: { age: 48 * 3600, count: 1000 },
             },
           )
           .catch(() => {

@@ -16,7 +16,7 @@ import {
 } from '../src/email/transports/email-transport.js';
 import { createApp } from './create-app.js';
 
-const config = AppConfig.fromEnv({ ...process.env, EMAIL_TRANSPORT: 'smtp' });
+const config = AppConfig.fromEnv({ ...process.env, EMAIL_TRANSPORT: 'smtp', APP_ENV: 'staging' });
 const prefix = config.appEnv;
 const to = 'jane@example.com';
 const link = 'https://app.example/accept?token=SECRET123';

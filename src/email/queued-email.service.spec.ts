@@ -31,7 +31,7 @@ describe('QueuedEmailService', () => {
       attempts: 8,
       backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: true,
-      removeOnFail: { age: 7 * 24 * 3600, count: 1000 },
+      removeOnFail: { age: 48 * 3600, count: 1000 },
     });
     expect(first[2].jobId).toMatch(/^[0-9a-f-]{36}$/);
     expect(second[2].jobId).not.toBe(first[2].jobId);

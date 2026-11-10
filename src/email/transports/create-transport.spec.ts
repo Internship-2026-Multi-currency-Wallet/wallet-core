@@ -25,3 +25,11 @@ describe('createEmailTransport', () => {
     expect(createEmailTransport(config('fake'))).toBeUndefined();
   });
 });
+
+describe('createEmailTransport without a Resend key', () => {
+  it('throws instead of building a transport with no key', () => {
+    const cfg = config('resend');
+    (cfg.email as { resendApiKey?: string }).resendApiKey = undefined;
+    expect(() => createEmailTransport(cfg)).toThrow(/RESEND_API_KEY/);
+  });
+});

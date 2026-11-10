@@ -4,7 +4,10 @@ import { ResendTransport } from './resend.transport.js';
 import { SmtpTransport } from './smtp.transport.js';
 
 export const createEmailTransport = ({ email }: AppConfig): EmailTransport | undefined => {
-  if (email.transport === 'resend') return new ResendTransport(email.resendApiKey!);
+  if (email.transport === 'resend') {
+    if (!email.resendApiKey) throw new Error('RESEND_API_KEY is required for the resend transport');
+    return new ResendTransport(email.resendApiKey);
+  }
   if (email.transport === 'smtp') return new SmtpTransport(email.smtpUrl);
   return undefined;
 };

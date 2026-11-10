@@ -10,7 +10,7 @@ import { brand } from '../brand/brand.js';
 import { AppConfig } from '../config/app-config.js';
 import { EMAIL_QUEUE, type EmailJobData } from './queued-email.service.js';
 import { queuePrefix } from './redis-connection.js';
-import { renderEmail } from './templates/index.js';
+import { renderEmail, sampleData } from './templates/index.js';
 import {
   EMAIL_TRANSPORT_CLIENT,
   EmailTransportError,
@@ -23,11 +23,14 @@ export class EmailWorker implements OnApplicationBootstrap, OnApplicationShutdow
 
   constructor(
     private readonly config: AppConfig,
-    @Inject(EMAIL_TRANSPORT_CLIENT) private readonly transport: EmailTransport | undefined,
+    @Inject(EMAIL_TRANSPORT_CLIENT) transport: EmailTransport | undefined,
     @InjectPinoLogger(EmailWorker.name) private readonly logger: PinoLogger,
   ) {
-    if (config.email.transport === 'fake' || !transport) return;
-    this.worker = new Worker<EmailJobData>(EMAIL_QUEUE, (job) => this.process(job), {
+    if (config.email.transport === 'fake') return;
+    if (!transport) {
+      throw new Error(`Email transport '${config.email.transport}' is configured but not provided`);
+    }
+    this.worker = new Worker<EmailJobData>(EMAIL_QUEUE, (job) => this.process(job, transport), {
       prefix: queuePrefix(config.appEnv),
       connection: { url: config.redisUrl, maxRetriesPerRequest: null },
       concurrency: 5,
@@ -49,12 +52,17 @@ export class EmailWorker implements OnApplicationBootstrap, OnApplicationShutdow
 
   async process(
     job: Pick<Job<EmailJobData>, 'id' | 'data' | 'attemptsMade' | 'opts'>,
+    transport: EmailTransport,
   ): Promise<void> {
     const { template, to, data } = job.data;
     const fields = { jobId: job.id, template };
+    if (!Object.hasOwn(sampleData, template)) {
+      this.logger.error(fields, 'email job has an unknown template');
+      throw new UnrecoverableError('email job has an unknown template');
+    }
     try {
-      const { subject, html, text } = renderEmail(template, data as never, brand);
-      await this.transport!.send({
+      const { subject, html, text } = renderEmail(template, data, brand);
+      await transport.send({
         from: { name: brand.senderName, address: this.config.email.from },
         to,
         subject,
