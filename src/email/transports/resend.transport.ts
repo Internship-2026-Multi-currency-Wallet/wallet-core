@@ -42,7 +42,10 @@ export class ResendTransport implements EmailTransport {
     }
     throw new EmailTransportError(
       'resend',
-      res.status >= 500 || res.status === 429,
+      res.status >= 500 ||
+        res.status === 429 ||
+        // Resend asks to retry later: our 10s timeout fired while the first request was in flight
+        (res.status === 409 && errorName === 'concurrent_idempotent_requests'),
       res.status,
       errorName,
     );
