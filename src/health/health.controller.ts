@@ -1,9 +1,12 @@
 import { Controller, Get, HttpStatus, Res } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { Public } from '../auth/public.decorator.js';
 import { DependencyStatus, type Health } from './health.model.js';
 import { HealthService } from './health.service.js';
 
+// Probes must never be refused, whatever the path spelling (`/health/`).
+@SkipThrottle()
 @Controller('health')
 export class HealthController {
   constructor(private readonly health: HealthService) {}

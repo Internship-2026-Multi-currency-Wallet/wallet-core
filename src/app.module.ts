@@ -19,6 +19,7 @@ import { RatesModule } from './rates/rates.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { ClientSettingsModule } from './settings/client-settings.module.js';
 import { StaffModule } from './staff/staff.module.js';
+import { ThrottlingModule } from './throttling/throttling.module.js';
 
 /**
  * Root module. Shared file: change it only in small, dedicated PRs.
@@ -43,6 +44,8 @@ import { StaffModule } from './staff/staff.module.js';
     // whatever the caller's credentials.
     CustomizationsModule,
     AuthModule,
+    // After AuthModule: global guards run in module order, and the throttler needs req.user.
+    ThrottlingModule,
     ClientSettingsModule,
     RatesModule,
     EmailModule,

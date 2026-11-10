@@ -3,6 +3,9 @@ process.env.NODE_ENV ??= 'test';
 process.env.DEV_AUTH ??= 'true';
 process.env.DATABASE_URL ??= 'mysql://wallet:wallet@localhost:3306/wallet_core';
 process.env.REDIS_URL ??= 'redis://localhost:6379';
+// E2e files share one Redis and one IP, so the default limits would make them flaky; throttling.e2e-spec.ts sets its own.
+process.env.THROTTLE_LIMIT_ANONYMOUS ??= '100000';
+process.env.THROTTLE_LIMIT_USER ??= '100000';
 process.env.METRICS_PORT ??= '0';
 // Never send real or SMTP email from tests.
 process.env.EMAIL_TRANSPORT ??= 'fake';

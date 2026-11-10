@@ -8,6 +8,7 @@ import { AuthErrorCode } from '../auth/auth-errors.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { restrictClientFields } from '../customizations/client-field-availability.js';
 import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
+import { ThrottleErrorCode } from '../throttling/throttle-errors.js';
 import type { Metrics } from '../metrics/metrics.js';
 import {
   countGraphqlErrors,
@@ -26,7 +27,9 @@ interface ContextInput {
   extra?: { request?: unknown };
 }
 
-const CLIENT_ERROR_CODES = Object.values(AuthErrorCode);
+const CLIENT_ERROR_CODES = [AuthErrorCode, ThrottleErrorCode].flatMap((codes) =>
+  Object.values(codes),
+);
 
 export interface GraphqlContext {
   req: RequestLike;

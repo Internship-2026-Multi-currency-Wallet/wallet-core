@@ -57,6 +57,7 @@ export class AppConfig {
     accessTtlSeconds: number;
     sessionTtlSeconds: number;
   };
+  readonly throttle: { ttlSeconds: number; limitAnonymous: number; limitUser: number };
 
   constructor(env: Env) {
     this.version = env.APP_VERSION ?? readPackageVersion();
@@ -85,6 +86,11 @@ export class AppConfig {
       secret: env.JWT_SECRET ?? LOCAL_JWT_SECRET,
       accessTtlSeconds: env.JWT_ACCESS_TTL,
       sessionTtlSeconds: env.JWT_REFRESH_TTL,
+    };
+    this.throttle = {
+      ttlSeconds: env.THROTTLE_TTL_SECONDS,
+      limitAnonymous: env.THROTTLE_LIMIT_ANONYMOUS,
+      limitUser: env.THROTTLE_LIMIT_USER,
     };
   }
 
