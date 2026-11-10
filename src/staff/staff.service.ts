@@ -1,8 +1,8 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
-import { EMAIL_SENDER, EmailTemplate, type EmailSender } from '../email/email-sender.js';
+import { EmailService } from '../email/email.service.js';
 import { registerInputSchema } from '../auth/register.schema.js';
 import { ROLE_PERMISSIONS, StaffRole } from './permissions.js';
 import type { InviteStaffInput } from './staff.inputs.js';
@@ -23,7 +23,7 @@ export class StaffService {
     private readonly staff: StaffRepository,
     // Not `@InjectPinoLogger`: its provider only exists if this file loads before LoggingModule.
     private readonly logger: PinoLogger,
-    @Inject(EMAIL_SENDER) private readonly email: EmailSender,
+    private readonly email: EmailService,
     private readonly config: AppConfig,
   ) {
     logger.setContext(StaffService.name);
@@ -117,7 +117,7 @@ export class StaffService {
   private async sendInvitation(staffId: string, to: string, token: string): Promise<string> {
     const link = `${this.config.backofficeUrl}/accept-invitation?token=${token}`;
     try {
-      await this.email.send({ template: EmailTemplate.StaffInvitation, to, data: { link } });
+      await this.email.send('staffInvitation', to, { link });
     } catch (err) {
       this.logger.warn({ err, staffId }, 'invitation email failed');
     }

@@ -7,7 +7,8 @@ import type { App } from 'supertest/types.js';
 import { AppModule } from '../src/app.module.js';
 import { AppConfig } from '../src/config/app-config.js';
 import { createKnex } from '../src/database/database.module.js';
-import { EMAIL_SENDER, type EmailMessage } from '../src/email/email-sender.js';
+import { EmailService } from '../src/email/email.service.js';
+import type { FakeEmailService } from '../src/email/fake-email.service.js';
 import { StaffRole } from '../src/staff/permissions.js';
 import { StaffStatus } from '../src/staff/staff.model.js';
 import { StaffRepository } from '../src/staff/staff.repository.js';
@@ -17,7 +18,7 @@ describe('staff management (e2e, DEV_AUTH=true, real MySQL)', () => {
   let app: INestApplication;
   let db: Knex;
   let repo: StaffRepository;
-  const sent: EmailMessage[] = [];
+  let sent: FakeEmailService['sent'];
 
   interface GqlResponse {
     data: Record<string, unknown> | null;
@@ -79,16 +80,10 @@ describe('staff management (e2e, DEV_AUTH=true, real MySQL)', () => {
           BACKOFFICE_URL: 'https://bo.test/',
         }),
       )
-      .overrideProvider(EMAIL_SENDER)
-      .useValue({
-        send: (message: EmailMessage) => {
-          sent.push(message);
-          return Promise.resolve();
-        },
-      })
       .compile();
     app = moduleRef.createNestApplication({ logger: ['error', 'warn'] });
     await app.init();
+    sent = app.get<FakeEmailService>(EmailService).sent;
     db = createKnex(process.env.DATABASE_URL!);
     repo = new StaffRepository(db);
   });

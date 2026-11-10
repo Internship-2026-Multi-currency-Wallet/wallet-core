@@ -1,16 +1,20 @@
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Knex } from 'knex';
+import type { PinoLogger } from 'nestjs-pino';
 import { AppModule } from '../src/app.module.js';
 import { AppConfig } from '../src/config/app-config.js';
 import { createKnex } from '../src/database/database.module.js';
-import { EMAIL_SENDER, type EmailMessage } from '../src/email/email-sender.js';
+import { EmailService } from '../src/email/email.service.js';
+import { FakeEmailService } from '../src/email/fake-email.service.js';
 import { StaffBootstrapService } from '../src/staff/staff-bootstrap.service.js';
 
 /** Admin bootstrap on application start, against real MySQL. */
 describe('staff bootstrap (e2e, real MySQL)', () => {
   let db: Knex;
-  const sent: EmailMessage[] = [];
+  // One fake shared by all applications of a test, so emails of every start are counted.
+  const fake = new FakeEmailService({ info: () => undefined } as unknown as PinoLogger);
+  const sent = fake.sent;
 
   const startApp = async (): Promise<INestApplication> => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -22,13 +26,8 @@ describe('staff bootstrap (e2e, real MySQL)', () => {
           BACKOFFICE_URL: 'https://bo.test',
         }),
       )
-      .overrideProvider(EMAIL_SENDER)
-      .useValue({
-        send: (message: EmailMessage) => {
-          sent.push(message);
-          return Promise.resolve();
-        },
-      })
+      .overrideProvider(EmailService)
+      .useValue(fake)
       .compile();
     const app = moduleRef.createNestApplication({ logger: ['error', 'warn'] });
     await app.init();

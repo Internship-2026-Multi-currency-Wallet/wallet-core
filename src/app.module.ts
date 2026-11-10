@@ -5,6 +5,7 @@ import { PinoLogger } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module.js';
 import { AppConfig } from './config/app-config.js';
 import { ConfigModule } from './config/config.module.js';
+import { CustomizationsModule } from './customizations/customizations.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module.js';
 import { EmailModule } from './email/email.module.js';
@@ -12,10 +13,13 @@ import { EventsModule } from './events/events.module.js';
 import { graphqlOptions } from './graphql/graphql.config.js';
 import { HealthModule } from './health/health.module.js';
 import { LoggingModule } from './logging/logging.module.js';
+import { Metrics } from './metrics/metrics.js';
+import { MetricsModule } from './metrics/metrics.module.js';
 import { RatesModule } from './rates/rates.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { ClientSettingsModule } from './settings/client-settings.module.js';
 import { StaffModule } from './staff/staff.module.js';
+import { ThrottlingModule } from './throttling/throttling.module.js';
 
 /**
  * Root module. Shared file: change it only in small, dedicated PRs.
@@ -26,16 +30,22 @@ import { StaffModule } from './staff/staff.module.js';
     // Infrastructure
     ConfigModule,
     LoggingModule,
+    MetricsModule,
     DatabaseModule,
     RedisModule,
     EventsModule,
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
-      inject: [AppConfig, PinoLogger],
+      inject: [AppConfig, PinoLogger, Metrics],
       useFactory: graphqlOptions,
     }),
     // Seams
+    // Before AuthModule: global guards run in import order, so a hidden endpoint answers NOT_FOUND
+    // whatever the caller's credentials.
+    CustomizationsModule,
     AuthModule,
+    // After AuthModule: global guards run in module order, and the throttler needs req.user.
+    ThrottlingModule,
     ClientSettingsModule,
     EmailModule,
     RatesModule,

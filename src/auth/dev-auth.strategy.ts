@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import type { AuthRequest, AuthStrategy } from './auth-strategy.js';
 import type { AuthUser } from './auth-user.js';
+import { UserKind, isStaffPermission } from './user-kind.js';
 
 const DEV_SCHEME = /^Dev\s+(.+)$/i;
 
@@ -37,5 +38,7 @@ export function parseDevCredentials(credentials: string): AuthUser {
     .split(',')
     .map((permission) => permission.trim())
     .filter(Boolean);
-  return { id, permissions: [...new Set(permissions)], strategy: 'dev' };
+  // The header has no user type until E1-13: a staff permission makes the dev user staff.
+  const kind = permissions.some(isStaffPermission) ? UserKind.STAFF : UserKind.CLIENT;
+  return { id, kind, permissions: [...new Set(permissions)], strategy: 'dev' };
 }

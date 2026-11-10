@@ -49,6 +49,125 @@ describe('validateEnv', () => {
   });
 });
 
+describe('validateEnv: EMAIL_PREVIEW_ENABLED', () => {
+  it('is off by default', () => {
+    expect(validateEnv({}).EMAIL_PREVIEW_ENABLED).toBe(false);
+  });
+
+  it('allows true on local and staging', () => {
+    expect(
+      validateEnv({ APP_ENV: 'local', EMAIL_PREVIEW_ENABLED: 'true' }).EMAIL_PREVIEW_ENABLED,
+    ).toBe(true);
+    expect(
+      validateEnv({ APP_ENV: 'staging', EMAIL_PREVIEW_ENABLED: 'true' }).EMAIL_PREVIEW_ENABLED,
+    ).toBe(true);
+  });
+
+  it.each(['kvitka-uat', 'wisla-uat'])('refuses true in %s', (appEnv) => {
+    expect(() => validateEnv({ APP_ENV: appEnv, EMAIL_PREVIEW_ENABLED: 'true' })).toThrow(
+      /EMAIL_PREVIEW_ENABLED/,
+    );
+    expect(
+      validateEnv({ APP_ENV: appEnv, EMAIL_PREVIEW_ENABLED: 'false' }).EMAIL_PREVIEW_ENABLED,
+    ).toBe(false);
+  });
+});
+
+describe('validateEnv: email', () => {
+  const SECRET = 'x'.repeat(32);
+  const KEY = 're_secret_key_value';
+  const deployedEnvs = ['staging', 'kvitka-uat', 'wisla-uat'];
+
+  it('defaults to smtp to the local Mailpit', () => {
+    expect(validateEnv({})).toMatchObject({
+      EMAIL_TRANSPORT: 'smtp',
+      SMTP_URL: 'smtp://localhost:1025',
+      EMAIL_FROM: 'no-reply@wallet.shatori.com',
+    });
+    expect(AppConfig.fromEnv({}).email).toEqual({
+      transport: 'smtp',
+      from: 'no-reply@wallet.shatori.com',
+      resendApiKey: undefined,
+      smtpUrl: 'smtp://localhost:1025',
+    });
+  });
+
+  it.each([{}, { RESEND_API_KEY: '' }])('requires RESEND_API_KEY for resend (%j)', (extra) => {
+    expect(() => validateEnv({ EMAIL_TRANSPORT: 'resend', ...extra })).toThrow(/RESEND_API_KEY/);
+  });
+
+  it('rejects a whitespace-only RESEND_API_KEY without echoing it', () => {
+    const blank = ' \t ';
+    let message = '';
+    try {
+      validateEnv({ EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: blank });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toMatch(/RESEND_API_KEY/);
+    expect(message).not.toContain(blank);
+  });
+
+  it('exposes the Resend key on AppConfig', () => {
+    const config = AppConfig.fromEnv({ EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: KEY });
+    expect(config.email.transport).toBe('resend');
+    expect(config.email.resendApiKey).toBe(KEY);
+  });
+
+  describe.each(deployedEnvs)('in production %s', (appEnv) => {
+    const base = { NODE_ENV: 'production', APP_ENV: appEnv, JWT_SECRET: SECRET };
+
+    it.each(['smtp', 'fake', undefined])('refuses transport %p', (transport) => {
+      expect(() => validateEnv({ ...base, EMAIL_TRANSPORT: transport })).toThrow(
+        /EMAIL_TRANSPORT.*resend/,
+      );
+    });
+
+    it('accepts resend with a key', () => {
+      expect(
+        validateEnv({ ...base, EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: KEY }).EMAIL_TRANSPORT,
+      ).toBe('resend');
+    });
+  });
+
+  it.each(['test', 'development'])('allows fake on staging with NODE_ENV=%s', (nodeEnv) => {
+    expect(
+      validateEnv({ NODE_ENV: nodeEnv, APP_ENV: 'staging', EMAIL_TRANSPORT: 'fake' })
+        .EMAIL_TRANSPORT,
+    ).toBe('fake');
+  });
+
+  it('allows smtp with APP_ENV=local even in production', () => {
+    expect(
+      validateEnv({
+        NODE_ENV: 'production',
+        APP_ENV: 'local',
+        JWT_SECRET: SECRET,
+        EMAIL_TRANSPORT: 'smtp',
+      }).EMAIL_TRANSPORT,
+    ).toBe('smtp');
+  });
+
+  it.each([
+    { EMAIL_FROM: 'not-an-email' },
+    { SMTP_URL: 'http://localhost:1025' },
+    { EMAIL_TRANSPORT: 'sendgrid' },
+  ])('rejects %j', (bad) => {
+    expect(() => validateEnv(bad)).toThrow();
+  });
+
+  it('never puts the API key in the error message', () => {
+    let message = '';
+    try {
+      validateEnv({ EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: KEY, EMAIL_FROM: 'bad' });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toMatch(/EMAIL_FROM/);
+    expect(message).not.toContain(KEY);
+  });
+});
+
 describe('validateEnv: JWT', () => {
   const SECRET = 'x'.repeat(32);
 
@@ -106,6 +225,32 @@ describe('validateEnv: JWT', () => {
   });
 });
 
+describe('validateEnv: throttling', () => {
+  const NAMES = [
+    'THROTTLE_TTL_SECONDS',
+    'THROTTLE_LIMIT_ANONYMOUS',
+    'THROTTLE_LIMIT_USER',
+  ] as const;
+
+  it('defaults to a 60 second window, 120 anonymous and 600 user requests', () => {
+    expect(validateEnv({})).toMatchObject({
+      THROTTLE_TTL_SECONDS: 60,
+      THROTTLE_LIMIT_ANONYMOUS: 120,
+      THROTTLE_LIMIT_USER: 600,
+    });
+  });
+
+  it.each(NAMES)('parses %s from a string', (name) => {
+    expect(validateEnv({ [name]: '30' })[name]).toBe(30);
+  });
+
+  describe.each(NAMES)('%s', (name) => {
+    it.each(['0', '-1', '1.5', 'abc'])('rejects %p', (value) => {
+      expect(() => validateEnv({ [name]: value })).toThrow(new RegExp(name));
+    });
+  });
+});
+
 describe('AppConfig', () => {
   it('exposes the current client and splits CORS origins', () => {
     const config = AppConfig.fromEnv({ CLIENT: 'wisla', CORS_ORIGINS: 'http://a, http://b' });
@@ -149,6 +294,22 @@ describe('AppConfig', () => {
       sessionTtlSeconds: 2_592_000,
     });
     expect(AppConfig.fromEnv({ JWT_SECRET: 'y'.repeat(32) }).jwt.secret).toBe('y'.repeat(32));
+  });
+
+  it('groups the rate-limit settings', () => {
+    expect(AppConfig.fromEnv({ THROTTLE_LIMIT_USER: '50' }).throttle).toEqual({
+      ttlSeconds: 60,
+      limitAnonymous: 120,
+      limitUser: 50,
+    });
+  });
+
+  it('allows METRICS_PORT=0 only in tests', () => {
+    expect(validateEnv({ NODE_ENV: 'test', METRICS_PORT: '0' }).METRICS_PORT).toBe(0);
+    expect(() => validateEnv({ NODE_ENV: 'production', METRICS_PORT: '0' })).toThrow(
+      /METRICS_PORT/,
+    );
+    expect(() => validateEnv({ METRICS_PORT: '0' })).toThrow(/METRICS_PORT/);
   });
 });
 

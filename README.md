@@ -71,24 +71,34 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
 Validated at startup (`src/config/env.schema.ts`); an invalid value stops the service with a clear message.
 See `.env.example`.
 
-| Variable                | Default                                            | Meaning                                                                                              |
-| ----------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PORT`                  | `3000`                                             | HTTP port                                                                                            |
-| `NODE_ENV`              | `development`                                      | `production` disables writing `schema.graphql`                                                       |
-| `APP_ENV`               | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                 |
-| `DATABASE_URL`          | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                       |
-| `REDIS_URL`             | `redis://localhost:6379`                           | Redis for events                                                                                     |
-| `CLIENT`                | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                             |
-| `DEV_AUTH`              | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT |
-| `CORS_ORIGINS`          | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                              |
-| `BACKOFFICE_URL`        | `http://localhost:5174`                            | Back office base URL (http or https), used in the links of staff emails                              |
-| `BOOTSTRAP_ADMIN_EMAIL` | empty                                              | Invite this admin on start when no admin exists in any status (ignored otherwise)                    |
-| `APP_VERSION`           | from `package.json`                                | Version reported by `health`                                                                         |
-| `LOG_LEVEL`             | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                              |
-| `JWT_SECRET`            | local-only value (`.env.example`)                  | HS256 secret shared with rates-service and treasury-service. Required with `NODE_ENV=production`     |
-| `JWT_ISSUER`            | `wallet-core`                                      | `iss` claim of the issued tokens                                                                     |
-| `JWT_ACCESS_TTL`        | `15m`                                              | Access token lifetime: `<number><s\|m\|h\|d>`                                                        |
-| `JWT_REFRESH_TTL`       | `30d`                                              | Session (refresh token) lifetime, counted from login                                                 |
+| Variable                   | Default                                            | Meaning                                                                                                  |
+| -------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `PORT`                     | `3000`                                             | HTTP port                                                                                                |
+| `METRICS_PORT`             | `9464`                                             | Internal port of `GET /metrics` (see [Metrics](#metrics)). Must differ from `PORT`                       |
+| `METRICS_HOST`             | `127.0.0.1` (Docker image: `0.0.0.0`)              | Address `GET /metrics` listens on                                                                        |
+| `NODE_ENV`                 | `development`                                      | `production` disables writing `schema.graphql`                                                           |
+| `APP_ENV`                  | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                     |
+| `DATABASE_URL`             | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                           |
+| `REDIS_URL`                | `redis://localhost:6379`                           | Redis for events and the email queue                                                                     |
+| `CLIENT`                   | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                                 |
+| `DEV_AUTH`                 | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT     |
+| `EMAIL_PREVIEW_ENABLED`    | `false`                                            | Serve email template previews at `/dev/email-preview`. Refused at startup when `APP_ENV` is a client UAT |
+| `EMAIL_TRANSPORT`          | `smtp`                                             | `resend`, `smtp` or `fake`. Production outside `local` requires `resend`                                 |
+| `EMAIL_FROM`               | `no-reply@wallet.shatori.com`                      | Sender address of all emails                                                                             |
+| `RESEND_API_KEY`           | unset                                              | Resend API key. Required with `EMAIL_TRANSPORT=resend`                                                   |
+| `SMTP_URL`                 | `smtp://localhost:1025`                            | SMTP server for `EMAIL_TRANSPORT=smtp` (`smtp:` or `smtps:`), Mailpit locally                            |
+| `CORS_ORIGINS`             | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                                  |
+| `BACKOFFICE_URL`           | `http://localhost:5174`                            | Back office base URL (http or https), used in the links of staff emails                                  |
+| `BOOTSTRAP_ADMIN_EMAIL`    | empty                                              | Invite this admin on start when no admin exists in any status (ignored otherwise)                        |
+| `APP_VERSION`              | from `package.json`                                | Version reported by `health`                                                                             |
+| `LOG_LEVEL`                | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                                  |
+| `JWT_SECRET`               | local-only value (`.env.example`)                  | HS256 secret shared with rates-service and treasury-service. Required with `NODE_ENV=production`         |
+| `JWT_ISSUER`               | `wallet-core`                                      | `iss` claim of the issued tokens                                                                         |
+| `JWT_ACCESS_TTL`           | `15m`                                              | Access token lifetime: `<number><s\|m\|h\|d>`                                                            |
+| `JWT_REFRESH_TTL`          | `30d`                                              | Session (refresh token) lifetime, counted from login                                                     |
+| `THROTTLE_TTL_SECONDS`     | `60`                                               | Length of the rate-limit window, in seconds                                                              |
+| `THROTTLE_LIMIT_ANONYMOUS` | `120`                                              | Requests per window without a token (counted per client IP)                                              |
+| `THROTTLE_LIMIT_USER`      | `600`                                              | Requests per window for a logged-in user or staff member (counted per id)                                |
 
 ## GraphQL contract
 
@@ -99,7 +109,67 @@ The schema is **code-first**: resolvers and `@ObjectType`s are the source of tru
 - `npm run start:dev` and the e2e tests regenerate it; `npm run schema:generate` does it without a database.
 - A PR that changes the API must include the regenerated `schema.graphql`. That diff is what consumers review.
 
-Current API: `health { service version appEnv client db redis }` (public) and `me { id permissions strategy }`.
+Current API: `health { service version appEnv client db redis }` (public) and `me { id kind permissions strategy }`.
+
+## Rate limits
+
+Every request that reaches a resolver or a controller is counted against a key, and once the limit is reached
+further requests are refused until the window ends. The global guard lives in `src/throttling` (`@nestjs/throttler`
+with our own Redis storage). It runs after `AuthGuard`, so it knows who the caller is.
+
+| Caller          | Key              | Default limit per window |
+| --------------- | ---------------- | ------------------------ |
+| Not logged in   | `ip:<client IP>` | 120                      |
+| Logged-in user  | `user:<id>`      | 600                      |
+| Logged-in staff | `staff:<id>`     | 600                      |
+
+The window is 60 seconds. Limits and window come from `THROTTLE_LIMIT_ANONYMOUS`, `THROTTLE_LIMIT_USER` and
+`THROTTLE_TTL_SECONDS` (see the environment variables above). To change a limit on an environment, set the variable
+there (the mentor does it in Dokploy) and redeploy.
+
+- **Fixed window.** The first request starts the window. Once the limit is exceeded, requests are refused until that
+  window ends: limit hit at 0:10 of a 60 s window means refused until 1:00, not until 1:10. `Retry-After` is the
+  number of seconds left in the window.
+- **One HTTP request counts once**, however many top-level fields a GraphQL request has.
+- **Shared and per service.** Counters live in Redis under `<APP_ENV>:throttle:<service>:<key>` (e.g.
+  `staging:throttle:wallet-core:user:42`), so all instances of a service share them and they survive a restart.
+  The service name in the key makes each service count on its own, although all backends share one Redis.
+- **Client IP.** Express trusts one proxy hop (`trust proxy = 1`, `src/configure-app.ts`, because Traefik is the
+  only proxy), so the IP is the last `X-Forwarded-For` entry. A client cannot invent a new IP by adding entries.
+- **Not counted:** `GET /health` (the controller is marked `@SkipThrottle()`), `GET /metrics` (its own HTTP server on
+  `METRICS_PORT`, outside Nest, so no guard runs) and everything that arrives over the WebSocket (subscriptions).
+  The GraphQL query `health` is counted like any other query.
+- **Known limits (follow-ups):** a guard runs only when a resolver or controller is about to be called, so these
+  requests are not counted: refused by `AuthGuard` (401) or `PermissionGuard` (403), GraphQL introspection
+  (`__schema`, `__type`), and GraphQL documents that cannot be parsed or fail validation.
+- **Logging.** Only the first refused request of a caller in a window is logged (`request throttled`), so a flood of
+  refused requests does not flood the logs.
+- **Redis down.** Requests pass without a limit and a warning is logged at most once a minute. The `X-RateLimit-*`
+  headers then show a full budget and mean nothing.
+- An allowed response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` (seconds left);
+  a refused one carries `Retry-After`.
+
+### Error format (the contract for frontends)
+
+GraphQL (the HTTP status stays 200, as for any GraphQL error):
+
+```json
+{
+  "errors": [
+    {
+      "message": "Too many requests, try again later",
+      "extensions": { "code": "TOO_MANY_REQUESTS", "retryAfterSeconds": 42 }
+    }
+  ]
+}
+```
+
+REST: status `429` and the header `Retry-After: 42`. In both cases the number is the seconds until the window ends;
+wait that long before retrying.
+
+| Code                | When                        | Extra fields        |
+| ------------------- | --------------------------- | ------------------- |
+| `TOO_MANY_REQUESTS` | the limit of the key is hit | `retryAfterSeconds` |
 
 ## Logging
 
@@ -129,6 +199,55 @@ this.logger.error({ err, conversionId }, 'conversion failed'); // pass errors as
 - **`LOG_LEVEL`**: `fatal`, `error`, `warn`, `info` (default), `debug`, `trace`, `silent` (e2e tests default to `silent`).
 - Do not use `console.*` or `new Logger()` from `@nestjs/common` in application code.
 
+## Metrics
+
+Prometheus metrics via [`prom-client`](https://github.com/siimon/prom-client) (`src/metrics/`). Alloy scrapes them
+every 15 s and Grafana shows them on the _Server_ and _Services_ dashboards (see the handbook's `metrics.md`).
+
+- **Where**: `GET /metrics` on its own small HTTP server on `METRICS_PORT` (default `9464`), not on `PORT`;
+  `GET /metrics` on the app port is a 404. If the port is busy, the service starts anyway and logs an error. Running
+  several backends from source, give each its own port (`METRICS_PORT=9465 npm run start:dev`).
+- **Who can reach it**: run directly on a machine, the server listens on `127.0.0.1` only (`METRICS_HOST`). The
+  Docker image sets `METRICS_HOST=0.0.0.0`: the port is not published, so only containers on the same Docker
+  network (Alloy, on the server: other apps on `dokploy-network`) reach it, never the internet. Traefik routes the
+  public domain to `PORT` only. Metrics carry no ids, amounts or secrets.
+- **Labels on every series**: `service` (`wallet-core`) and `env` (`APP_ENV`).
+
+| Metric                          | Type      | Labels              | Meaning                                                                   |
+| ------------------------------- | --------- | ------------------- | ------------------------------------------------------------------------- |
+| `http_requests_total`           | counter   | `operation, status` | HTTP requests, except `/health`, `/metrics` and CORS preflights           |
+| `http_request_duration_seconds` | histogram | `operation`         | Request duration; buckets 5 ms … 10 s                                     |
+| `graphql_errors_total`          | counter   | `operation, code`   | Failed GraphQL requests by the error code the client sees (once per code) |
+| `graphql_ws_connections`        | gauge     | —                   | Open GraphQL websocket connections                                        |
+| `events_published_total`        | counter   | `type`              | Events published through `EventPublisher`                                 |
+| `process_*`, `nodejs_*`         | default   | —                   | CPU, memory, heap, event-loop lag, GC, start time (prom-client defaults)  |
+
+- **`operation`**: the operation type and its first root field (`query me`, `mutation convert`), or the route of a
+  REST request (`POST /diagnostics/ping`). The client's own operation name is not used, because any client can
+  invent names and every new one would be a new time series. Unparsable GraphQL, requests that matched no route and
+  anything past the cap of 100 distinct values go into one bucket, `(unknown)`.
+- **Websocket operations**: they add to `graphql_errors_total` but not to `http_requests_total`, so an error ratio
+  for an operation that also runs over the websocket can go above 100%. A subscription counts a code once per event
+  that fails, not once per subscription. Errors raised before execution (parse, validation) are
+  `GRAPHQL_VALIDATION_FAILED` under `(unknown)`, as over HTTP.
+- **Adding a metric**: inject `Metrics` and create it once, in the constructor or factory, with bounded labels only:
+
+```ts
+constructor(@Inject(Metrics) metrics: Metrics) {
+  this.published = metrics.counter({
+    name: 'events_published_total',
+    help: 'Events published, by event type',
+    labelNames: ['type'],
+  });
+}
+
+this.published.inc({ type: name });
+```
+
+- **Label rules**: every distinct label value is a new time series in Prometheus. Never use user ids, request ids,
+  amounts, emails or free text as label values; those belong in logs.
+- **Check locally**: `curl localhost:9464/metrics`.
+
 ## Seams
 
 Seams let you write business logic now and swap the stand-in for the real thing later without touching that logic.
@@ -140,6 +259,8 @@ authentication unless it is marked `@Public()`.
 
 Real users send the access token from `login`: `Authorization: Bearer <jwt>`. `JwtAuthStrategy` verifies it
 locally (HS256 with `JWT_SECRET`, issuer, expiry, claims), the same way rates-service and treasury-service do.
+The token's `aud` says who it is for: `wallet` gives `user.kind = 'client'`, `backoffice` gives `'staff'`
+(`KIND_BY_AUDIENCE` in `src/auth/access-token.ts`). A token without a known `aud` gets 401.
 
 With `DEV_AUTH=true` the `DevAuthStrategy` also accepts:
 
@@ -151,12 +272,13 @@ Authorization: Dev 100:bo:users,bo:users:modify
 
 It works for HTTP, GraphQL queries/mutations and GraphQL subscriptions (send `{ "Authorization": "Dev 1:wallet" }`
 as graphql-ws `connectionParams`). With `DEV_AUTH=false` only the Bearer token is accepted.
+The header has no user type yet (E1-13): a `bo` or `bo:…` permission makes the dev user `staff`, else `client`.
 
 `DEV_AUTH=true` is allowed only with `APP_ENV=local` or `staging`; in a client UAT (`*-uat`) the service refuses to start.
 
 ```ts
 @Query(() => Balance)
-balance(@CurrentUser() user: AuthUser) { /* user.id, user.permissions */ }
+balance(@CurrentUser() user: AuthUser) { /* user.id, user.kind, user.permissions */ }
 
 @Public()
 @Query(() => PublicSettings)
@@ -220,7 +342,7 @@ apps (`publicSettings`); staff read and change all of them (`staffSettings`, `up
 ### Current client — `AppConfig`
 
 `AppConfig.client` is the `CLIENT` this deployment serves. Inject `AppConfig` instead of reading `process.env`.
-The client customization module (hooks, client-only endpoints) is a separate task.
+Client-specific behaviour (hooks, client-only endpoints and fields) is described in [CUSTOMIZATIONS.md](CUSTOMIZATIONS.md).
 
 ### Rates — `src/rates`
 
@@ -231,6 +353,45 @@ const { mid } = await this.rates.getRate('USD', 'UAH'); // '41.50000000'
 
 Bound to `FixedRatesClient` (fixed UAH/USD/EUR/PLN/USDT rates, exact cross rates via USD). When `rates-service`
 is live, bind the real client in `RatesModule`.
+
+### Email — `src/email`
+
+```ts
+constructor(private readonly email: EmailService) {}
+await this.email.send('staffInvitation', to, { link });
+```
+
+With `EMAIL_TRANSPORT=fake` (the default for tests) it is bound to `FakeEmailService`: it delivers nothing, keeps the
+last 1000 calls in `sent`, and logs only the template (never the link or recipient). In tests read recordings via
+`(app.get(EmailService) as FakeEmailService).sent`, or override `EmailService` with your own `FakeEmailService`
+instance. No BullMQ objects are created in fake mode.
+
+**Delivery.** With `EMAIL_TRANSPORT=resend|smtp`, `send()` only enqueues a job on the BullMQ queue `email` (Redis keys
+`<APP_ENV>:email:*`) and resolves once it is stored; if Redis does not answer within 5 s it rejects with
+`EmailEnqueueError`; such a send may still be delivered later if Redis comes back (the add can land late), so do not
+treat it as "definitely not sent". `EmailWorker` (5 concurrent jobs) renders the template and sends it through the transport with the
+idempotency key `<APP_ENV>/<job id>`, so a re-run does not duplicate mail on Resend. A failed send is retried up to
+8 attempts with exponential backoff (5 s, 10 s, 20 s, ...). A permanent transport error (`retryable: false`) fails the
+job at once. Failed jobs are kept for 48 hours (at most 1000). Logs carry job id, template and attempt, never the
+recipient, data or link.
+
+**Local delivery with Mailpit.** If `ops` does not start Mailpit yet, run it yourself
+(`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`), set `EMAIL_TRANSPORT=smtp` and `SMTP_URL=smtp://localhost:1025`
+(as in `.env.example`), then read the mail at http://localhost:8025.
+
+Notes: the e2e tests use the `staging:email` prefix on the local Redis, so they do not interfere with a local dev server (`local:email`).
+
+**Preview.** With `EMAIL_PREVIEW_ENABLED=true` (only `local` and `staging`; `.env.example` enables it) the service
+serves `GET /dev/email-preview` (list of templates) and `GET /dev/email-preview/<name>` (the rendered HTML with
+sample data). No authentication; with the flag off both answer 404.
+
+**Adding a template:**
+
+1. Add its data type to `EmailTemplates` in `src/email/email.service.ts`.
+2. Create `src/email/templates/<name>.ts` exporting a function that returns `Content` (`subject`, `text`, body).
+3. Register it in `builders` and `sampleData` in `src/email/templates/index.ts`.
+4. Check it in the preview at `/dev/email-preview/<name>`.
+5. Add a render test to `src/email/templates/render.spec.ts`.
 
 ### Events — `src/events`
 
@@ -262,11 +423,13 @@ src/
   permissions/   @RequirePermission + guard
   settings/      ClientSettingsService (settingsCatalog defaults + DB overrides) and the settings API
   rates/         RatesClient + FixedRatesClient
+  email/         EmailService contract, queue + worker, FakeEmailService
   events/        event catalog + publisher/subscriber
   health/        GET /health and `health` query
   config/        env validation + AppConfig
   database/      Knex (KNEX token)    redis/   ioredis (REDIS token)
   graphql/       Apollo options
+  metrics/       Prometheus registry, request metrics, GET /metrics on METRICS_PORT
 migrations/      Knex migrations (timestamped)
 test/            e2e tests
 schema.graphql   generated GraphQL contract (committed)

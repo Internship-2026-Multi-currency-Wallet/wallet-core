@@ -3,7 +3,7 @@ import { jest } from '@jest/globals';
 import { GraphQLError } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
-import { type EmailMessage, type EmailSender, EmailTemplate } from '../email/email-sender.js';
+import { EmailService, type EmailTemplate, type EmailTemplates } from '../email/email.service.js';
 import { StaffRole } from './permissions.js';
 import { StaffStatus } from './staff.model.js';
 import {
@@ -141,14 +141,27 @@ class FakeStaffRepository {
   }
 }
 
-class RecordingEmailSender implements EmailSender {
+type EmailMessage = {
+  template: EmailTemplate;
+  to: string;
+  data: EmailTemplates['staffInvitation'];
+};
+
+class RecordingEmailService extends EmailService {
   readonly sent: (EmailMessage & { duringTransaction: boolean })[] = [];
   failWith: (() => Promise<void>) | undefined;
 
-  constructor(private readonly repo: FakeStaffRepository) {}
+  constructor(private readonly repo: FakeStaffRepository) {
+    super();
+  }
 
-  send(message: EmailMessage): Promise<void> {
-    this.sent.push({ ...message, duringTransaction: this.repo.inTransaction });
+  send<T extends EmailTemplate>(template: T, to: string, data: EmailTemplates[T]): Promise<void> {
+    this.sent.push({
+      template,
+      to,
+      data: data as EmailMessage['data'],
+      duringTransaction: this.repo.inTransaction,
+    });
     return this.failWith ? this.failWith() : Promise.resolve();
   }
 }
@@ -158,7 +171,7 @@ const tokenOf = (message: EmailMessage) => new URL(message.data.link).searchPara
 
 function setup(backofficeUrl = 'https://bo.test', config?: AppConfig) {
   const repo = new FakeStaffRepository();
-  const email = new RecordingEmailSender(repo);
+  const email = new RecordingEmailService(repo);
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), setContext: jest.fn() };
   const service = new StaffService(
     repo as unknown as StaffRepository,
@@ -596,7 +609,7 @@ describe('StaffService invitation emails', () => {
 
     expect(email.sent).toHaveLength(1);
     const [message] = email.sent;
-    expect(message.template).toBe(EmailTemplate.StaffInvitation);
+    expect(message.template).toBe('staffInvitation');
     expect(message.to).toBe('new@test.com');
     expect(message.data.link).toMatch(/^https:\/\/bo\.test\/accept-invitation\?token=[\w-]{43}$/);
     expect(sha256(tokenOf(message))).toBe(repo.invitations[0].tokenHash);

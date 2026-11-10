@@ -10,7 +10,7 @@
 import type { ApolloServerPlugin } from '@apollo/server';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Logger } from 'pino';
-import { type GraphqlOperationInfo, requestIdFrom } from './logger.options.js';
+import { type GraphqlOperationInfo, REDACTED, requestIdFrom } from './logger.options.js';
 
 interface GraphqlContext {
   req?: { graphqlOperation?: GraphqlOperationInfo; log?: Logger };
@@ -28,7 +28,43 @@ const CLIENT_ERROR_CODES = new Set([
   'OPERATION_RESOLUTION_FAILURE',
 ]);
 
-export function graphqlLoggingPlugin(): ApolloServerPlugin<GraphqlContext> {
+/**
+ * GraphQL's coercion errors quote the value, which can be a whole row: a resolver returning a user
+ * for a String field gives `String cannot represent value: { passwordHash: "…" }`.
+ */
+const COERCED_VALUE = /(cannot represent [^:]*value): .*$/s;
+
+/**
+ * Everything after it is hidden: the client's variable (password included) is quoted there, and
+ * the reason after it can quote it again, so no part of that text can be trusted to be safe.
+ */
+const VARIABLE_VALUE = /(got invalid value ).*$/s;
+
+function withoutValue(text: string): string {
+  return text.replace(VARIABLE_VALUE, `$1${REDACTED}`).replace(COERCED_VALUE, `$1: ${REDACTED}`);
+}
+
+/**
+ * A copy, because the same error then goes to formatError and a client error's message reaches
+ * the client.
+ */
+function loggableError(error: Error): Error {
+  const message = withoutValue(error.message);
+  if (message === error.message) return error;
+  const copy = Object.assign(Object.create(Object.getPrototypeOf(error) as object) as Error, error);
+  copy.message = message;
+  copy.stack = error.stack?.replace(error.message, () => message);
+  return copy;
+}
+
+export interface GraphqlLoggingOptions {
+  clientErrorCodes?: readonly string[];
+}
+
+export function graphqlLoggingPlugin({
+  clientErrorCodes = [],
+}: GraphqlLoggingOptions = {}): ApolloServerPlugin<GraphqlContext> {
+  const clientCodes = new Set([...CLIENT_ERROR_CODES, ...clientErrorCodes]);
   return {
     requestDidStart() {
       return Promise.resolve({
@@ -55,17 +91,18 @@ export function graphqlLoggingPlugin(): ApolloServerPlugin<GraphqlContext> {
                   ? `HTTP_${status}`
                   : 'INTERNAL_SERVER_ERROR';
             const clientError =
-              CLIENT_ERROR_CODES.has(code) ||
+              clientCodes.has(code) ||
               (typeof status === 'number' && status >= 400 && status < 500);
             const fields = {
               context: 'GraphQL',
               operation: operationName ?? null,
               code,
               path: error.path?.join('.'),
-              ...(clientError ? {} : { err: error.originalError ?? error }),
+              ...(clientError ? {} : { err: loggableError(error.originalError ?? error) }),
             };
-            if (clientError) log.warn(fields, `GraphQL error: ${error.message}`);
-            else log.error(fields, `GraphQL error: ${error.message}`);
+            const msg = `GraphQL error: ${withoutValue(error.message)}`;
+            if (clientError) log.warn(fields, msg);
+            else log.error(fields, msg);
           }
           return Promise.resolve();
         },

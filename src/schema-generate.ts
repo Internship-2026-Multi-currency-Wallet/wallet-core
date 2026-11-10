@@ -9,6 +9,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 
 process.env.NODE_ENV = 'development';
+process.env.EMAIL_TRANSPORT = 'fake';
 const app = await NestFactory.create(AppModule, { logger: ['error', 'warn'] });
 await app.init();
 await app.close();

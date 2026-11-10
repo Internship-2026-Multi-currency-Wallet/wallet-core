@@ -52,10 +52,20 @@ export const envSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     APP_ENV: z.enum(APP_ENVS).default('local'),
     PORT: z.coerce.number().int().positive().default(3000),
+    METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(9464),
+    METRICS_HOST: z.string().min(1).default('127.0.0.1'),
     DATABASE_URL: z.url().default('mysql://wallet:wallet@localhost:3306/wallet_core'),
     REDIS_URL: z.url().default('redis://localhost:6379'),
     CLIENT: z.enum(KNOWN_CLIENTS).default('demo'),
     DEV_AUTH: booleanFromString,
+    EMAIL_PREVIEW_ENABLED: booleanFromString,
+    EMAIL_TRANSPORT: z.enum(['resend', 'smtp', 'fake']).default('smtp'),
+    EMAIL_FROM: z.email().default('no-reply@wallet.shatori.com'),
+    RESEND_API_KEY: z.string().trim().min(1).optional(),
+    SMTP_URL: z
+      .url()
+      .refine((value) => /^smtps?:\/\//i.test(value), 'must use the smtp: or smtps: scheme')
+      .default('smtp://localhost:1025'),
     CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174'),
     BACKOFFICE_URL: z
       .url({ protocol: /^https?$/ })
@@ -71,6 +81,9 @@ export const envSchema = z
     JWT_ACCESS_TTL: durationInSeconds('15m'),
     // Lifetime of a session (refresh token), counted from login.
     JWT_REFRESH_TTL: durationInSeconds('30d'),
+    THROTTLE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+    THROTTLE_LIMIT_ANONYMOUS: z.coerce.number().int().positive().default(120),
+    THROTTLE_LIMIT_USER: z.coerce.number().int().positive().default(600),
   })
   .superRefine((env, ctx) => {
     // Every deployed image runs with NODE_ENV=production, so a server cannot fall back to the
@@ -89,11 +102,52 @@ export const envSchema = z
         message: 'must not be the local-only secret in production',
       });
     }
+    // 0 is a random port that Alloy cannot scrape; only the e2e tests use it.
+    if (env.METRICS_PORT === 0 && env.NODE_ENV !== 'test') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['METRICS_PORT'],
+        message: 'must be between 1 and 65535 (0 is only allowed when NODE_ENV=test)',
+      });
+    }
+    if (env.METRICS_PORT === env.PORT) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['METRICS_PORT'],
+        message: 'must differ from PORT: /metrics must never be served on the public app port',
+      });
+    }
     if (env.DEV_AUTH && !isDevAuthAllowed(env.APP_ENV)) {
       ctx.addIssue({
         code: 'custom',
         path: ['DEV_AUTH'],
         message: `DEV_AUTH=true is not allowed in client environment "${env.APP_ENV}" (only local and staging)`,
+      });
+    }
+    if (env.EMAIL_TRANSPORT === 'resend' && env.RESEND_API_KEY === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['RESEND_API_KEY'],
+        message: 'is required when EMAIL_TRANSPORT=resend',
+      });
+    }
+    // Fail closed: an unset transport (default smtp) in a deployed environment is refused too.
+    if (
+      env.NODE_ENV === 'production' &&
+      env.APP_ENV !== 'local' &&
+      env.EMAIL_TRANSPORT !== 'resend'
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['EMAIL_TRANSPORT'],
+        message: `deployed environments (APP_ENV="${env.APP_ENV}") must use resend`,
+      });
+    }
+    if (env.EMAIL_PREVIEW_ENABLED && env.APP_ENV.endsWith('-uat')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['EMAIL_PREVIEW_ENABLED'],
+        message: `EMAIL_PREVIEW_ENABLED=true is not allowed in client environment "${env.APP_ENV}" (only local and staging)`,
       });
     }
   });

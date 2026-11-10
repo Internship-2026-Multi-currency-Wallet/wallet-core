@@ -1,6 +1,7 @@
 import { type ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { RequestLike } from '../auth/request-context.js';
+import { UserKind } from '../auth/user-kind.js';
 import { PermissionGuard } from './permission.guard.js';
 import { RequirePermission } from './require-permission.decorator.js';
 
@@ -16,6 +17,14 @@ class OpenController {
   anything(): void {}
 }
 
+class WalletController {
+  @RequirePermission('wallet')
+  balance(): void {}
+
+  @RequirePermission('bonus')
+  bonus(): void {}
+}
+
 function context(cls: new () => object, handler: string, request: RequestLike): ExecutionContext {
   return {
     getType: () => 'http',
@@ -27,7 +36,12 @@ function context(cls: new () => object, handler: string, request: RequestLike): 
 
 const user = (...permissions: string[]): RequestLike => ({
   headers: {},
-  user: { id: '1', permissions, strategy: 'dev' },
+  user: { id: '1', kind: UserKind.STAFF, permissions, strategy: 'dev' },
+});
+
+const client = (...permissions: string[]): RequestLike => ({
+  headers: {},
+  user: { id: '1', kind: UserKind.CLIENT, permissions, strategy: 'jwt' },
 });
 
 describe('PermissionGuard', () => {
@@ -51,6 +65,28 @@ describe('PermissionGuard', () => {
     expect(
       guard.canActivate(context(UsersController, 'block', user('bo:users', 'bo:users:modify'))),
     ).toBe(true);
+  });
+
+  describe('staff endpoints', () => {
+    it('refuses a client that somehow has the staff permission', () => {
+      expect(() => guard.canActivate(context(UsersController, 'list', client('bo:users')))).toThrow(
+        'Staff only',
+      );
+    });
+
+    it('still names the missing permission when the client does not have it', () => {
+      expect(() => guard.canActivate(context(UsersController, 'list', client('wallet')))).toThrow(
+        'Missing permission: bo:users',
+      );
+    });
+
+    it('lets a client through a client endpoint', () => {
+      expect(guard.canActivate(context(WalletController, 'balance', client('wallet')))).toBe(true);
+    });
+
+    it('does not take a permission that only starts with "bo" as a staff one', () => {
+      expect(guard.canActivate(context(WalletController, 'bonus', client('bonus')))).toBe(true);
+    });
   });
 
   it('returns 401 when there is no user at all', () => {

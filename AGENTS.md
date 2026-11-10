@@ -22,9 +22,13 @@ TypeScript 6, Node 26. Read `README.md` first.
   message second: `logger.info({ conversionId, userId }, 'conversion booked')`; errors as `{ err }`. Include the
   context fields a reader needs (ids, amounts, states). Never log secrets, tokens, passwords, full requests or
   bodies. No `console.*` and no `new Logger()` from `@nestjs/common`. `requestId` is added automatically.
+- **Metrics:** inject `Metrics` and create a metric once (`metrics.counter({ name, help, labelNames })`). Label values
+  must be bounded: never user ids, request ids, amounts or free text (each distinct value is a new time series).
+  See the README section "Metrics".
 - **Database:** Knex via the `KNEX` token. Schema changes only through new timestamped migrations
   (`npm run migrate:make -- <name>`); never edit a merged migration. Migrations use `import type` only.
 - **Money:** integers in minor units; rates as decimal strings. Never floating point.
+- **Comments:** only explain a non-obvious why. Don't restate the code or list the fields below.
 - **Imports:** relative ESM imports with a `.js` extension (`./foo.service.js`).
 - **Tests are required:** unit tests next to the code (`*.spec.ts`, import `jest` from `@jest/globals`);
   e2e tests in `test/` for API behaviour. Run before finishing:

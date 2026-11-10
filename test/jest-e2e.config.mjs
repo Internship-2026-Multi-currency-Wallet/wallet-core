@@ -12,6 +12,6 @@ export default {
   transform: {
     '^.+\\.ts$': ['ts-jest', { useESM: true, tsconfig: '<rootDir>/tsconfig.json' }],
   },
-  setupFiles: ['<rootDir>/test/setup-env.ts'],
+  setupFiles: ['<rootDir>/test/preload-nest.ts', '<rootDir>/test/setup-env.ts'],
   testTimeout: 30000,
 };

@@ -18,7 +18,8 @@ RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 FROM node:26-alpine AS runtime
 ENV NODE_ENV=production \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
-    PORT=3000
+    PORT=3000 \
+    METRICS_HOST=0.0.0.0
 WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist

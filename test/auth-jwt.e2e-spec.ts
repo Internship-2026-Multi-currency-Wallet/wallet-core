@@ -25,7 +25,8 @@ describe('access token (e2e, DEV_AUTH=false)', () => {
     if (authorization) req.set('Authorization', authorization);
     return (await req.send({ query })).body as GqlBody;
   };
-  const me = (authorization?: string) => gql('{ me { id permissions strategy } }', authorization);
+  const me = (authorization?: string) =>
+    gql('{ me { id kind permissions strategy } }', authorization);
 
   beforeAll(async () => {
     app = await createApp({ DEV_AUTH: 'false' });
@@ -53,7 +54,7 @@ describe('access token (e2e, DEV_AUTH=false)', () => {
 
   it('authenticates a request with the access token from login', async () => {
     await expect(me(`Bearer ${accessToken}`)).resolves.toEqual({
-      data: { me: { id: userId, permissions: ['wallet'], strategy: 'jwt' } },
+      data: { me: { id: userId, kind: 'CLIENT', permissions: ['wallet'], strategy: 'jwt' } },
     });
   });
 
@@ -67,13 +68,50 @@ describe('access token (e2e, DEV_AUTH=false)', () => {
     expect(body.errors?.[0].extensions.code).toBe('UNAUTHENTICATED');
   });
 
-  it('is UNAUTHENTICATED with an expired token', async () => {
-    const iat = Math.floor(Date.now() / 1000) - 20 * 60;
-    const expired = new JwtService().sign(
-      { sub: userId, permissions: ['wallet'], iss: 'wallet-core', iat, exp: iat + 15 * 60 },
-      { secret: LOCAL_JWT_SECRET, algorithm: 'HS256' },
-    );
-    const body = await me(`Bearer ${expired}`);
+  /** A token signed like wallet-core's, with some claims changed. */
+  const signed = (claims: Record<string, unknown>): string => {
+    const iat = Math.floor(Date.now() / 1000);
+    const payload = {
+      sub: userId,
+      aud: 'wallet',
+      permissions: ['wallet'],
+      iss: 'wallet-core',
+      iat,
+      exp: iat + 15 * 60,
+      ...claims,
+    };
+    const defined = Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined));
+    return new JwtService().sign(defined, { secret: LOCAL_JWT_SECRET, algorithm: 'HS256' });
+  };
+
+  // staffLogin is not there yet, so the staff token is signed by hand.
+  it('returns STAFF for a back-office token', async () => {
+    const body = await me(`Bearer ${signed({ aud: 'backoffice', permissions: ['bo'] })}`);
+    expect(body.data?.me).toMatchObject({ kind: 'STAFF', permissions: ['bo'] });
+  });
+
+  it.each([
+    ['an expired token', () => ({ exp: Math.floor(Date.now() / 1000) - 5 * 60 })],
+    ['a token without aud', () => ({ aud: undefined })],
+    ['a token with an unknown aud', () => ({ aud: 'admin' })],
+  ])('is UNAUTHENTICATED with %s', async (_case, claims) => {
+    const body = await me(`Bearer ${signed(claims())}`);
     expect(body.errors?.[0].extensions.code).toBe('UNAUTHENTICATED');
+  });
+
+  describe('a staff endpoint (staffSettings requires bo:settings)', () => {
+    const staffSettings = (claims: Record<string, unknown>) =>
+      gql('{ staffSettings { key } }', `Bearer ${signed(claims)}`);
+
+    it('is FORBIDDEN for a client token, even with the staff permission', async () => {
+      const body = await staffSettings({ aud: 'wallet', permissions: ['bo:settings'] });
+      expect(body.errors?.[0].extensions.code).toBe('FORBIDDEN');
+    });
+
+    it('works for a back-office token with the permission', async () => {
+      const body = await staffSettings({ aud: 'backoffice', permissions: ['bo:settings'] });
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.staffSettings).toEqual(expect.any(Array));
+    });
   });
 });

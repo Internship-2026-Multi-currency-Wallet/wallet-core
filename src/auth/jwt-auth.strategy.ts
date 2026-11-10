@@ -2,7 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService, TokenExpiredError } from '@nestjs/jwt';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
-import { accessTokenPayloadSchema } from './access-token.js';
+import { KIND_BY_AUDIENCE, accessTokenPayloadSchema } from './access-token.js';
 import type { AuthRequest, AuthStrategy } from './auth-strategy.js';
 import type { AuthUser } from './auth-user.js';
 
@@ -48,6 +48,8 @@ export class JwtAuthStrategy implements AuthStrategy {
 
     return {
       id: payload.data.sub,
+      // From aud only, never from the permissions: a client token with "bo" is still a client.
+      kind: KIND_BY_AUDIENCE[payload.data.aud],
       permissions: [...new Set(payload.data.permissions)],
       strategy: this.name,
     };

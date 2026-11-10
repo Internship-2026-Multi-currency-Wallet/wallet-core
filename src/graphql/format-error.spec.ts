@@ -1,6 +1,14 @@
-import { UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  InternalServerErrorException,
+  NotFoundException,
+  UnauthorizedException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { GraphQLError, buildSchema, graphqlSync } from 'graphql';
-import { formatError } from './format-error.js';
+import { formatError, formatExecutionResult } from './format-error.js';
 
 /** What Apollo does with an error thrown in a resolver: wraps it with the path. */
 function thrownInResolver(error: Error): GraphQLError {
@@ -63,5 +71,124 @@ describe('formatError', () => {
       path: ['me'],
       extensions: { code: 'INTERNAL_SERVER_ERROR' },
     });
+  });
+});
+
+describe('formatError: HTTP 404', () => {
+  const location = { line: 2, column: 3 };
+
+  it.each([
+    ['NotFoundException', new NotFoundException('Customization not found')],
+    ['HttpException with status 404', new HttpException('Customization not found', 404)],
+  ])('maps %s to NOT_FOUND over http, replacing the code @nestjs/apollo gave it', (_name, exc) => {
+    const error = thrownInResolver(exc);
+    // Approximates the NotFoundException case: @nestjs/apollo's INTERNAL_SERVER_ERROR + status 404.
+    // A plain HttpException('x', 404) would arrive with Apollo's default code and no status.
+    const formatted = {
+      message: 'Customization not found',
+      locations: [location],
+      path: ['register'],
+      extensions: { code: 'INTERNAL_SERVER_ERROR', status: 404, stacktrace: ['at ...'] },
+    };
+
+    expect(formatError(formatted, error)).toEqual({
+      message: 'Customization not found',
+      locations: [location],
+      path: ['register'],
+      extensions: { code: 'NOT_FOUND', status: 404, stacktrace: ['at ...'] },
+    });
+  });
+
+  it('maps a 404 whose formatted error has no extensions', () => {
+    const error = thrownInResolver(new NotFoundException('Nope'));
+    expect(formatError({ message: 'Nope', path: ['register'] }, error)).toEqual({
+      message: 'Nope',
+      path: ['register'],
+      extensions: { code: 'NOT_FOUND' },
+    });
+  });
+
+  it('keeps the path and locations of the original error', () => {
+    const schema = buildSchema('type Query { customization: String }');
+    const result = graphqlSync({
+      schema,
+      source: '{\n  customization\n}',
+      rootValue: {
+        customization: () => {
+          throw new NotFoundException('Customization not found');
+        },
+      },
+    });
+    const [error] = result.errors ?? [];
+
+    const formatted = formatError(error.toJSON(), error);
+    expect(formatted.path).toEqual(['customization']);
+    expect(formatted.locations).toEqual([{ line: 2, column: 3 }]);
+    expect(formatted.extensions?.code).toBe('NOT_FOUND');
+  });
+
+  it.each([
+    ['400', new BadRequestException('bad'), 'BAD_REQUEST'],
+    ['401', new UnauthorizedException(), 'UNAUTHENTICATED'],
+    ['403', new ForbiddenException(), 'FORBIDDEN'],
+    ['422', new UnprocessableEntityException(), 'BAD_USER_INPUT'],
+    ['500', new InternalServerErrorException(), 'INTERNAL_SERVER_ERROR'],
+  ])('leaves a %s HttpException unchanged', (_status, exc, code) => {
+    const formatted = { message: exc.message, extensions: { code } };
+    expect(formatError(formatted, thrownInResolver(exc))).toBe(formatted);
+  });
+
+  it('still masks a raw error that merely mentions 404', () => {
+    const error = thrownInResolver(new Error('select * from `secrets` - 404'));
+    expect(formatError({ message: error.message, path: ['register'] }, error)).toEqual({
+      message: 'Internal server error',
+      path: ['register'],
+      extensions: { code: 'INTERNAL_SERVER_ERROR' },
+    });
+  });
+
+  it('keeps the code of a GraphQLError that already carries NOT_FOUND', () => {
+    const error = new GraphQLError('Missing', { extensions: { code: 'NOT_FOUND' } });
+    const formatted = error.toJSON();
+    expect(formatError(formatted, error)).toBe(formatted);
+  });
+});
+
+describe('formatExecutionResult', () => {
+  it('maps a wrapped NotFoundException to NOT_FOUND', () => {
+    const error = new GraphQLError('Customization not found', {
+      path: ['register'],
+      originalError: new NotFoundException('Customization not found'),
+    });
+
+    expect(formatExecutionResult({ data: null, errors: [error] })).toEqual({
+      data: null,
+      errors: [
+        {
+          message: 'Customization not found',
+          path: ['register'],
+          extensions: { code: 'NOT_FOUND' },
+        },
+      ],
+    });
+  });
+
+  it('still masks an unexpected error', () => {
+    const error = new GraphQLError('boom: select 1', {
+      path: ['register'],
+      originalError: new Error('boom: select 1'),
+    });
+
+    expect(formatExecutionResult({ data: null, errors: [error] })?.errors).toEqual([
+      {
+        message: 'Internal server error',
+        path: ['register'],
+        extensions: { code: 'INTERNAL_SERVER_ERROR' },
+      },
+    ]);
+  });
+
+  it('leaves a result without errors unchanged', () => {
+    expect(formatExecutionResult({ data: { ok: true } })).toBeUndefined();
   });
 });

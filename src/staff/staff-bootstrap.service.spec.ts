@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import type { PinoLogger } from 'nestjs-pino';
 import type { AppConfig } from '../config/app-config.js';
-import { type EmailMessage, EmailTemplate } from '../email/email-sender.js';
+import { FakeEmailService, type SentEmail } from '../email/fake-email.service.js';
 import { StaffRole } from './permissions.js';
 import { StaffStatus } from './staff.model.js';
 import {
@@ -98,18 +98,14 @@ class FakeRepo {
 
 function setup(bootstrapAdminEmail?: string) {
   const repo = new FakeRepo();
-  const sent: EmailMessage[] = [];
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), setContext: jest.fn() };
+  const email = new FakeEmailService(logger as unknown as PinoLogger);
+  const sent = email.sent;
   const config = { backofficeUrl: 'https://bo.test', bootstrapAdminEmail } as AppConfig;
   const service = new StaffService(
     repo as unknown as StaffRepository,
     logger as unknown as PinoLogger,
-    {
-      send: (m: EmailMessage) => {
-        sent.push(m);
-        return Promise.resolve();
-      },
-    },
+    email,
     config,
   );
   const bootstrap = new StaffBootstrapService(
@@ -121,7 +117,7 @@ function setup(bootstrapAdminEmail?: string) {
   return { bootstrap, repo, sent, logger };
 }
 
-const tokenOf = (m: EmailMessage) => new URL(m.data.link).searchParams.get('token')!;
+const tokenOf = (m: SentEmail) => new URL(m.data.link).searchParams.get('token')!;
 const allLogs = (logger: ReturnType<typeof setup>['logger']) =>
   JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls, logger.error.mock.calls]);
 
@@ -141,7 +137,7 @@ describe('StaffBootstrapService.onApplicationBootstrap', () => {
     expect(repo.invitations).toHaveLength(1);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
-      template: EmailTemplate.StaffInvitation,
+      template: 'staffInvitation',
       to: 'admin@test.com',
     });
     expect(logger.info).toHaveBeenCalledWith(

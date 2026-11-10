@@ -5,8 +5,10 @@ import { Me } from './me.model.js';
 
 @Resolver(() => Me)
 export class MeResolver {
-  @Query(() => Me, { description: 'The current user. Requires authentication.' })
+  @Query(() => Me, {
+    description: 'The current user (a client or a staff member). Requires authentication.',
+  })
   me(@CurrentUser() user: AuthUser): Me {
-    return { id: user.id, permissions: user.permissions, strategy: user.strategy };
+    return { id: user.id, kind: user.kind, permissions: user.permissions, strategy: user.strategy };
   }
 }

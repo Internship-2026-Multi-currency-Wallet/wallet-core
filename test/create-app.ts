@@ -1,9 +1,12 @@
 import { Controller, Get, type INestApplication, Module } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module.js';
 import type { AuthUser } from '../src/auth/auth-user.js';
 import { CurrentUser } from '../src/auth/current-user.decorator.js';
 import { AppConfig } from '../src/config/app-config.js';
+import { configureApp } from '../src/configure-app.js';
+import { useRequestMetrics } from '../src/metrics/request-metrics.js';
 import { RequirePermission } from '../src/permissions/require-permission.decorator.js';
 
 /** HTTP-only test endpoints (kept out of the GraphQL schema on purpose). */
@@ -30,7 +33,11 @@ export async function createApp(env: Record<string, string> = {}): Promise<INest
     .overrideProvider(AppConfig)
     .useValue(AppConfig.fromEnv({ ...process.env, ...env }))
     .compile();
-  const app = moduleRef.createNestApplication({ logger: ['error', 'warn'] });
+  const app = moduleRef.createNestApplication<NestExpressApplication>({
+    logger: ['error', 'warn'],
+  });
+  configureApp(app);
+  useRequestMetrics(app);
   await app.init();
   return app;
 }
