@@ -87,11 +87,14 @@ export class GlobalThrottlerGuard extends ThrottlerGuard {
     context: ExecutionContext,
     detail: ThrottlerLimitDetail,
   ): Promise<void> {
-    const { req } = this.getRequestResponse(context);
-    const caller = req.user
-      ? { keyType: keyType(req.user), userId: req.user.id }
-      : { keyType: 'ip', ip: req.ip };
-    this.pinoLogger.warn(caller, 'request throttled');
+    // Only the first refusal in a window is logged, so a flood of refused requests does not flood the logs.
+    if (detail.totalHits === detail.limit + 1) {
+      const { req } = this.getRequestResponse(context);
+      const caller = req.user
+        ? { keyType: keyType(req.user), userId: req.user.id }
+        : { keyType: 'ip', ip: req.ip };
+      this.pinoLogger.warn(caller, 'request throttled');
+    }
 
     if (context.getType<string>() === 'graphql') {
       return Promise.reject(tooManyRequestsError(detail.timeToBlockExpire));

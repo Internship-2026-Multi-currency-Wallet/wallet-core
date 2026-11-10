@@ -133,7 +133,10 @@ there (the mentor does it in Dokploy) and redeploy.
 - **Known limits (follow-ups):** a guard runs only when a resolver or controller is about to be called, so these
   requests are not counted: refused by `AuthGuard` (401) or `PermissionGuard` (403), GraphQL introspection
   (`__schema`, `__type`), and GraphQL documents that cannot be parsed or fail validation.
-- **Redis down.** Requests pass without a limit and a warning is logged at most once a minute.
+- **Logging.** Only the first refused request of a caller in a window is logged (`request throttled`), so a flood of
+  refused requests does not flood the logs.
+- **Redis down.** Requests pass without a limit and a warning is logged at most once a minute. The `X-RateLimit-*`
+  headers then show a full budget and mean nothing.
 - An allowed response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` (seconds left);
   a refused one carries `Retry-After`.
 

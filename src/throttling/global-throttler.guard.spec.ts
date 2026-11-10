@@ -197,7 +197,8 @@ describe('GlobalThrottlerGuard', () => {
   describe('refusal', () => {
     it('throws a TOO_MANY_REQUESTS GraphQL error with retryAfterSeconds, and warns once per request', async () => {
       const { guard, storage, logger, res } = await readyGuard();
-      storage.increment.mockResolvedValue(BLOCKED);
+      // limitUser is 7, so the 8th hit is the first refusal in the window.
+      storage.increment.mockResolvedValue({ ...BLOCKED, totalHits: 8 });
       const req = request({ user: user('42', UserKind.CLIENT) });
 
       const outcomes = await Promise.allSettled([
@@ -234,6 +235,17 @@ describe('GlobalThrottlerGuard', () => {
         'request throttled',
       );
       expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(TOKEN);
+    });
+
+    it('refuses later requests in the same window without warning again', async () => {
+      const { guard, storage, logger, res } = await readyGuard();
+      // limitAnonymous is 3: the 4th hit was the first refusal and was logged then.
+      storage.increment.mockResolvedValue({ ...BLOCKED, totalHits: 5 });
+
+      await expect(guard.canActivate(graphqlContext(request(), res))).rejects.toBeInstanceOf(
+        GraphQLError,
+      );
+      expect(logger.warn).not.toHaveBeenCalled();
     });
   });
 
