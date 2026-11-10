@@ -105,8 +105,7 @@ export const envSchema = z
         message: 'must not be the local-only secret in production',
       });
     }
-    // Tied to NODE_ENV, not APP_ENV: APP_ENV defaults to local, which would switch the check off
-    // exactly when it was forgotten. A localhost link in an invitation email is useless.
+    // Use NODE_ENV because APP_ENV defaults to local and could silently bypass production validation when omitted.
     if (env.NODE_ENV === 'production') {
       if (env.BACKOFFICE_URL === undefined) {
         ctx.addIssue({
