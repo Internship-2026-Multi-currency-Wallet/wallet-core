@@ -80,6 +80,10 @@ See `.env.example`.
 | `CLIENT`                | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                                 |
 | `DEV_AUTH`              | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT     |
 | `EMAIL_PREVIEW_ENABLED` | `false`                                            | Serve email template previews at `/dev/email-preview`. Refused at startup when `APP_ENV` is a client UAT |
+| `EMAIL_TRANSPORT`       | `smtp`                                             | `resend`, `smtp` or `fake`. Production outside `local` requires `resend`                                 |
+| `EMAIL_FROM`            | `no-reply@wallet.shatori.com`                      | Sender address of all emails                                                                             |
+| `RESEND_API_KEY`        | unset                                              | Resend API key. Required with `EMAIL_TRANSPORT=resend`                                                   |
+| `SMTP_URL`              | `smtp://localhost:1025`                            | SMTP server for `EMAIL_TRANSPORT=smtp` (`smtp:` or `smtps:`), Mailpit locally                            |
 | `CORS_ORIGINS`          | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                                  |
 | `APP_VERSION`           | from `package.json`                                | Version reported by `health`                                                                             |
 | `LOG_LEVEL`             | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                                  |

@@ -73,6 +73,89 @@ describe('validateEnv: EMAIL_PREVIEW_ENABLED', () => {
   });
 });
 
+describe('validateEnv: email', () => {
+  const SECRET = 'x'.repeat(32);
+  const KEY = 're_secret_key_value';
+  const deployedEnvs = ['staging', 'kvitka-uat', 'wisla-uat'];
+
+  it('defaults to smtp to the local Mailpit', () => {
+    expect(validateEnv({})).toMatchObject({
+      EMAIL_TRANSPORT: 'smtp',
+      SMTP_URL: 'smtp://localhost:1025',
+      EMAIL_FROM: 'no-reply@wallet.shatori.com',
+    });
+    expect(AppConfig.fromEnv({}).email).toEqual({
+      transport: 'smtp',
+      from: 'no-reply@wallet.shatori.com',
+      resendApiKey: undefined,
+      smtpUrl: 'smtp://localhost:1025',
+    });
+  });
+
+  it.each([{}, { RESEND_API_KEY: '' }])('requires RESEND_API_KEY for resend (%j)', (extra) => {
+    expect(() => validateEnv({ EMAIL_TRANSPORT: 'resend', ...extra })).toThrow(/RESEND_API_KEY/);
+  });
+
+  it('exposes the Resend key on AppConfig', () => {
+    const config = AppConfig.fromEnv({ EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: KEY });
+    expect(config.email.transport).toBe('resend');
+    expect(config.email.resendApiKey).toBe(KEY);
+  });
+
+  describe.each(deployedEnvs)('in production %s', (appEnv) => {
+    const base = { NODE_ENV: 'production', APP_ENV: appEnv, JWT_SECRET: SECRET };
+
+    it.each(['smtp', 'fake', undefined])('refuses transport %p', (transport) => {
+      expect(() => validateEnv({ ...base, EMAIL_TRANSPORT: transport })).toThrow(
+        /EMAIL_TRANSPORT.*resend/,
+      );
+    });
+
+    it('accepts resend with a key', () => {
+      expect(
+        validateEnv({ ...base, EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: KEY }).EMAIL_TRANSPORT,
+      ).toBe('resend');
+    });
+  });
+
+  it.each(['test', 'development'])('allows fake on staging with NODE_ENV=%s', (nodeEnv) => {
+    expect(
+      validateEnv({ NODE_ENV: nodeEnv, APP_ENV: 'staging', EMAIL_TRANSPORT: 'fake' })
+        .EMAIL_TRANSPORT,
+    ).toBe('fake');
+  });
+
+  it('allows smtp with APP_ENV=local even in production', () => {
+    expect(
+      validateEnv({
+        NODE_ENV: 'production',
+        APP_ENV: 'local',
+        JWT_SECRET: SECRET,
+        EMAIL_TRANSPORT: 'smtp',
+      }).EMAIL_TRANSPORT,
+    ).toBe('smtp');
+  });
+
+  it.each([
+    { EMAIL_FROM: 'not-an-email' },
+    { SMTP_URL: 'http://localhost:1025' },
+    { EMAIL_TRANSPORT: 'sendgrid' },
+  ])('rejects %j', (bad) => {
+    expect(() => validateEnv(bad)).toThrow();
+  });
+
+  it('never puts the API key in the error message', () => {
+    let message = '';
+    try {
+      validateEnv({ EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: KEY, EMAIL_FROM: 'bad' });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toMatch(/EMAIL_FROM/);
+    expect(message).not.toContain(KEY);
+  });
+});
+
 describe('validateEnv: JWT', () => {
   const SECRET = 'x'.repeat(32);
 
