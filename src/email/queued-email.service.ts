@@ -4,7 +4,7 @@ import { Queue } from 'bullmq';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { EmailService, type EmailTemplate, type EmailTemplates } from './email.service.js';
-import { queuePrefix, redisConnectionOptions } from './redis-connection.js';
+import { queuePrefix } from './redis-connection.js';
 
 export const EMAIL_QUEUE = 'email';
 const ENQUEUE_TIMEOUT_MS = 5000;
@@ -30,7 +30,7 @@ export class QueuedEmailService extends EmailService implements OnApplicationShu
     super();
     this.queue = new Queue<EmailJobData>(EMAIL_QUEUE, {
       prefix: queuePrefix(config.appEnv),
-      connection: redisConnectionOptions(config.redisUrl, { enableOfflineQueue: false }),
+      connection: { url: config.redisUrl, enableOfflineQueue: false },
     });
     this.queue.on('error', (err) => logger.warn({ err }, 'email queue connection error'));
   }
