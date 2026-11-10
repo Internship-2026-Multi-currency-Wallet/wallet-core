@@ -28,6 +28,7 @@ TypeScript 6, Node 26. Read `README.md` first.
 - **Database:** Knex via the `KNEX` token. Schema changes only through new timestamped migrations
   (`npm run migrate:make -- <name>`); never edit a merged migration. Migrations use `import type` only.
 - **Money:** integers in minor units; rates as decimal strings. Never floating point.
+- **Comments:** only explain a non-obvious why. Don't restate the code or list the fields below.
 - **Imports:** relative ESM imports with a `.js` extension (`./foo.service.js`).
 - **Tests are required:** unit tests next to the code (`*.spec.ts`, import `jest` from `@jest/globals`);
   e2e tests in `test/` for API behaviour. Run before finishing:

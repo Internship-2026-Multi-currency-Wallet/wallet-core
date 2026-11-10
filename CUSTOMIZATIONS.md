@@ -6,13 +6,12 @@ each tool works. The code lives in `src/customizations/`.
 
 > **Status.**
 >
-> - **Implemented and tested in isolation:** the hook engine, the client modules, the
->   `@ClientFeature` / `@ClientDisabled` decorators, `ClientAvailabilityGuard`,
->   `restrictClientFields`, `ClientAvailabilityValidator`, and the ESLint import boundary.
-> - **Not wired into the application:** `AppModule` does not import `CustomizationsModule`, the
->   guard is not registered as a global guard, the validator is not a provider, and
->   `graphqlOptions()` has no `transformSchema`. Until they are, no hook is activated and no
->   restriction is enforced. See [Wiring that is still to do](#7-wiring-that-is-still-to-do).
+> - **Wired into the application:** `AppModule` imports `CustomizationsModule` before `AuthModule`;
+>   `CustomizationsCoreModule` registers `ClientAvailabilityGuard` as a global guard (it runs before
+>   `AuthGuard` and `PermissionGuard`) and provides `ClientAvailabilityValidator`; `graphqlOptions()`
+>   sets `transformSchema: restrictClientFields(config.client)`. See [Wiring](#7-wiring).
+> - **Covered on the real `AppModule`** (without MySQL or Redis) for `demo`, `kvitka` and `wisla`:
+>   guard order, root endpoints, fields, graphql-ws, logging and startup validation.
 >
 > Nothing in production code uses `@Customizable`, `@ClientHook`, `@ClientFeature` or
 > `@ClientDisabled` yet.
@@ -47,10 +46,12 @@ in this document (the client modules, the guard, the schema transform) reads `Ap
 ## 2. How the pieces fit
 
 ```
-main.ts ─► AppModule ─► CustomizationsModule          (AppModule import: not wired yet)
+main.ts ─► AppModule ─► CustomizationsModule          (imported before AuthModule)
                           ├─ CustomizationsCoreModule
                           │    ├─ HookRegistry          (per application)
-                          │    └─ ClientHookActivator
+                          │    ├─ ClientHookActivator
+                          │    ├─ ClientAvailabilityValidator
+                          │    └─ APP_GUARD: ClientAvailabilityGuard
                           ├─ KvitkaModule ┐ onModuleInit:  if (config.client !== me) return;
                           ├─ WislaModule  ├─                activator.subscribe(me)
                           └─ DemoModule   ┘
@@ -58,7 +59,7 @@ main.ts ─► AppModule ─► CustomizationsModule          (AppModule import:
 boot:   onModuleInit (every client module decides)  ─►  onApplicationBootstrap (activator commits)
 call:   service.execute() ─► wrapper ─► before hooks ─► original method ─► after hooks
 
-availability (built, not wired):
+availability:
    @ClientFeature / @ClientDisabled  ──►  metadata  +  field @Extensions
         root endpoint  ──►  ClientAvailabilityGuard  (global, before auth)      ─► NotFoundException
         field          ──►  restrictClientFields     (transformSchema, once)    ─► NotFoundException
@@ -171,17 +172,15 @@ nothing per request.
 export class Account {
   @Field() id!: string;
 
-  /** Only for wisla. Errors: NOT_FOUND */
   @ClientFeature('wisla')
-  @Field(() => String, { nullable: true })
+  @Field(() => String, { nullable: true, description: 'Only for wisla. Errors: NOT_FOUND' })
   wislaNote?: string | null;
 }
 
 @Resolver(() => Account)
 export class AccountFieldResolver {
-  /** Only for wisla. Errors: NOT_FOUND */
   @ClientFeature('wisla')
-  @ResolveField(() => String, { nullable: true })
+  @ResolveField(() => String, { nullable: true, description: 'Only for wisla. Errors: NOT_FOUND' })
   wislaBalance(@Parent() account: Account) {
     /* ... */
   }
@@ -189,9 +188,8 @@ export class AccountFieldResolver {
 
 @Resolver()
 export class TransferResolver {
-  /** Not for wisla. Errors: NOT_FOUND */
   @ClientDisabled('wisla')
-  @Mutation(() => Boolean)
+  @Mutation(() => Boolean, { description: 'Not for wisla. Errors: NOT_FOUND' })
   cancelTransfer() {
     /* ... */
   }
@@ -250,13 +248,13 @@ Restrict each endpoint and each field with its own decorator instead:
 @Resolver(() => Account)
 export class WislaAccountResolver {
   @ClientFeature('wisla') // root endpoint: the guard
-  @Query(() => Account)
+  @Query(() => Account, { description: 'Only for wisla. Errors: NOT_FOUND' })
   wislaAccount() {
     /* ... */
   }
 
   @ClientFeature('wisla') // field: the schema transform
-  @ResolveField(() => String, { nullable: true })
+  @ResolveField(() => String, { nullable: true, description: 'Only for wisla. Errors: NOT_FOUND' })
   wislaBalance(@Parent() account: Account) {
     /* ... */
   }
@@ -326,14 +324,16 @@ shared error mapping covers every 404.
 NOT_FOUND`, for HTTP results and, through `formatExecutionResult`, for graphql-ws results. This module
 does not map codes itself: it relies on that shared mapping. `client-field-availability.integration.spec.ts`
 boots Apollo with the real `graphqlOptions()`, so it asserts `NOT_FOUND` over HTTP for a denied field
-and a denied root endpoint. The unit specs of the guard and the transform call them without Apollo,
-so they assert the `NotFoundException` itself. Clients see this code only once the module is wired
-(section 7).
+and a denied root endpoint; `test/client-availability.e2e-spec.ts` asserts it on the real `AppModule`, over
+HTTP and graphql-ws. The unit specs of the guard and the transform call them without Apollo, so they
+assert the `NotFoundException` itself.
 
 The shared `graphqlLoggingPlugin` logs a denied field's `NotFoundException` once, as `warn`
-(`HTTP_404`, a 4xx status), and Nest does not log it again (a test pins both). The guard throws the
-same exception, so a denied root endpoint is logged the same way; the wired application has to
-confirm there is no duplicate (step 3 of section 7).
+(`HTTP_404`, a 4xx status, without a stack), and Nest does not log it again. The guard throws the
+same exception, so a denied root endpoint is logged the same way. Both are pinned on the real
+`AppModule` (`test/client-availability.e2e-spec.ts`). Over graphql-ws the plugin does not run (it is an
+Apollo HTTP plugin): a denial there is formatted by `formatExecutionResult` and not logged per error,
+like every other graphql-ws error.
 
 ## 6. Startup validation
 
@@ -365,30 +365,40 @@ Root-endpoint restrictions are enforced by the guard; the transform deliberately
 types (Query, Mutation, Subscription), so a root restriction without the guard registered is **not
 enforced**. That is why the guard must be wired together with the transform.
 
-## 7. Wiring that is still to do
+## 7. Wiring
 
-None of this is in `AppModule`, `AuthModule` or `graphql.config.ts` yet. The shared 404 to
-`NOT_FOUND` mapping (section 5) is already on `main`. In execution order:
+| Piece                         | Where                                                                  | When it runs                                                  |
+| ----------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `CustomizationsModule`        | `AppModule` imports, **before** `AuthModule`                           | Scanned before the auth module                                |
+| `ClientAvailabilityGuard`     | `CustomizationsCoreModule`: `{ provide: APP_GUARD, useClass: ... }`    | Every request, first of the global guards                     |
+| `ClientAvailabilityValidator` | `CustomizationsCoreModule` `providers` (`DiscoveryModule` is imported) | `onApplicationBootstrap`, after the GraphQL schema is built   |
+| `restrictClientFields`        | `graphqlOptions()`: `transformSchema: restrictClientFields(client)`    | Once, when the schema is built (`GraphQLModule.onModuleInit`) |
 
-1. **Small separate PR, `AppModule` only:** import `CustomizationsModule` **before** `AuthModule`, so
-   the global guards run in that order. `auth.module.ts` stays untouched (other open PRs change it).
-   That PR also adds the assertion that `AppModule` imports `CustomizationsModule`, which is left
-   out of `customizations.module.spec.ts` until then.
-2. **Wiring PR:**
-   - in `CustomizationsCoreModule`: `{ provide: APP_GUARD, useClass: ClientAvailabilityGuard }`, and
-     list `ClientAvailabilityValidator` (`DiscoveryModule` is already imported there);
-   - in `graphqlOptions()`: `transformSchema: restrictClientFields(config.client)`.
+**Guard order.** Nest applies global guards in the order it scans the modules that register them
+(depth first, in `imports` order). `CustomizationsModule`, and with it `CustomizationsCoreModule`,
+comes before `AuthModule` in `AppModule`, so the order is `ClientAvailabilityGuard`, `AuthGuard`,
+`PermissionGuard`: a hidden endpoint answers `NOT_FOUND` whatever the caller's authentication
+state, and an available endpoint keeps the normal authentication and permission checks.
+`auth.module.ts` is untouched. Moving `CustomizationsModule` after `AuthModule` breaks
+`test/client-availability.e2e-spec.ts`, which asserts the order through `ApplicationConfig`.
 
-   The guard must run **before** authentication so that a hidden endpoint answers `NOT_FOUND`
-   whatever the caller's authentication state. It must pass HTTP requests that carry no metadata
-   (it does: `/health` and the diagnostics controllers are unaffected).
+The guard passes HTTP requests that carry no metadata (`/health`, the diagnostics controller, the
+email template preview).
 
-3. **e2e tests** (MySQL and Redis up) on the real application: with no token, an invalid JWT and a
-   user without permissions, a hidden query and a hidden mutation all answer `NOT_FOUND`; a denied
-   field gives a partial response for `CLIENT=kvitka` and `CLIENT=wisla`; Nest does not log the
-   exception a second time.
-4. **Tidy up:** the README says the customization module "is a separate task"; update it. Regenerate
-   `schema.graphql` (`npm run schema:generate`) only if the API changed.
+**Schema file.** `schema.graphql` is written from the schema before `transformSchema` runs
+(`transformAutoSchemaFile` is not set), and the transform does not change the shape anyway, so
+`npm run schema:generate` produces the same file as before. The API did not change.
+
+**Still open.**
+
+1. **Keep the e2e suite green** (`npm run infra:up`, then `npm run test:e2e`). The real-`AppModule`
+   specs stub the Redis subscriber and use no database; the e2e suite boots the same `AppModule` on
+   MySQL and Redis, so its existing `/health`, diagnostics, email-preview, auth and logging tests
+   also run through the wired guard and transform.
+2. **No production endpoint or field is restricted yet.** The first real `@ClientFeature` /
+   `@ClientDisabled` adds the `Only for <client>. Errors: NOT_FOUND` description (section 5) and
+   regenerates `schema.graphql`.
+3. **Not verified on a deployed environment** (staging or a client UAT).
 
 ## 8. Not supported (on purpose)
 
@@ -405,7 +415,7 @@ None of this is in `AppModule`, `AuthModule` or `graphql.config.ts` yet. The sha
 
 ## 9. Testing
 
-Everything is testable without MySQL or Redis; e2e adds the real guard order.
+Everything is testable without MySQL or Redis, the real guard order included.
 
 - **Per client.** Build the application config for the client under test:
   `AppConfig.fromEnv({ NODE_ENV: 'test', CLIENT: 'wisla' })`, and run the same test for
@@ -417,6 +427,14 @@ Everything is testable without MySQL or Redis; e2e adds the real guard order.
   with test-only demo types, once per client).
 - **Startup validation**: `client-availability.validator.spec.ts`, and
   `client-availability.args.spec.ts` for `@ArgsType` (a file of its own, see the next point).
+- **The wired application**: `test/client-availability.e2e-spec.ts` (run by `npm run test:e2e`)
+  boots the real `AppModule` once per client with test-only restricted endpoints and fields: guard order, `NOT_FOUND` before
+  authentication (no credentials, invalid JWT, no permissions), the normal auth flow for an allowed
+  client, partial responses, graphql-ws queries and subscriptions, and logging.
+  `client-availability.app-startup.spec.ts` checks that invalid metadata stops `app.init()`. Neither
+  needs MySQL or Redis, so neither exercises them: the Knex pool and Redis connect lazily and
+  nothing queries them, the Redis `EventSubscriber` is stubbed, and `NODE_ENV=production` keeps
+  `schema.graphql` from being written.
 - Nest keeps GraphQL type metadata **process-wide** (`TypeMetadataStorage`). A deliberately invalid
   `@ArgsType` class defined in a spec file is seen by every application booted in that file, so keep
   such a fixture in a spec file of its own.
