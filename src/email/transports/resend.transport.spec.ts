@@ -108,4 +108,29 @@ describe('ResendTransport', () => {
     const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as { from: string };
     expect(body.from).toBe('"A \\"B\\" \\\\C" <no-reply@example.com>');
   });
+
+  it('treats a concurrent idempotent request conflict as retryable', async () => {
+    const { transport } = setup(
+      new Response('{"name":"concurrent_idempotent_requests"}', { status: 409 }),
+    );
+    expect(await failure(transport)).toMatchObject({
+      retryable: true,
+      status: 409,
+      errorName: 'concurrent_idempotent_requests',
+    });
+  });
+
+  it('keeps an invalid idempotent request conflict permanent', async () => {
+    const { transport } = setup(
+      new Response('{"name":"invalid_idempotent_request"}', { status: 409 }),
+    );
+    expect(await failure(transport)).toMatchObject({ retryable: false, status: 409 });
+  });
+
+  it('survives a non-JSON error body', async () => {
+    const { transport } = setup(new Response('<html>Bad Gateway</html>', { status: 502 }));
+    const err = await failure(transport);
+    expect(err).toMatchObject({ retryable: true, status: 502 });
+    expect(err.errorName).toBeUndefined();
+  });
 });

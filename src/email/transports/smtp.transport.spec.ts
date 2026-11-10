@@ -60,9 +60,15 @@ describe('SmtpTransport', () => {
   });
 
   it('treats a connection error without reply code as retryable', async () => {
-    const { transport } = setup({ code: 'ECONNREFUSED' });
+    const { transport } = setup({ code: 'ECONNECTION' });
     const err = await failure(transport);
-    expect(err).toMatchObject({ retryable: true, errorName: 'ECONNREFUSED' });
+    expect(err).toMatchObject({ retryable: true, errorName: 'ECONNECTION' });
     expect(err.status).toBeUndefined();
+  });
+
+  it('treats a local envelope error as permanent', async () => {
+    const { transport } = setup({ code: 'EENVELOPE' });
+    const err = await failure(transport);
+    expect(err).toMatchObject({ retryable: false, errorName: 'EENVELOPE' });
   });
 });
