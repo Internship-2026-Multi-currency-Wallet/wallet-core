@@ -255,14 +255,14 @@ instance. No BullMQ objects are created in fake mode.
 treat it as "definitely not sent". `EmailWorker` (5 concurrent jobs) renders the template and sends it through the transport with the
 idempotency key `<APP_ENV>/<job id>`, so a re-run does not duplicate mail on Resend. A failed send is retried up to
 8 attempts with exponential backoff (5 s, 10 s, 20 s, ...). A permanent transport error (`retryable: false`) fails the
-job at once. Failed jobs are kept for 7 days (at most 1000). Logs carry job id, template and attempt, never the
+job at once. Failed jobs are kept for 48 hours (at most 1000). Logs carry job id, template and attempt, never the
 recipient, data or link.
 
 **Local delivery with Mailpit.** If `ops` does not start Mailpit yet, run it yourself
 (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`), set `EMAIL_TRANSPORT=smtp` and `SMTP_URL=smtp://localhost:1025`
 (as in `.env.example`), then read the mail at http://localhost:8025.
 
-Notes: the e2e tests and a local dev server share the `local:email` queue, so do not run both at the same time.
+Notes: the e2e tests use the `staging:email` prefix on the local Redis, so they do not interfere with a local dev server (`local:email`).
 
 **Preview.** With `EMAIL_PREVIEW_ENABLED=true` (only `local` and `staging`; `.env.example` enables it) the service
 serves `GET /dev/email-preview` (list of templates) and `GET /dev/email-preview/<name>` (the rendered HTML with
