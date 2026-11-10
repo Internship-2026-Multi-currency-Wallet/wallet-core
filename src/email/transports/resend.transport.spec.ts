@@ -127,6 +127,13 @@ describe('ResendTransport', () => {
     expect(await failure(transport)).toMatchObject({ retryable: false, status: 409 });
   });
 
+  it('keeps a 409 retryable when the error body cannot be read', async () => {
+    const res = new Response('', { status: 409 });
+    jest.spyOn(res, 'json').mockRejectedValue(new Error('aborted'));
+    const { transport } = setup(res);
+    expect(await failure(transport)).toMatchObject({ retryable: true, status: 409 });
+  });
+
   it('survives a non-JSON error body', async () => {
     const { transport } = setup(new Response('<html>Bad Gateway</html>', { status: 502 }));
     const err = await failure(transport);

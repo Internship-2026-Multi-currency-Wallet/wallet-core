@@ -28,8 +28,8 @@ export class SmtpTransport implements EmailTransport {
       const status = typeof e?.responseCode === 'number' ? e.responseCode : undefined;
       throw new EmailTransportError(
         'smtp',
-        // EENVELOPE is a local invalid-address error, retrying cannot help
-        e?.code !== 'EENVELOPE' && (status === undefined || status < 500),
+        // a server reply code decides; EENVELOPE without one is a local invalid-address error, retrying cannot help
+        status === undefined ? e?.code !== 'EENVELOPE' : status < 500,
         status,
         safeLabel(e?.code),
       );

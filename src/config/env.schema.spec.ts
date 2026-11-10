@@ -96,6 +96,18 @@ describe('validateEnv: email', () => {
     expect(() => validateEnv({ EMAIL_TRANSPORT: 'resend', ...extra })).toThrow(/RESEND_API_KEY/);
   });
 
+  it('rejects a whitespace-only RESEND_API_KEY without echoing it', () => {
+    const blank = ' \t ';
+    let message = '';
+    try {
+      validateEnv({ EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: blank });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toMatch(/RESEND_API_KEY/);
+    expect(message).not.toContain(blank);
+  });
+
   it('exposes the Resend key on AppConfig', () => {
     const config = AppConfig.fromEnv({ EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: KEY });
     expect(config.email.transport).toBe('resend');

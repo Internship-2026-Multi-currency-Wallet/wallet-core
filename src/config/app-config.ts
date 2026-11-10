@@ -40,7 +40,6 @@ export class AppConfig {
   readonly devAuth: boolean;
   /** `EMAIL_PREVIEW_ENABLED=true` serves the email template preview at `/dev/email-preview`. */
   readonly emailPreviewEnabled: boolean;
-  /** Outgoing email: `EMAIL_TRANSPORT` (resend, smtp, fake), sender, Resend key and SMTP URL. */
   readonly email: {
     transport: Env['EMAIL_TRANSPORT'];
     from: string;
