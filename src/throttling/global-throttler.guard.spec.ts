@@ -102,7 +102,7 @@ function setup() {
   const options = {
     ...throttlerOptions(
       config,
-      { status: 'ready' } as unknown as Redis,
+      { status: 'ready', defineCommand: jest.fn() } as unknown as Redis,
       logger as unknown as PinoLogger,
     ),
     storage,

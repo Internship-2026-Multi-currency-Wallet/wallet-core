@@ -67,7 +67,7 @@ describe('FailOpenThrottlerStorage', () => {
     const { inner, logger, increment } = setup('ready');
     const err = Object.assign(new Error('READONLY'), {
       command: {
-        name: 'eval',
+        name: 'evalsha',
         args: ['local hits = redis.call', 'prod:throttle:wallet-core:ip:203.0.113.5'],
       },
     });

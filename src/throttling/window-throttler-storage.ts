@@ -15,9 +15,19 @@ end
 return { hits, ttl }
 `;
 
+type ThrottleRedis = Redis & {
+  throttleIncrement(key: string, ttlMs: string): Promise<unknown>;
+};
+
 /** The refusal never outlasts the window, so `blockDuration` is ignored. */
 export class WindowThrottlerStorage implements ThrottlerStorage {
-  constructor(private readonly redis: Redis) {}
+  private readonly redis: ThrottleRedis;
+
+  constructor(redis: Redis) {
+    // A defined command runs as EVALSHA, so the script text is not sent with every request.
+    redis.defineCommand('throttleIncrement', { numberOfKeys: 1, lua: INCREMENT_SCRIPT });
+    this.redis = redis as ThrottleRedis;
+  }
 
   async increment(
     key: string,
@@ -26,7 +36,7 @@ export class WindowThrottlerStorage implements ThrottlerStorage {
     _blockDuration: number,
     _throttlerName: string,
   ): Promise<ThrottlerStorageRecord> {
-    const reply: unknown = await this.redis.eval(INCREMENT_SCRIPT, 1, key, String(ttl));
+    const reply: unknown = await this.redis.throttleIncrement(key, String(ttl));
     if (!Array.isArray(reply) || typeof reply[0] !== 'number' || typeof reply[1] !== 'number') {
       throw new TypeError('Unexpected reply from the rate limit script');
     }

@@ -6,19 +6,31 @@ const KEY = 'staging:throttle:wallet-core:user:42';
 const TTL_MS = 60_000;
 
 function setup(reply: unknown) {
-  const redis = { eval: jest.fn<(...args: unknown[]) => Promise<unknown>>() };
-  redis.eval.mockResolvedValue(reply);
+  const redis = {
+    defineCommand: jest.fn(),
+    throttleIncrement: jest.fn<(...args: unknown[]) => Promise<unknown>>(),
+  };
+  redis.throttleIncrement.mockResolvedValue(reply);
   const storage = new WindowThrottlerStorage(redis as unknown as Redis);
   return { redis, storage };
 }
 
 describe('WindowThrottlerStorage', () => {
+  it('defines the script as a command with one key', () => {
+    const { redis } = setup([1, 60_000]);
+
+    expect(redis.defineCommand).toHaveBeenCalledWith('throttleIncrement', {
+      numberOfKeys: 1,
+      lua: expect.any(String),
+    });
+  });
+
   it('passes the key unchanged and the window in milliseconds to the script', async () => {
     const { redis, storage } = setup([1, 60_000]);
 
     await storage.increment(KEY, TTL_MS, 5, 0, 'default');
 
-    expect(redis.eval).toHaveBeenCalledWith(expect.any(String), 1, KEY, '60000');
+    expect(redis.throttleIncrement).toHaveBeenCalledWith(KEY, '60000');
   });
 
   it('does not block when hits equal the limit', async () => {
