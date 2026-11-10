@@ -44,6 +44,7 @@
     "@nestjs/platform-express": "^12.3.2",
     "@nestjs/throttler": "^6.7.1",
     "@node-rs/argon2": "^2.2.2",
+    "bullmq": "^6.7.3",
     "cookie": "^1.1.1",
     "graphql": "^16.14.2",
     "graphql-scalars": "^2.0.1",
