@@ -27,7 +27,9 @@ interface ContextInput {
   extra?: { request?: unknown };
 }
 
-const CLIENT_ERROR_CODES = [...Object.values(AuthErrorCode), ...Object.values(ThrottleErrorCode)];
+const CLIENT_ERROR_CODES = [AuthErrorCode, ThrottleErrorCode].flatMap((codes) =>
+  Object.values(codes),
+);
 
 export interface GraphqlContext {
   req: RequestLike;
