@@ -47,19 +47,16 @@ import {
 } from './client-availability.decorator.js';
 import { ClientAvailabilityGuard } from './client-availability.guard.js';
 import { ClientAvailabilityValidator } from './client-availability.validator.js';
-import { restrictClientFields } from './client-field-availability.js';
 
 /**
  * Field-level availability in a booted Nest + Apollo application, with the real decorators, the
  * real `graphqlOptions()` and the real `ClientAvailabilityGuard`, once per `CLIENT`.
  *
- * Test-only wiring: nothing here is in `AppModule`. The module below registers the guard (as the
- * integration step will), the transform and the validator the way the integration step will. The
- * demo types are test fixtures; there is no demo behaviour in production code.
+ * A small test module instead of `AppModule`, so the guard and the transform can be switched off
+ * one at a time. The demo types are test fixtures; there is no demo behaviour in production code.
  *
  * Errors go through the real shared `formatError` (it comes with `graphqlOptions()`), so the wire
- * code is the final NOT_FOUND. Not covered, because it needs the AppModule integration: the order
- * relative to AuthGuard, websocket (graphql-ws) results, and the e2e run on MySQL/Redis.
+ * code is the final NOT_FOUND.
  */
 
 /* -------------------------------------------------------------------------------------------- *
@@ -238,9 +235,8 @@ async function boot(options: BootOptions): Promise<Booted> {
       GraphQLModule.forRoot<ApolloDriverConfig>({
         ...base,
         autoSchemaFile: true,
-        ...(options.transform === false
-          ? {}
-          : { transformSchema: restrictClientFields(options.client) }),
+        // Overrides the real transform that `graphqlOptions()` sets.
+        ...(options.transform === false ? { transformSchema: undefined } : {}),
       }),
     ],
     controllers: [PingController, ...(options.controllers ?? [])],

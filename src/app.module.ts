@@ -5,6 +5,7 @@ import { PinoLogger } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module.js';
 import { AppConfig } from './config/app-config.js';
 import { ConfigModule } from './config/config.module.js';
+import { CustomizationsModule } from './customizations/customizations.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module.js';
 import { EmailModule } from './email/email.module.js';
@@ -36,6 +37,9 @@ import { ThrottlingModule } from './throttling/throttling.module.js';
       useFactory: graphqlOptions,
     }),
     // Seams
+    // Before AuthModule: global guards run in import order, so a hidden endpoint answers NOT_FOUND
+    // whatever the caller's credentials.
+    CustomizationsModule,
     AuthModule,
     // After AuthModule: global guards run in module order, and the throttler needs req.user.
     ThrottlingModule,
