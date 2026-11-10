@@ -53,3 +53,23 @@ export function formatExecutionResult(
   if (!result.errors) return undefined;
   return { ...result, errors: result.errors.map((error) => formatError(error.toJSON(), error)) };
 }
+
+/**
+ * graphql-ws `onError` bypasses Apollo's formatError, so failures of a running subscription
+ * (marked by `originalError`, or `cause` with graphql 17) must be masked here.
+ */
+export function formatProtocolErrors(
+  errors: readonly GraphQLError[],
+): { error: GraphQLFormattedError; fromClient: boolean }[] {
+  return errors.map((error) =>
+    error.originalError || (error as { cause?: unknown }).cause
+      ? { error: formatError(error.toJSON(), error), fromClient: false }
+      : {
+          error: {
+            ...error.toJSON(),
+            extensions: { ...error.extensions, code: 'GRAPHQL_VALIDATION_FAILED' },
+          },
+          fromClient: true,
+        },
+  );
+}

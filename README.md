@@ -73,6 +73,8 @@ See `.env.example`.
 | Variable                   | Default                                            | Meaning                                                                                                  |
 | -------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `PORT`                     | `3000`                                             | HTTP port                                                                                                |
+| `METRICS_PORT`             | `9464`                                             | Internal port of `GET /metrics` (see [Metrics](#metrics)). Must differ from `PORT`                       |
+| `METRICS_HOST`             | `127.0.0.1` (Docker image: `0.0.0.0`)              | Address `GET /metrics` listens on                                                                        |
 | `NODE_ENV`                 | `development`                                      | `production` disables writing `schema.graphql`                                                           |
 | `APP_ENV`                  | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                     |
 | `DATABASE_URL`             | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                           |
@@ -131,8 +133,8 @@ there (the mentor does it in Dokploy) and redeploy.
   The service name in the key makes each service count on its own, although all backends share one Redis.
 - **Client IP.** Express trusts one proxy hop (`trust proxy = 1`, `src/configure-app.ts`, because Traefik is the
   only proxy), so the IP is the last `X-Forwarded-For` entry. A client cannot invent a new IP by adding entries.
-- **Not counted:** `GET /health` (the controller is marked `@SkipThrottle()`; a future metrics endpoint needs it too)
-  and everything that arrives over the WebSocket (subscriptions).
+- **Not counted:** `GET /health` (the controller is marked `@SkipThrottle()`), `GET /metrics` (its own HTTP server on
+  `METRICS_PORT`, outside Nest, so no guard runs) and everything that arrives over the WebSocket (subscriptions).
   The GraphQL query `health` is counted like any other query.
 - **Known limits (follow-ups):** a guard runs only when a resolver or controller is about to be called, so these
   requests are not counted: refused by `AuthGuard` (401) or `PermissionGuard` (403), GraphQL introspection
@@ -193,6 +195,55 @@ this.logger.error({ err, conversionId }, 'conversion failed'); // pass errors as
   request objects on purpose.
 - **`LOG_LEVEL`**: `fatal`, `error`, `warn`, `info` (default), `debug`, `trace`, `silent` (e2e tests default to `silent`).
 - Do not use `console.*` or `new Logger()` from `@nestjs/common` in application code.
+
+## Metrics
+
+Prometheus metrics via [`prom-client`](https://github.com/siimon/prom-client) (`src/metrics/`). Alloy scrapes them
+every 15 s and Grafana shows them on the _Server_ and _Services_ dashboards (see the handbook's `metrics.md`).
+
+- **Where**: `GET /metrics` on its own small HTTP server on `METRICS_PORT` (default `9464`), not on `PORT`;
+  `GET /metrics` on the app port is a 404. If the port is busy, the service starts anyway and logs an error. Running
+  several backends from source, give each its own port (`METRICS_PORT=9465 npm run start:dev`).
+- **Who can reach it**: run directly on a machine, the server listens on `127.0.0.1` only (`METRICS_HOST`). The
+  Docker image sets `METRICS_HOST=0.0.0.0`: the port is not published, so only containers on the same Docker
+  network (Alloy, on the server: other apps on `dokploy-network`) reach it, never the internet. Traefik routes the
+  public domain to `PORT` only. Metrics carry no ids, amounts or secrets.
+- **Labels on every series**: `service` (`wallet-core`) and `env` (`APP_ENV`).
+
+| Metric                          | Type      | Labels              | Meaning                                                                   |
+| ------------------------------- | --------- | ------------------- | ------------------------------------------------------------------------- |
+| `http_requests_total`           | counter   | `operation, status` | HTTP requests, except `/health`, `/metrics` and CORS preflights           |
+| `http_request_duration_seconds` | histogram | `operation`         | Request duration; buckets 5 ms … 10 s                                     |
+| `graphql_errors_total`          | counter   | `operation, code`   | Failed GraphQL requests by the error code the client sees (once per code) |
+| `graphql_ws_connections`        | gauge     | —                   | Open GraphQL websocket connections                                        |
+| `events_published_total`        | counter   | `type`              | Events published through `EventPublisher`                                 |
+| `process_*`, `nodejs_*`         | default   | —                   | CPU, memory, heap, event-loop lag, GC, start time (prom-client defaults)  |
+
+- **`operation`**: the operation type and its first root field (`query me`, `mutation convert`), or the route of a
+  REST request (`POST /diagnostics/ping`). The client's own operation name is not used, because any client can
+  invent names and every new one would be a new time series. Unparsable GraphQL, requests that matched no route and
+  anything past the cap of 100 distinct values go into one bucket, `(unknown)`.
+- **Websocket operations**: they add to `graphql_errors_total` but not to `http_requests_total`, so an error ratio
+  for an operation that also runs over the websocket can go above 100%. A subscription counts a code once per event
+  that fails, not once per subscription. Errors raised before execution (parse, validation) are
+  `GRAPHQL_VALIDATION_FAILED` under `(unknown)`, as over HTTP.
+- **Adding a metric**: inject `Metrics` and create it once, in the constructor or factory, with bounded labels only:
+
+```ts
+constructor(@Inject(Metrics) metrics: Metrics) {
+  this.published = metrics.counter({
+    name: 'events_published_total',
+    help: 'Events published, by event type',
+    labelNames: ['type'],
+  });
+}
+
+this.published.inc({ type: name });
+```
+
+- **Label rules**: every distinct label value is a new time series in Prometheus. Never use user ids, request ids,
+  amounts, emails or free text as label values; those belong in logs.
+- **Check locally**: `curl localhost:9464/metrics`.
 
 ## Seams
 
@@ -360,6 +411,7 @@ src/
   config/        env validation + AppConfig
   database/      Knex (KNEX token)    redis/   ioredis (REDIS token)
   graphql/       Apollo options
+  metrics/       Prometheus registry, request metrics, GET /metrics on METRICS_PORT
 migrations/      Knex migrations (timestamped)
 test/            e2e tests
 schema.graphql   generated GraphQL contract (committed)

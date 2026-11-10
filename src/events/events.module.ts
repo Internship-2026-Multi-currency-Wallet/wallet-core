@@ -3,6 +3,7 @@ import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/comm
 import type { Redis } from 'ioredis';
 import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
+import { Metrics } from '../metrics/metrics.js';
 import { REDIS } from '../redis/redis.module.js';
 import { type EventContext, EventPublisher, EventSubscriber } from './event-bus.js';
 
@@ -35,9 +36,20 @@ export function loggingEventContext(logger: PinoLogger, service: string): EventC
   providers: [
     {
       provide: EventPublisher,
-      inject: [REDIS, AppConfig, PinoLogger],
-      useFactory: (redis: Redis, config: AppConfig, logger: PinoLogger) =>
-        new EventPublisher(redis, config.appEnv, loggingEventContext(logger, config.serviceName)),
+      inject: [REDIS, AppConfig, PinoLogger, Metrics],
+      useFactory: (redis: Redis, config: AppConfig, logger: PinoLogger, metrics: Metrics) => {
+        const published = metrics.counter({
+          name: 'events_published_total',
+          help: 'Events published, by event type',
+          labelNames: ['type'],
+        });
+        return new EventPublisher(
+          redis,
+          config.appEnv,
+          loggingEventContext(logger, config.serviceName),
+          (name) => published.inc({ type: name }),
+        );
+      },
     },
     {
       provide: EventSubscriber,

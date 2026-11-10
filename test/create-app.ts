@@ -6,6 +6,7 @@ import type { AuthUser } from '../src/auth/auth-user.js';
 import { CurrentUser } from '../src/auth/current-user.decorator.js';
 import { AppConfig } from '../src/config/app-config.js';
 import { configureApp } from '../src/configure-app.js';
+import { useRequestMetrics } from '../src/metrics/request-metrics.js';
 import { RequirePermission } from '../src/permissions/require-permission.decorator.js';
 
 /** HTTP-only test endpoints (kept out of the GraphQL schema on purpose). */
@@ -36,6 +37,7 @@ export async function createApp(env: Record<string, string> = {}): Promise<INest
     logger: ['error', 'warn'],
   });
   configureApp(app);
+  useRequestMetrics(app);
   await app.init();
   return app;
 }
