@@ -115,7 +115,12 @@ describe('validateEnv: email', () => {
   });
 
   describe.each(deployedEnvs)('in production %s', (appEnv) => {
-    const base = { NODE_ENV: 'production', APP_ENV: appEnv, JWT_SECRET: SECRET };
+    const base = {
+      NODE_ENV: 'production',
+      APP_ENV: appEnv,
+      JWT_SECRET: SECRET,
+      BACKOFFICE_URL: 'https://bo.example.com',
+    };
 
     it.each(['smtp', 'fake', undefined])('refuses transport %p', (transport) => {
       expect(() => validateEnv({ ...base, EMAIL_TRANSPORT: transport })).toThrow(
@@ -143,6 +148,7 @@ describe('validateEnv: email', () => {
         NODE_ENV: 'production',
         APP_ENV: 'local',
         JWT_SECRET: SECRET,
+        BACKOFFICE_URL: 'https://bo.example.com',
         EMAIL_TRANSPORT: 'smtp',
       }).EMAIL_TRANSPORT,
     ).toBe('smtp');
@@ -215,7 +221,13 @@ describe('validateEnv: JWT', () => {
     expect(() => validateEnv({ NODE_ENV: 'production', JWT_SECRET: '' })).toThrow(
       /JWT_SECRET: is required in production/,
     );
-    expect(validateEnv({ NODE_ENV: 'production', JWT_SECRET: SECRET }).JWT_SECRET).toBe(SECRET);
+    expect(
+      validateEnv({
+        NODE_ENV: 'production',
+        JWT_SECRET: SECRET,
+        BACKOFFICE_URL: 'https://bo.example.com',
+      }).JWT_SECRET,
+    ).toBe(SECRET);
   });
 
   it('refuses the local-only secret in production', () => {
@@ -275,6 +287,54 @@ describe('AppConfig', () => {
       expect(validateEnv({ BACKOFFICE_URL: url }).BACKOFFICE_URL).toBe(url);
     },
   );
+
+  describe('BACKOFFICE_URL in production', () => {
+    const production = { NODE_ENV: 'production', JWT_SECRET: 'x'.repeat(32) };
+
+    it.each([undefined, ''])('is required (%p)', (value) => {
+      expect(() => validateEnv({ ...production, BACKOFFICE_URL: value })).toThrow(
+        /BACKOFFICE_URL: is required when NODE_ENV=production/,
+      );
+    });
+
+    it.each([
+      'http://localhost:5174',
+      'https://LOCALHOST/admin',
+      'http://127.0.0.1:8080',
+      'http://[::1]:5174/bo',
+      'http://0.0.0.0',
+    ])('refuses the local host %s', (url) => {
+      expect(() => validateEnv({ ...production, BACKOFFICE_URL: url })).toThrow(
+        /BACKOFFICE_URL: must not point to a local host/,
+      );
+    });
+
+    it.each(['staging', 'local'])('accepts a real URL with APP_ENV=%s', (appEnv) => {
+      const env = {
+        ...production,
+        APP_ENV: appEnv,
+        EMAIL_TRANSPORT: 'fake',
+        BACKOFFICE_URL: 'https://bo.example.com',
+      };
+      // fake transport is refused in deployed environments only
+      if (appEnv === 'staging')
+        Object.assign(env, { EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: 're_key' });
+      expect(validateEnv(env).BACKOFFICE_URL).toBe('https://bo.example.com');
+    });
+
+    it('keeps the localhost default and accepts a local host outside production', () => {
+      expect(validateEnv({ NODE_ENV: 'development' }).BACKOFFICE_URL).toBe('http://localhost:5174');
+      expect(
+        validateEnv({ NODE_ENV: 'test', BACKOFFICE_URL: 'http://127.0.0.1:5174' }).BACKOFFICE_URL,
+      ).toBe('http://127.0.0.1:5174');
+    });
+
+    it('reports an invalid URL once', () => {
+      expect(() => validateEnv({ ...production, BACKOFFICE_URL: 'not a url' })).not.toThrow(
+        /local host/,
+      );
+    });
+  });
 
   it('validates BACKOFFICE_URL as an http(s) URL and strips trailing slashes in AppConfig', () => {
     expect(validateEnv({}).BACKOFFICE_URL).toBe('http://localhost:5174');

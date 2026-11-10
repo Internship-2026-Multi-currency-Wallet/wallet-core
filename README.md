@@ -88,7 +88,7 @@ See `.env.example`.
 | `RESEND_API_KEY`           | unset                                              | Resend API key. Required with `EMAIL_TRANSPORT=resend`                                                   |
 | `SMTP_URL`                 | `smtp://localhost:1025`                            | SMTP server for `EMAIL_TRANSPORT=smtp` (`smtp:` or `smtps:`), Mailpit locally                            |
 | `CORS_ORIGINS`             | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                                  |
-| `BACKOFFICE_URL`           | `http://localhost:5174`                            | Back office base URL (http or https), used in the links of staff emails                                  |
+| `BACKOFFICE_URL`           | `http://localhost:5174`                            | Back office URL for staff email links; required in production, not a local host                          |
 | `BOOTSTRAP_ADMIN_EMAIL`    | empty                                              | Invite this admin on start when no admin exists in any status (ignored otherwise)                        |
 | `APP_VERSION`              | from `package.json`                                | Version reported by `health`                                                                             |
 | `LOG_LEVEL`                | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                                  |

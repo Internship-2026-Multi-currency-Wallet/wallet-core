@@ -25,6 +25,9 @@ const booleanFromString = z
 /** Must match rates-service's local default so development tokens work across services. */
 export const LOCAL_JWT_SECRET = 'local-only-jwt-secret-change-me-0123456789';
 
+const DEFAULT_BACKOFFICE_URL = 'http://localhost:5174';
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '0.0.0.0']);
+
 const SECONDS_PER_UNIT = { s: 1, m: 60, h: 3600, d: 86400 } as const;
 type DurationUnit = keyof typeof SECONDS_PER_UNIT;
 // Without a bound a long number passes the regex and becomes Infinity.
@@ -70,7 +73,7 @@ export const envSchema = z
     BACKOFFICE_URL: z
       .url({ protocol: /^https?$/ })
       .refine((url) => !/[?#]/.test(url), 'must not contain a query or a fragment')
-      .default('http://localhost:5174'),
+      .optional(),
     // Admin invited on start when no admin exists; not validated as an email so a typo cannot stop the app.
     BOOTSTRAP_ADMIN_EMAIL: z.string().trim().optional(),
     APP_VERSION: z.string().optional(),
@@ -101,6 +104,24 @@ export const envSchema = z
         path: ['JWT_SECRET'],
         message: 'must not be the local-only secret in production',
       });
+    }
+    // Tied to NODE_ENV, not APP_ENV: APP_ENV defaults to local, which would switch the check off
+    // exactly when it was forgotten. A localhost link in an invitation email is useless.
+    if (env.NODE_ENV === 'production') {
+      if (env.BACKOFFICE_URL === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['BACKOFFICE_URL'],
+          message:
+            'is required when NODE_ENV=production (the base URL of the back office, used in invitation links)',
+        });
+      } else if (LOCAL_HOSTS.has(new URL(env.BACKOFFICE_URL).hostname)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['BACKOFFICE_URL'],
+          message: 'must not point to a local host when NODE_ENV=production',
+        });
+      }
     }
     // 0 is a random port that Alloy cannot scrape; only the e2e tests use it.
     if (env.METRICS_PORT === 0 && env.NODE_ENV !== 'test') {
@@ -150,7 +171,8 @@ export const envSchema = z
         message: `EMAIL_PREVIEW_ENABLED=true is not allowed in client environment "${env.APP_ENV}" (only local and staging)`,
       });
     }
-  });
+  })
+  .transform((env) => ({ ...env, BACKOFFICE_URL: env.BACKOFFICE_URL ?? DEFAULT_BACKOFFICE_URL }));
 
 export type Env = z.infer<typeof envSchema>;
 
