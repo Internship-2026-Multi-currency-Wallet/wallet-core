@@ -210,7 +210,13 @@ every 15 s and Grafana shows them on the _Server_ and _Services_ dashboards (see
 - **Who can reach it**: run directly on a machine, the server listens on `127.0.0.1` only (`METRICS_HOST`). The
   Docker image sets `METRICS_HOST=0.0.0.0`: the port is not published, so only containers on the same Docker
   network (Alloy, on the server: other apps on `dokploy-network`) reach it, never the internet. Traefik routes the
-  public domain to `PORT` only. Metrics carry no ids, amounts or secrets.
+  public domain to `PORT` only. Metrics carry no user ids, amounts or secrets; the only id is the `requestId` in
+  exemplars (below).
+- **Format**: OpenMetrics, because the plain Prometheus format has no exemplars.
+- **Exemplars**: `http_request_duration_seconds` and `graphql_errors_total` (over HTTP) keep the `requestId` of a
+  recent request as `trace_id`. Grafana draws them as dots on the _Services_ graphs; clicking one opens the _Logs_
+  dashboard for that request. An exemplar is not a label and adds no time series. Request ids longer than 120
+  characters get no exemplar, because OpenMetrics caps exemplar labels at 128 characters.
 - **Labels on every series**: `service` (`wallet-core`) and `env` (`APP_ENV`).
 
 | Metric                          | Type      | Labels              | Meaning                                                                   |

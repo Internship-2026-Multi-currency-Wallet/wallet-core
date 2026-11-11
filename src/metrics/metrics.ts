@@ -6,6 +6,7 @@ import {
   type GaugeConfiguration,
   Histogram,
   type HistogramConfiguration,
+  type OpenMetricsContentType,
   Registry,
 } from 'prom-client';
 
@@ -15,10 +16,21 @@ const MAX_OPERATION_LENGTH = 100;
 
 export const DURATION_BUCKETS = [0.005, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 
+// OpenMetrics allows 128 characters for exemplar label names and values together; prom-client
+// throws past that, and a client may send an x-request-id of up to 128 characters.
+const MAX_TRACE_ID_LENGTH = 128 - 'trace_id'.length;
+
+/** Exemplar labels that link a sample to the logs of its request; empty means no exemplar. */
+export function requestExemplar(requestId: unknown): Record<string, string> {
+  return typeof requestId === 'string' && requestId.length <= MAX_TRACE_ID_LENGTH
+    ? { trace_id: requestId }
+    : {};
+}
+
 type Config<T> = Omit<T, 'registers'>;
 
 export class Metrics {
-  readonly registry = new Registry();
+  readonly registry = new Registry<OpenMetricsContentType>();
   readonly httpRequests: Counter<'operation' | 'status'>;
   readonly httpRequestDuration: Histogram<'operation'>;
   readonly graphqlErrors: Counter<'operation' | 'code'>;
@@ -26,6 +38,8 @@ export class Metrics {
   private readonly operations = new Set<string>();
 
   constructor(defaultLabels: { service: string; env: string }) {
+    // OpenMetrics, because the plain Prometheus format has no exemplars.
+    this.registry.setContentType(Registry.OPENMETRICS_CONTENT_TYPE);
     this.registry.setDefaultLabels(defaultLabels);
     collectDefaultMetrics({ register: this.registry });
     this.httpRequests = this.counter({
@@ -38,11 +52,13 @@ export class Metrics {
       help: 'HTTP request duration by GraphQL operation (or route)',
       labelNames: ['operation'],
       buckets: DURATION_BUCKETS,
+      enableExemplars: true,
     });
     this.graphqlErrors = this.counter({
       name: 'graphql_errors_total',
       help: 'GraphQL requests that failed, by operation and error code (each code once per request)',
       labelNames: ['operation', 'code'],
+      enableExemplars: true,
     });
     this.graphqlWsConnections = this.gauge({
       name: 'graphql_ws_connections',

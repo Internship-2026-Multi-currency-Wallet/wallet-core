@@ -9,7 +9,7 @@ import {
   type OperationDefinitionNode,
   type SelectionNode,
 } from 'graphql';
-import { Metrics } from './metrics.js';
+import { Metrics, requestExemplar } from './metrics.js';
 
 const NOT_COUNTED = new Set(['/health', '/metrics']);
 
@@ -19,6 +19,8 @@ function normalizedPath(url: string): string {
 const CLIENT_CLOSED = 499;
 
 interface CountedRequest {
+  /** requestId, set by pino-http. */
+  id?: unknown;
   method?: string;
   metricsOperation?: string;
   route?: { path?: unknown };
@@ -77,10 +79,15 @@ export function requestMetricsMiddleware(metrics: Metrics) {
       next();
       return;
     }
-    const observeDuration = metrics.httpRequestDuration.startTimer();
+    const start = performance.now();
     res.once('close', () => {
-      const operation = metrics.operation(operationName(req as CountedRequest));
-      observeDuration({ operation });
+      const counted = req as CountedRequest;
+      const operation = metrics.operation(operationName(counted));
+      metrics.httpRequestDuration.observe({
+        labels: { operation },
+        value: (performance.now() - start) / 1000,
+        exemplarLabels: requestExemplar(counted.id),
+      });
       const status = res.writableFinished ? res.statusCode : CLIENT_CLOSED;
       metrics.httpRequests.inc({ operation, status });
     });
@@ -116,11 +123,15 @@ export function countGraphqlErrors(
   metrics: Metrics,
   operationName: string | undefined,
   errors: readonly GraphQLFormattedError[] | undefined,
+  requestId?: unknown,
 ): void {
   if (!errors?.length) return;
   const operation = metrics.operation(operationName);
   for (const code of new Set(errors.map(graphqlErrorCode))) {
-    metrics.graphqlErrors.inc({ operation, code });
+    metrics.graphqlErrors.inc({
+      labels: { operation, code },
+      exemplarLabels: requestExemplar(requestId),
+    });
   }
 }
 
@@ -140,7 +151,12 @@ export function graphqlMetricsPlugin(
           const { body } = response;
           const errors =
             body.kind === 'single' ? body.singleResult.errors : body.initialResult.errors;
-          countGraphqlErrors(metrics, operationName(contextValue.req), errors);
+          countGraphqlErrors(
+            metrics,
+            operationName(contextValue.req),
+            errors,
+            contextValue.req?.id,
+          );
           return Promise.resolve();
         },
       });
