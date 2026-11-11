@@ -251,6 +251,30 @@ export class StaffService {
     if (refreshToken) await this.staff.revokeSessionByHash(hashRefreshToken(refreshToken), now);
   }
 
+  async refresh(
+    refreshToken: string | undefined,
+    now: Date = new Date(),
+  ): Promise<StaffLoginResult> {
+    if (!refreshToken) throw invalidRefreshToken();
+    const next = newRefreshToken();
+    const rotated = await this.staff.rotateSession(hashRefreshToken(refreshToken), next.hash, now);
+    if (!rotated) {
+      this.logger.warn('staff session refresh rejected');
+      throw invalidRefreshToken();
+    }
+    const staff = toMe(rotated.staff);
+    const access = this.tokens.signAccessToken(
+      { userId: staff.id, aud: 'backoffice', permissions: staff.permissions },
+      now,
+    );
+    this.logger.info({ staffId: staff.id }, 'staff session refreshed');
+    return {
+      payload: { accessToken: access.token, accessTokenExpiresAt: access.expiresAt, staff },
+      refreshToken: next.token,
+      sessionExpiresAt: rotated.expiresAt,
+    };
+  }
+
   async deactivate(actorId: string, staffId: string, now: Date = new Date()): Promise<StaffMember> {
     const { record, changed } = await this.staff.transaction(async (tx) => {
       const admins = await tx.lockActiveAdminIds();
@@ -382,4 +406,8 @@ function toMember(record: StaffRecord): StaffMember {
     status: record.status,
     createdAt: record.createdAt,
   };
+}
+
+function invalidRefreshToken(): GraphQLError {
+  return staffError(StaffErrorCode.InvalidRefreshToken, STAFF_ERROR_MESSAGES.invalidRefreshToken);
 }

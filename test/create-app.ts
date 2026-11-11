@@ -17,6 +17,12 @@ class SeamsTestController {
     return user;
   }
 
+  @RequirePermission('wallet')
+  @Get('wallet')
+  wallet(): { ok: true } {
+    return { ok: true };
+  }
+
   @RequirePermission('bo:users:modify')
   @Get('modify-users')
   modifyUsers(): { ok: true } {
