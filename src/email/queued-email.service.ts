@@ -38,7 +38,7 @@ export class QueuedEmailService extends EmailService implements OnApplicationShu
       prefix: queuePrefix(config.appEnv),
       connection: this.connection,
     });
-    // Connection outages are reported by watchRedisConnection.
+    // Keep queue errors at debug level because the connection watcher already warns about outages.
     this.queue.on('error', (err) =>
       logger.debug({ reason: redisErrorReason(err) }, 'email queue error'),
     );
