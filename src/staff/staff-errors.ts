@@ -7,6 +7,7 @@ export const StaffErrorCode = {
   NotInvited: 'NOT_INVITED',
   CannotDeactivateSelf: 'CANNOT_DEACTIVATE_SELF',
   LastAdmin: 'LAST_ADMIN',
+  InvalidInvitation: 'INVALID_INVITATION',
 } as const;
 
 export type StaffErrorCode = (typeof StaffErrorCode)[keyof typeof StaffErrorCode];
@@ -18,6 +19,7 @@ export const STAFF_ERROR_MESSAGES = {
   notInvited: 'Staff member is not in the invited status',
   cannotDeactivateSelf: 'You cannot deactivate your own account',
   lastAdmin: 'The last active admin cannot be deactivated or demoted',
+  invalidInvitation: 'Invitation link is invalid or has expired',
 } as const;
 
 /** `code` is set last, so extra `extensions` cannot override the contract code. */

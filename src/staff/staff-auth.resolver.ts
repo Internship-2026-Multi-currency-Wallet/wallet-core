@@ -3,14 +3,17 @@ import { Args, Mutation, Resolver } from '@nestjs/graphql';
 import { Public } from '../auth/public.decorator.js';
 import { AcceptStaffInvitationInput, StaffLoginInput } from './staff.inputs.js';
 import { StaffAuthPayload } from './staff.model.js';
+import { StaffService } from './staff.service.js';
 
 /**
  * Back-office login, separate from user login: a staff token is never accepted as a user token and
- * vice versa. Contract only: every mutation throws until it is implemented.
+ * vice versa. Contract only: every mutation except acceptStaffInvitation throws until it is implemented.
  * The staff refresh token travels in its own httpOnly cookie, never in arguments or results.
  */
 @Resolver()
 export class StaffAuthResolver {
+  constructor(private readonly staff: StaffService) {}
+
   @Public()
   @Mutation(() => StaffAuthPayload, {
     description:
@@ -43,7 +46,8 @@ export class StaffAuthResolver {
     description:
       'Sets the password of an invited staff member and activates the account. The token works once and expires 48 hours after it was sent. Does not log in: call staffLogin afterwards. Errors: INVALID_INVITATION (unknown, used, expired or replaced token), BAD_USER_INPUT (extensions.field).',
   })
-  acceptStaffInvitation(@Args('input') _input: AcceptStaffInvitationInput): boolean {
-    throw new NotImplementedException('acceptStaffInvitation is not implemented yet');
+  async acceptStaffInvitation(@Args('input') input: AcceptStaffInvitationInput): Promise<boolean> {
+    await this.staff.acceptInvitation(input);
+    return true;
   }
 }

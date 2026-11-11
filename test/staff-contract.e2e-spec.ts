@@ -101,11 +101,12 @@ describe('staff contract (e2e, DEV_AUTH=true)', () => {
     ],
     ['staffRefreshSession', 'mutation { staffRefreshSession { accessToken } }'],
     ['staffLogout', 'mutation { staffLogout }'],
-    [
-      'acceptStaffInvitation',
-      'mutation { acceptStaffInvitation(input: { token: "t", password: "x" }) }',
-    ],
   ])('%s is public', async (_name, query) => {
     expect(await errorCode(query)).toBe('STUB');
+  });
+
+  it('acceptStaffInvitation is public', async () => {
+    const query = 'mutation { acceptStaffInvitation(input: { token: "t", password: "x" }) }';
+    expect(await errorCode(query)).toBe('BAD_USER_INPUT');
   });
 });

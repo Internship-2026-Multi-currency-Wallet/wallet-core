@@ -8,6 +8,7 @@ import { AuthErrorCode } from '../auth/auth-errors.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { restrictClientFields } from '../customizations/client-field-availability.js';
 import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
+import { StaffErrorCode } from '../staff/staff-errors.js';
 import { ThrottleErrorCode } from '../throttling/throttle-errors.js';
 import type { Metrics } from '../metrics/metrics.js';
 import {
@@ -27,7 +28,7 @@ interface ContextInput {
   extra?: { request?: unknown };
 }
 
-const CLIENT_ERROR_CODES = [AuthErrorCode, ThrottleErrorCode].flatMap((codes) =>
+const CLIENT_ERROR_CODES = [AuthErrorCode, ThrottleErrorCode, StaffErrorCode].flatMap((codes) =>
   Object.values(codes),
 );
 
