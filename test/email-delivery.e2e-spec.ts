@@ -110,8 +110,8 @@ describe('email delivery (e2e)', () => {
 });
 
 describe('email enqueue with Redis unreachable (e2e)', () => {
-  it('rejects within about 5 s and reports connection errors through the logger', async () => {
-    const logger = { warn: jest.fn() };
+  it('rejects within about 5 s and reports a safe reason through the logger', async () => {
+    const logger = { warn: jest.fn(), debug: jest.fn(), info: jest.fn() };
     const service = new QueuedEmailService(
       AppConfig.fromEnv({
         ...process.env,
@@ -125,9 +125,10 @@ describe('email enqueue with Redis unreachable (e2e)', () => {
     expect(Date.now() - started).toBeLessThan(6000);
     await waitFor(() => logger.warn.mock.calls.length > 0, 3000);
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ err: expect.anything() }),
-      'email queue connection error',
+      { connection: 'command', reason: 'ECONNREFUSED' },
+      expect.any(String),
     );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('localhost');
     await service.onApplicationShutdown();
   }, 10000);
 });

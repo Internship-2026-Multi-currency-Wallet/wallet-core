@@ -4,7 +4,8 @@ import type { Redis } from 'ioredis';
 import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { Metrics } from '../metrics/metrics.js';
-import { REDIS } from '../redis/redis.module.js';
+import { watchRedisConnection } from '../redis/redis-connection.js';
+import { createSubscriberRedis, REDIS } from '../redis/redis.module.js';
 import { type EventContext, EventPublisher, EventSubscriber } from './event-bus.js';
 
 /**
@@ -56,8 +57,10 @@ export function loggingEventContext(logger: PinoLogger, service: string): EventC
       inject: [REDIS, AppConfig, PinoLogger],
       useFactory: (redis: Redis, config: AppConfig, logger: PinoLogger) => {
         logger.setContext('EventSubscriber');
+        const connection = createSubscriberRedis(redis);
+        watchRedisConnection(connection, logger, 'subscriber');
         return new EventSubscriber(
-          redis.duplicate(),
+          connection,
           config.appEnv,
           (error, channel) =>
             logger.error({ err: error, channel }, `Handler for "${channel}" failed`),

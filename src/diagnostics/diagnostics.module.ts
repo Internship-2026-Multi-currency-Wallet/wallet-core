@@ -16,12 +16,14 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
   Post,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { AppConfig } from '../config/app-config.js';
 import { EventPublisher, EventSubscriber, type Unsubscribe } from '../events/event-bus.js';
+import { redisErrorReason } from '../redis/redis-connection.js';
 
 @Controller('diagnostics')
 export class DiagnosticsController {
@@ -35,11 +37,19 @@ export class DiagnosticsController {
   @Post('ping')
   @HttpCode(200)
   async ping(@CurrentUser() user: AuthUser): Promise<{ published: true }> {
-    await this.publisher.publish('system.ping', {
-      v: 1,
-      from: this.config.serviceName,
-      ts: new Date().toISOString(),
-    });
+    try {
+      await this.publisher.publish('system.ping', {
+        v: 1,
+        from: this.config.serviceName,
+        ts: new Date().toISOString(),
+      });
+    } catch (err) {
+      this.logger.warn(
+        { userId: user.id, reason: redisErrorReason(err) },
+        'system.ping publication failed or timed out',
+      );
+      throw new ServiceUnavailableException('Redis unavailable');
+    }
     this.logger.info({ userId: user.id }, 'system.ping published');
     return { published: true };
   }
@@ -48,22 +58,41 @@ export class DiagnosticsController {
 @Module({ controllers: [DiagnosticsController] })
 export class DiagnosticsModule implements OnModuleInit, OnModuleDestroy {
   private unsubscribe?: Unsubscribe;
+  private closing = false;
 
   constructor(
     @Inject(EventSubscriber) private readonly subscriber: EventSubscriber,
     @InjectPinoLogger(DiagnosticsModule.name) private readonly logger: PinoLogger,
   ) {}
 
-  async onModuleInit(): Promise<void> {
-    this.unsubscribe = await this.subscriber.subscribe('system.ping', (ping, meta) => {
-      this.logger.info(
-        { from: ping.from, publishedAt: meta.publishedAt },
-        `system.ping received from ${ping.from}`,
+  /** Not awaited, so startup does not depend on Redis. */
+  onModuleInit(): void {
+    this.subscriber
+      .subscribe('system.ping', (ping, meta) => {
+        this.logger.info(
+          { from: ping.from, publishedAt: meta.publishedAt },
+          `system.ping received from ${ping.from}`,
+        );
+      })
+      .then(
+        (unsubscribe) => {
+          if (this.closing) return void unsubscribe().catch(() => undefined);
+          this.unsubscribe = unsubscribe;
+          this.logger.debug('subscribed to system.ping');
+        },
+        (err: unknown) => {
+          const fields = { reason: redisErrorReason(err) };
+          if (this.closing) this.logger.debug(fields, 'system.ping subscription cancelled');
+          else this.logger.warn(fields, 'system.ping subscription failed');
+        },
       );
-    });
   }
 
-  async onModuleDestroy(): Promise<void> {
-    await this.unsubscribe?.();
+  /** Not awaited, so a pending UNSUBSCRIBE cannot block shutdown. */
+  onModuleDestroy(): void {
+    this.closing = true;
+    this.unsubscribe?.().catch((err: unknown) =>
+      this.logger.debug({ reason: redisErrorReason(err) }, 'system.ping unsubscribe failed'),
+    );
   }
 }
