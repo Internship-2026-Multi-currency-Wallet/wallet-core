@@ -77,6 +77,14 @@ interface StaffRow {
   updated_at: Date;
 }
 
+interface StaffSessionRow {
+  id: string;
+  staff_id: string;
+  refresh_token_hash: string;
+  expires_at: Date;
+  revoked_at: Date | null;
+}
+
 @Injectable()
 export class StaffRepository {
   constructor(@Inject(KNEX) private readonly db: Knex) {}
@@ -199,6 +207,35 @@ export class StaffRepository {
       .where({ refresh_token_hash: refreshTokenHash })
       .whereNull('revoked_at')
       .update({ revoked_at: at });
+  }
+
+  /**
+   * Locks the session row, then reads the staff row WITHOUT a lock: deactivation and role changes
+   * lock the staff row first and then touch sessions, so locking it here would reverse that order.
+   * An inactive member is not rotated.
+   */
+  async rotateSession(
+    refreshTokenHash: string,
+    newRefreshTokenHash: string,
+    now: Date,
+  ): Promise<{ staff: StaffRecord; expiresAt: Date } | null> {
+    return this.transaction(async (tx) => {
+      const session = await tx
+        .db<StaffSessionRow>(SESSIONS)
+        .where({ refresh_token_hash: refreshTokenHash })
+        .whereNull('revoked_at')
+        .andWhere('expires_at', '>', now)
+        .forUpdate()
+        .first('id', 'staff_id', 'expires_at');
+      if (!session) return null;
+      const staff = await tx.findById(session.staff_id);
+      if (staff?.status !== StaffStatus.ACTIVE) return null;
+      await tx
+        .db(SESSIONS)
+        .where({ id: session.id })
+        .update({ refresh_token_hash: newRefreshTokenHash });
+      return { staff, expiresAt: session.expires_at };
+    });
   }
 
   async resetFailedLogins(id: string, at: Date): Promise<void> {

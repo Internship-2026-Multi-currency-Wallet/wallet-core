@@ -100,7 +100,11 @@ describe('staff contract (e2e, DEV_AUTH=true)', () => {
       'mutation { staffLogin(input: { email: "a@b.co", password: "x" }) { accessToken accessTokenExpiresAt staff { id email role permissions } } }',
       'INVALID_CREDENTIALS',
     ],
-    ['staffRefreshSession', 'mutation { staffRefreshSession { accessToken } }', 'STUB'],
+    [
+      'staffRefreshSession',
+      'mutation { staffRefreshSession { accessToken } }',
+      'INVALID_REFRESH_TOKEN',
+    ],
     ['staffLogout', 'mutation { staffLogout }', undefined],
   ])('%s is public', async (_name, query, expected) => {
     expect(await errorCode(query)).toBe(expected);

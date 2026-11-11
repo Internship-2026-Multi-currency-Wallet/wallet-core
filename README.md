@@ -261,6 +261,7 @@ Real users send the access token from `login`: `Authorization: Bearer <jwt>`. `J
 locally (HS256 with `JWT_SECRET`, issuer, expiry, claims), the same way rates-service and treasury-service do.
 The token's `aud` says who it is for: `wallet` gives `user.kind = 'client'`, `backoffice` gives `'staff'`
 (`KIND_BY_AUDIENCE` in `src/auth/access-token.ts`). A token without a known `aud` gets 401.
+`me` accepts both token kinds (client and staff) and returns `kind`.
 
 With `DEV_AUTH=true` the `DevAuthStrategy` also accepts:
 
@@ -328,6 +329,7 @@ In dev mode act as a staff member with e.g. `Dev 1:bo,bo:staff,bo:staff:modify`.
 refresh token travels only in the httpOnly `staff_refresh_token` cookie (path `/graphql`, SameSite=Strict), never in
 the user's `refresh_token`. Lockout works as for users: 5 wrong passwords in a row lock the account for 15 minutes
 (`ACCOUNT_LOCKED`). `staffLogout` ends the cookie's session and clears the cookie.
+`staffRefreshSession` rotates the cookie and issues an access token with the current role; it does not extend the session, and a user `refresh_token` cookie never works on it (nor the staff cookie on `refreshSession`).
 
 ### Client settings — `src/settings`
 

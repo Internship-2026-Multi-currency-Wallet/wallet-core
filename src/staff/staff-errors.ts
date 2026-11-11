@@ -11,6 +11,7 @@ export const StaffErrorCode = {
   InvalidInvitation: 'INVALID_INVITATION',
   InvalidCredentials: 'INVALID_CREDENTIALS',
   AccountLocked: 'ACCOUNT_LOCKED',
+  InvalidRefreshToken: 'INVALID_REFRESH_TOKEN',
 } as const;
 
 export type StaffErrorCode = (typeof StaffErrorCode)[keyof typeof StaffErrorCode];
@@ -25,6 +26,7 @@ export const STAFF_ERROR_MESSAGES = {
   invalidInvitation: 'Invitation link is invalid or has expired',
   invalidCredentials: AUTH_ERROR_MESSAGES.invalidCredentials,
   accountLocked: AUTH_ERROR_MESSAGES.accountLocked,
+  invalidRefreshToken: AUTH_ERROR_MESSAGES.invalidRefreshToken,
 } as const;
 
 /** `code` is set last, so extra `extensions` cannot override the contract code. */

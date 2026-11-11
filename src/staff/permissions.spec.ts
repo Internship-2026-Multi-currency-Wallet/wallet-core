@@ -1,3 +1,4 @@
+import { isStaffPermission } from '../auth/user-kind.js';
 import { PERMISSIONS, ROLE_PERMISSIONS, StaffRole } from './permissions.js';
 
 describe('ROLE_PERMISSIONS', () => {
@@ -31,6 +32,12 @@ describe('ROLE_PERMISSIONS', () => {
     for (const role of Object.values(StaffRole)) {
       expect(ROLE_PERMISSIONS[role]).toContain('bo');
       expect(ROLE_PERMISSIONS[role]).not.toContain('wallet');
+    }
+  });
+
+  it('gives no role a permission outside the staff namespace', () => {
+    for (const role of Object.values(StaffRole)) {
+      expect(ROLE_PERMISSIONS[role].filter((p) => !isStaffPermission(p))).toEqual([]);
     }
   });
 });

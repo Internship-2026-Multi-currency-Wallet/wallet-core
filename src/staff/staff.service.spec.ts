@@ -128,6 +128,21 @@ class FakeStaffRepository {
     return Promise.resolve();
   }
 
+  rotateSession(
+    refreshTokenHash: string,
+    newRefreshTokenHash: string,
+    now: Date,
+  ): Promise<{ staff: StaffRecord; expiresAt: Date } | null> {
+    this.calls.push('rotateSession');
+    const session = this.sessions.find(
+      (s) => s.refreshTokenHash === refreshTokenHash && !s.revokedAt && s.expiresAt > now,
+    );
+    const staff = session && this.find(session.staffId);
+    if (!session || staff?.status !== StaffStatus.ACTIVE) return Promise.resolve(null);
+    session.refreshTokenHash = newRefreshTokenHash;
+    return Promise.resolve({ staff, expiresAt: session.expiresAt });
+  }
+
   findById(id: string): Promise<StaffRecord | undefined> {
     this.calls.push('findById');
     return Promise.resolve(this.find(id));
@@ -1282,5 +1297,71 @@ describe('StaffService.logout', () => {
     expect(repo.sessions[0].revokedAt).toBeUndefined();
     await service.logout(refreshToken, NOW);
     expect(repo.sessions[0].revokedAt).toEqual(NOW);
+  });
+});
+
+describe('StaffService.refresh', () => {
+  const PASSWORD = 'Str0ng!Passw0rd';
+  const EMAIL = 'refresh.person@test.com';
+  let passwordHash: string;
+  beforeAll(async () => {
+    passwordHash = await hash(PASSWORD);
+  });
+
+  const loggedIn = async (role = StaffRole.SUPPORT) => {
+    const ctx = setup();
+    ctx.repo.seed(SUPPORT_ID, { email: EMAIL, passwordHash, role });
+    const login = await ctx.service.login({ email: EMAIL, password: PASSWORD }, undefined, NOW);
+    ctx.repo.calls.length = 0;
+    return { ...ctx, login };
+  };
+
+  it('answers INVALID_REFRESH_TOKEN without touching the repository when there is no token', async () => {
+    const { service, repo } = setup();
+
+    const error = await graphqlErrorOf(service.refresh(undefined, NOW));
+
+    expect(error.extensions).toEqual({ code: 'INVALID_REFRESH_TOKEN' });
+    expect(error.message).toBe('Session expired, please log in again');
+    expect(repo.calls).toEqual([]);
+  });
+
+  it('builds the token from the role read by the rotation and keeps the session end', async () => {
+    const { service, repo, tokens, login } = await loggedIn();
+    repo.records.set(SUPPORT_ID, { ...repo.records.get(SUPPORT_ID)!, role: StaffRole.FINANCE });
+    const later = new Date(NOW.getTime() + HOUR_MS);
+
+    const result = await service.refresh(login.refreshToken, later);
+
+    expect(tokens.signAccessToken).toHaveBeenLastCalledWith(
+      { userId: SUPPORT_ID, aud: 'backoffice', permissions: [...ROLE_PERMISSIONS.FINANCE] },
+      later,
+    );
+    expect(result.payload.staff.role).toBe(StaffRole.FINANCE);
+    expect(result.payload.accessToken).toBe('jwt:bo,bo:settings,bo:settings:modify');
+    expect(result.sessionExpiresAt).toEqual(login.sessionExpiresAt);
+    expect(result.refreshToken).not.toBe(login.refreshToken);
+    expect(repo.sessions[0].refreshTokenHash).toBe(sha256(result.refreshToken));
+  });
+
+  it('answers INVALID_REFRESH_TOKEN and warns when the rotation finds nothing', async () => {
+    const { service, logger } = setup();
+
+    const error = await graphqlErrorOf(service.refresh('x'.repeat(43), NOW));
+
+    expect(error.extensions).toEqual({ code: 'INVALID_REFRESH_TOKEN' });
+    expect(logger.warn).toHaveBeenCalledWith('staff session refresh rejected');
+  });
+
+  it('logs only the staff id, never token, hash or email', async () => {
+    const { service, logger, login } = await loggedIn();
+    const ok = await service.refresh(login.refreshToken, NOW);
+    await graphqlErrorOf(service.refresh(login.refreshToken, NOW));
+
+    const seen = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls]);
+    for (const secret of [login.refreshToken, sha256(login.refreshToken), ok.refreshToken, EMAIL]) {
+      expect(seen).not.toContain(secret);
+    }
+    expect(logger.info).toHaveBeenCalledWith({ staffId: SUPPORT_ID }, 'staff session refreshed');
   });
 });

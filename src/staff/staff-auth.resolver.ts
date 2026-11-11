@@ -1,4 +1,3 @@
-import { NotImplementedException } from '@nestjs/common';
 import { Args, Context, Mutation, Resolver } from '@nestjs/graphql';
 import { httpResponseOf } from '../auth/auth.resolver.js';
 import { Public } from '../auth/public.decorator.js';
@@ -54,8 +53,20 @@ export class StaffAuthResolver {
     description:
       'Issues a new access token using the staff refresh token cookie, with the current role. Does not extend the 8-hour session. Errors: INVALID_REFRESH_TOKEN (also after deactivation or a role change).',
   })
-  staffRefreshSession(): StaffAuthPayload {
-    throw new NotImplementedException('staffRefreshSession is not implemented yet');
+  async staffRefreshSession(@Context() context: GraphqlContext): Promise<StaffAuthPayload> {
+    const res = httpResponseOf(context);
+    // A failed refresh leaves the cookie alone: a parallel refresh may have just set a new one.
+    const result = await this.staff.refresh(
+      readRefreshToken(context.req, STAFF_REFRESH_TOKEN_COOKIE),
+    );
+    setRefreshTokenCookie(
+      res,
+      result.refreshToken,
+      result.sessionExpiresAt,
+      this.config.isProduction,
+      STAFF_REFRESH_TOKEN_COOKIE,
+    );
+    return result.payload;
   }
 
   @Public()
