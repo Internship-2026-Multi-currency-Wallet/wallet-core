@@ -3,6 +3,7 @@ import type { CookieOptions, Response } from 'express';
 import type { RequestLike } from './request-context.js';
 
 export const REFRESH_TOKEN_COOKIE = 'refresh_token';
+export const STAFF_REFRESH_TOKEN_COOKIE = 'staff_refresh_token';
 
 /**
  * Omit Domain to restrict delivery to this host, and disable Secure locally for browsers that
@@ -17,17 +18,25 @@ export function setRefreshTokenCookie(
   token: string,
   expiresAt: Date,
   secure: boolean,
+  name = REFRESH_TOKEN_COOKIE,
 ): void {
-  res.cookie(REFRESH_TOKEN_COOKIE, token, { ...cookieOptions(secure), expires: expiresAt });
+  res.cookie(name, token, { ...cookieOptions(secure), expires: expiresAt });
 }
 
 // Clearing must target the same cookie name, domain, and path.
-export function clearRefreshTokenCookie(res: Response, secure: boolean): void {
-  res.clearCookie(REFRESH_TOKEN_COOKIE, cookieOptions(secure));
+export function clearRefreshTokenCookie(
+  res: Response,
+  secure: boolean,
+  name = REFRESH_TOKEN_COOKIE,
+): void {
+  res.clearCookie(name, cookieOptions(secure));
 }
 
-export function readRefreshToken(req: RequestLike): string | undefined {
+export function readRefreshToken(
+  req: RequestLike,
+  name = REFRESH_TOKEN_COOKIE,
+): string | undefined {
   const header = req.headers.cookie;
   if (typeof header !== 'string') return undefined;
-  return parseCookie(header)[REFRESH_TOKEN_COOKIE] || undefined;
+  return parseCookie(header)[name] || undefined;
 }

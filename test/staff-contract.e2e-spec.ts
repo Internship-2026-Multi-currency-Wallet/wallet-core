@@ -7,7 +7,7 @@ import { createApp } from './create-app.js';
 
 /**
  * Staff GraphQL contract: who may call which operation. Staff management operations are implemented
- * and reach the service once the guards pass; `changeOwnStaffPassword` and the public staff auth
+ * and reach the service once the guards pass; `staffLogin` and `staffLogout` are implemented; `changeOwnStaffPassword` and the other public staff auth
  * mutations are still stubs and answer "not implemented" (`STUB`).
  */
 describe('staff contract (e2e, DEV_AUTH=true)', () => {
@@ -98,11 +98,12 @@ describe('staff contract (e2e, DEV_AUTH=true)', () => {
     [
       'staffLogin',
       'mutation { staffLogin(input: { email: "a@b.co", password: "x" }) { accessToken accessTokenExpiresAt staff { id email role permissions } } }',
+      'INVALID_CREDENTIALS',
     ],
-    ['staffRefreshSession', 'mutation { staffRefreshSession { accessToken } }'],
-    ['staffLogout', 'mutation { staffLogout }'],
-  ])('%s is public', async (_name, query) => {
-    expect(await errorCode(query)).toBe('STUB');
+    ['staffRefreshSession', 'mutation { staffRefreshSession { accessToken } }', 'STUB'],
+    ['staffLogout', 'mutation { staffLogout }', undefined],
+  ])('%s is public', async (_name, query, expected) => {
+    expect(await errorCode(query)).toBe(expected);
   });
 
   it('acceptStaffInvitation is public', async () => {

@@ -1,15 +1,18 @@
 import { createHash } from 'node:crypto';
 import { jest } from '@jest/globals';
-import { verify } from '@node-rs/argon2';
+import { hash, verify } from '@node-rs/argon2';
 import { GraphQLError } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
+import { MAX_FAILED_LOGINS } from '../auth/auth.service.js';
+import type { TokenService } from '../auth/tokens.js';
 import { AppConfig } from '../config/app-config.js';
 import { EmailService, type EmailTemplate, type EmailTemplates } from '../email/email.service.js';
-import { StaffRole } from './permissions.js';
+import { ROLE_PERMISSIONS, StaffRole } from './permissions.js';
 import { StaffStatus } from './staff.model.js';
 import {
   type NewInvitation,
   type NewStaff,
+  type NewStaffSession,
   type StaffRecord,
   type StaffRepository,
   InsertStaffResult,
@@ -33,6 +36,9 @@ class FakeStaffRepository {
   /** Runs once, after the first findInvitationStaffId: lets a test commit a concurrent change. */
   afterFirstFind: (() => Promise<void>) | undefined;
   readonly revocations: Revocation[] = [];
+  readonly sessions: (NewStaffSession & { revokedAt?: Date })[] = [];
+  /** Runs once, after the first findByEmail: lets a test commit a concurrent change. */
+  afterFindByEmail: (() => void) | undefined;
   /** Lock, read and write calls in order, to check the locking protocol. */
   readonly calls: string[] = [];
 
@@ -66,6 +72,60 @@ class FakeStaffRepository {
       updatedAt: staff.createdAt,
     });
     return Promise.resolve(InsertStaffResult.Created);
+  }
+
+  findByEmail(email: string): Promise<StaffRecord | undefined> {
+    this.calls.push('findByEmail');
+    const found = [...this.records.values()].find((r) => r.email === email);
+    const snapshot = found && { ...found };
+    const hook = this.afterFindByEmail;
+    this.afterFindByEmail = undefined;
+    hook?.();
+    return Promise.resolve(snapshot);
+  }
+
+  recordFailedLogin(
+    id: string,
+    policy: { now: Date; maxFailedAttempts: number; lockDurationMs: number },
+  ): Promise<Date | null> {
+    this.calls.push('recordFailedLogin');
+    const record = this.records.get(id)!;
+    if (record.lockedUntil && record.lockedUntil > policy.now) {
+      return Promise.resolve(record.lockedUntil);
+    }
+    const attempts = record.failedLoginAttempts + 1;
+    const lockedUntil =
+      attempts >= policy.maxFailedAttempts
+        ? new Date(policy.now.getTime() + policy.lockDurationMs)
+        : null;
+    this.records.set(id, {
+      ...record,
+      failedLoginAttempts: lockedUntil ? 0 : attempts,
+      lockedUntil,
+      updatedAt: policy.now,
+    });
+    return Promise.resolve(lockedUntil);
+  }
+
+  resetFailedLogins(id: string, at: Date): Promise<void> {
+    this.calls.push('resetFailedLogins');
+    const record = this.records.get(id)!;
+    this.records.set(id, { ...record, failedLoginAttempts: 0, lockedUntil: null, updatedAt: at });
+    return Promise.resolve();
+  }
+
+  createSession(session: NewStaffSession): Promise<void> {
+    this.calls.push('createSession');
+    this.sessions.push({ ...session });
+    return Promise.resolve();
+  }
+
+  revokeSessionByHash(refreshTokenHash: string, at: Date): Promise<void> {
+    this.calls.push('revokeSessionByHash');
+    for (const s of this.sessions) {
+      if (s.refreshTokenHash === refreshTokenHash && !s.revokedAt) s.revokedAt = at;
+    }
+    return Promise.resolve();
   }
 
   findById(id: string): Promise<StaffRecord | undefined> {
@@ -213,13 +273,20 @@ function setup(backofficeUrl = 'https://bo.test', config?: AppConfig) {
   const repo = new FakeStaffRepository();
   const email = new RecordingEmailService(repo);
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), setContext: jest.fn() };
+  const tokens = {
+    signAccessToken: jest.fn((subject: { permissions: string[] }, now: Date) => ({
+      token: `jwt:${subject.permissions.join(',')}`,
+      expiresAt: new Date(now.getTime() + 15 * 60 * 1000),
+    })),
+  };
   const service = new StaffService(
     repo as unknown as StaffRepository,
     logger as unknown as PinoLogger,
     email,
     config ?? ({ backofficeUrl } as AppConfig),
+    tokens as unknown as TokenService,
   );
-  return { service, repo, logger, email };
+  return { service, repo, logger, email, tokens };
 }
 
 async function graphqlErrorOf(promise: Promise<unknown>): Promise<GraphQLError> {
@@ -1014,5 +1081,206 @@ describe('StaffService.acceptInvitation', () => {
     for (const secret of [TOKEN, sha256(TOKEN), 'unknown', 'secret.person@test.com', PASSWORD]) {
       expect(seen).not.toContain(secret);
     }
+  });
+});
+
+describe('StaffService.login', () => {
+  const PASSWORD = 'Str0ng!Passw0rd';
+  const EMAIL = 'login.person@test.com';
+  const MESSAGE = 'Invalid email or password';
+  let passwordHash: string;
+  beforeAll(async () => {
+    passwordHash = await hash(PASSWORD);
+  });
+
+  const active = (overrides: Partial<StaffRecord> = {}) => {
+    const ctx = setup();
+    ctx.repo.seed(SUPPORT_ID, { email: EMAIL, passwordHash, ...overrides });
+    return ctx;
+  };
+
+  it('issues a token with the role permissions and a session of 8 hours', async () => {
+    const { service, repo, tokens } = active({ role: StaffRole.FINANCE });
+
+    const result = await service.login(
+      { email: ' Login.Person@Test.com ', password: PASSWORD },
+      undefined,
+      NOW,
+    );
+
+    expect(tokens.signAccessToken).toHaveBeenCalledWith(
+      { userId: SUPPORT_ID, aud: 'backoffice', permissions: [...ROLE_PERMISSIONS.FINANCE] },
+      NOW,
+    );
+    expect(result.payload.staff).toEqual({
+      id: SUPPORT_ID,
+      email: EMAIL,
+      role: StaffRole.FINANCE,
+      permissions: ['bo', 'bo:settings', 'bo:settings:modify'],
+    });
+    expect(result.payload.accessToken).toBe('jwt:bo,bo:settings,bo:settings:modify');
+    expect(result.sessionExpiresAt).toEqual(new Date(NOW.getTime() + 8 * HOUR_MS));
+    expect(repo.sessions).toEqual([
+      {
+        id: expect.any(String),
+        staffId: SUPPORT_ID,
+        refreshTokenHash: sha256(result.refreshToken),
+        expiresAt: result.sessionExpiresAt,
+        createdAt: NOW,
+      },
+    ]);
+  });
+
+  it.each([
+    ['unknown email', undefined, 'nobody@test.com'],
+    ['invited member', { status: StaffStatus.INVITED, passwordHash: null }, EMAIL],
+    ['deactivated member', { status: StaffStatus.DEACTIVATED }, EMAIL],
+  ])(
+    'answers INVALID_CREDENTIALS for %s without counting a failure',
+    async (_n, overrides, email) => {
+      const { service, repo } = active(overrides);
+
+      const error = await graphqlErrorOf(
+        service.login({ email, password: PASSWORD }, undefined, NOW),
+      );
+
+      expect(error.message).toBe(MESSAGE);
+      expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+      expect(repo.calls).not.toContain('recordFailedLogin');
+      expect(repo.sessions).toHaveLength(0);
+    },
+  );
+
+  it('answers INVALID_CREDENTIALS for an over-long password without any lookup', async () => {
+    const { service, repo } = active();
+    const error = await graphqlErrorOf(
+      service.login({ email: EMAIL, password: 'a'.repeat(129) }, undefined, NOW),
+    );
+    expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+    expect(repo.calls).toEqual([]);
+  });
+
+  it('locks after the fifth wrong password for 15 minutes, then lets in and resets', async () => {
+    const { service, repo } = active();
+    const wrong = { email: EMAIL, password: 'Wr0ng!Passw0rd' };
+    for (let i = 1; i < MAX_FAILED_LOGINS; i += 1) {
+      const error = await graphqlErrorOf(service.login(wrong, undefined, NOW));
+      expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+    }
+    const fifth = await graphqlErrorOf(service.login(wrong, undefined, NOW));
+    const until = new Date(NOW.getTime() + 15 * 60 * 1000);
+    expect(fifth.extensions).toEqual({ code: 'ACCOUNT_LOCKED', lockedUntil: until.toISOString() });
+    expect(fifth.message).toBe(`Account is locked until ${until.toISOString()}`);
+
+    const locked = await graphqlErrorOf(
+      service.login(
+        { email: EMAIL, password: PASSWORD },
+        undefined,
+        new Date(NOW.getTime() + 1000),
+      ),
+    );
+    expect(locked.extensions.code).toBe('ACCOUNT_LOCKED');
+    expect(repo.sessions).toHaveLength(0);
+
+    await service.login({ email: EMAIL, password: PASSWORD }, undefined, until);
+    expect(repo.sessions).toHaveLength(1);
+    expect(repo.records.get(SUPPORT_ID)).toMatchObject({
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+    });
+  });
+
+  it('uses the role committed between the email lookup and the lock', async () => {
+    const { service, repo } = active({ role: StaffRole.SUPPORT });
+    repo.afterFindByEmail = () => {
+      repo.records.set(SUPPORT_ID, { ...repo.records.get(SUPPORT_ID)!, role: StaffRole.ADMIN });
+    };
+
+    const result = await service.login({ email: EMAIL, password: PASSWORD }, undefined, NOW);
+
+    expect(result.payload.staff.role).toBe(StaffRole.ADMIN);
+    expect(result.payload.staff.permissions).toEqual([...ROLE_PERMISSIONS.ADMIN]);
+    expect(result.payload.accessToken).toBe(`jwt:${ROLE_PERMISSIONS.ADMIN.join(',')}`);
+  });
+
+  it.each([
+    ['deactivated', { status: StaffStatus.DEACTIVATED }],
+    ['given another password', { passwordHash: 'other-hash' }],
+  ])('rejects without a session when the member was %s under the lock', async (_n, change) => {
+    const { service, repo } = active();
+    repo.afterFindByEmail = () => {
+      repo.records.set(SUPPORT_ID, { ...repo.records.get(SUPPORT_ID)!, ...change });
+    };
+
+    const error = await graphqlErrorOf(
+      service.login({ email: EMAIL, password: PASSWORD }, undefined, NOW),
+    );
+
+    expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+    expect(repo.sessions).toHaveLength(0);
+  });
+
+  it('rejects with ACCOUNT_LOCKED when a parallel guess locked the account under the lock', async () => {
+    const { service, repo } = active();
+    const lockedUntil = new Date(NOW.getTime() + 15 * 60 * 1000);
+    repo.afterFindByEmail = () => {
+      repo.records.set(SUPPORT_ID, { ...repo.records.get(SUPPORT_ID)!, lockedUntil });
+    };
+    const error = await graphqlErrorOf(
+      service.login({ email: EMAIL, password: PASSWORD }, undefined, NOW),
+    );
+    expect(error.extensions).toEqual({
+      code: 'ACCOUNT_LOCKED',
+      lockedUntil: lockedUntil.toISOString(),
+    });
+    expect(repo.sessions).toHaveLength(0);
+  });
+
+  it('revokes the session of the previous staff cookie in the same login', async () => {
+    const { service, repo } = active();
+    const first = await service.login({ email: EMAIL, password: PASSWORD }, undefined, NOW);
+    const second = await service.login(
+      { email: EMAIL, password: PASSWORD },
+      first.refreshToken,
+      NOW,
+    );
+
+    expect(repo.sessions.map((s) => s.revokedAt)).toEqual([NOW, undefined]);
+    expect(repo.sessions[1].refreshTokenHash).toBe(sha256(second.refreshToken));
+  });
+
+  it('logs only the staff id, never email, password, token or hash', async () => {
+    const { service, logger } = active();
+    const unknown = { email: 'nobody@test.com', password: 'Wr0ng!Pass' };
+    await graphqlErrorOf(service.login(unknown, undefined, NOW));
+    await graphqlErrorOf(service.login({ email: EMAIL, password: 'Wr0ng!Pass' }, undefined, NOW));
+    const ok = await service.login({ email: EMAIL, password: PASSWORD }, undefined, NOW);
+
+    const seen = JSON.stringify([
+      logger.info.mock.calls,
+      logger.warn.mock.calls,
+      logger.error.mock.calls,
+    ]);
+    const secrets = [EMAIL, 'nobody@test.com', PASSWORD, 'Wr0ng!Pass', passwordHash];
+    secrets.push(ok.refreshToken, sha256(ok.refreshToken), ok.payload.accessToken);
+    for (const secret of secrets) expect(seen).not.toContain(secret);
+    expect(seen).toContain(SUPPORT_ID);
+  });
+});
+
+describe('StaffService.logout', () => {
+  it('revokes the session of the token, and ignores a missing token', async () => {
+    const { service, repo } = setup();
+    repo.seed(SUPPORT_ID, { passwordHash: await hash('Str0ng!Passw0rd') });
+    const { refreshToken } = await service.login(
+      { email: `${SUPPORT_ID}@test.com`, password: 'Str0ng!Passw0rd' },
+      undefined,
+      NOW,
+    );
+
+    await service.logout(undefined, NOW);
+    expect(repo.sessions[0].revokedAt).toBeUndefined();
+    await service.logout(refreshToken, NOW);
+    expect(repo.sessions[0].revokedAt).toEqual(NOW);
   });
 });

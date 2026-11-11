@@ -81,7 +81,7 @@ export class AuthResolver {
 }
 
 // A websocket has no response to carry the cookie, so the session would be lost.
-function httpResponseOf(context: GraphqlContext): Response {
+export function httpResponseOf(context: GraphqlContext): Response {
   if (!context.res) {
     throw new GraphQLError('Use HTTP for this operation, not the websocket', {
       extensions: { code: 'BAD_REQUEST' },

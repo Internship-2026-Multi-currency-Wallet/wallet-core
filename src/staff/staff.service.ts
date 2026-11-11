@@ -1,14 +1,20 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { hash } from '@node-rs/argon2';
+import { hash, verify } from '@node-rs/argon2';
 import type { GraphQLError } from 'graphql';
 import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { EmailService } from '../email/email.service.js';
-import { registerInputSchema } from '../auth/register.schema.js';
+import { LOGIN_LOCK_MS, MAX_FAILED_LOGINS } from '../auth/auth.service.js';
+import { PASSWORD_MAX_LENGTH, registerInputSchema } from '../auth/register.schema.js';
+import { TokenService, hashRefreshToken, newRefreshToken } from '../auth/tokens.js';
 import { ROLE_PERMISSIONS, StaffRole } from './permissions.js';
-import type { AcceptStaffInvitationInput, InviteStaffInput } from './staff.inputs.js';
-import { StaffMe, StaffMember, StaffStatus } from './staff.model.js';
+import type {
+  AcceptStaffInvitationInput,
+  InviteStaffInput,
+  StaffLoginInput,
+} from './staff.inputs.js';
+import { StaffAuthPayload, StaffMe, StaffMember, StaffStatus } from './staff.model.js';
 import { InsertStaffResult, type StaffRecord, StaffRepository } from './staff.repository.js';
 import { STAFF_ERROR_MESSAGES, StaffErrorCode, staffError } from './staff-errors.js';
 
@@ -18,15 +24,27 @@ export interface InvitationResult {
 }
 
 const INVITATION_TTL_MS = 48 * 60 * 60 * 1000;
+export const STAFF_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+
+export interface StaffLoginResult {
+  payload: StaffAuthPayload;
+  /** For the cookie only; never part of the response body. */
+  refreshToken: string;
+  sessionExpiresAt: Date;
+}
 
 @Injectable()
 export class StaffService {
+  // Verified against for an unusable account, so the answer takes as long as for a real one.
+  private readonly dummyHash: Promise<string> = hash(randomBytes(16).toString('hex'));
+
   constructor(
     private readonly staff: StaffRepository,
     // Not `@InjectPinoLogger`: its provider only exists if this file loads before LoggingModule.
     private readonly logger: PinoLogger,
     private readonly email: EmailService,
     private readonly config: AppConfig,
+    private readonly tokens: TokenService,
   ) {
     logger.setContext(StaffService.name);
   }
@@ -161,6 +179,78 @@ export class StaffService {
     );
   }
 
+  async login(
+    input: StaffLoginInput,
+    previousRefreshToken?: string,
+    now: Date = new Date(),
+  ): Promise<StaffLoginResult> {
+    if (input.password.length > PASSWORD_MAX_LENGTH) throw invalidCredentials();
+
+    const found = await this.staff.findByEmail(input.email.trim().toLowerCase());
+    if (found?.status !== StaffStatus.ACTIVE || found.passwordHash === null) {
+      await verify(await this.dummyHash, input.password);
+      this.logger.warn('staff login rejected: unknown or unusable account');
+      throw invalidCredentials();
+    }
+    // Checked before the password, so a locked account does not tell whether a guess was right.
+    if (found.lockedUntil && found.lockedUntil > now) {
+      this.logger.warn({ staffId: found.id }, 'staff login rejected: account locked');
+      throw accountLocked(found.lockedUntil);
+    }
+
+    const verifiedHash = found.passwordHash;
+    if (!(await verify(verifiedHash, input.password))) {
+      const lockedUntil = await this.staff.recordFailedLogin(found.id, {
+        now,
+        maxFailedAttempts: MAX_FAILED_LOGINS,
+        lockDurationMs: LOGIN_LOCK_MS,
+      });
+      this.logger.warn({ staffId: found.id, locked: lockedUntil !== null }, 'staff login rejected');
+      throw lockedUntil ? accountLocked(lockedUntil) : invalidCredentials();
+    }
+
+    const refreshToken = newRefreshToken();
+    const sessionExpiresAt = new Date(now.getTime() + STAFF_SESSION_TTL_MS);
+    // The session is inserted under the row lock that deactivation and role changes also take,
+    // after rechecking what argon2 ran against.
+    const row = await this.staff.transaction(async (tx) => {
+      const locked = await tx.lockById(found.id);
+      if (locked?.status !== StaffStatus.ACTIVE || locked.passwordHash !== verifiedHash) {
+        throw invalidCredentials();
+      }
+      if (locked.lockedUntil && locked.lockedUntil > now) throw accountLocked(locked.lockedUntil);
+      await tx.resetFailedLogins(locked.id, now);
+      await tx.createSession({
+        id: randomUUID(),
+        staffId: locked.id,
+        refreshTokenHash: refreshToken.hash,
+        expiresAt: sessionExpiresAt,
+        createdAt: now,
+      });
+      if (previousRefreshToken) {
+        await tx.revokeSessionByHash(hashRefreshToken(previousRefreshToken), now);
+      }
+      return locked;
+    });
+
+    // Built from the locked row, so a role change committed after the first read is honoured.
+    const staff = toMe(row);
+    const access = this.tokens.signAccessToken(
+      { userId: row.id, aud: 'backoffice', permissions: staff.permissions },
+      now,
+    );
+    this.logger.info({ staffId: row.id }, 'staff logged in');
+    return {
+      payload: { accessToken: access.token, accessTokenExpiresAt: access.expiresAt, staff },
+      refreshToken: refreshToken.token,
+      sessionExpiresAt,
+    };
+  }
+
+  async logout(refreshToken: string | undefined, now: Date = new Date()): Promise<void> {
+    if (refreshToken) await this.staff.revokeSessionByHash(hashRefreshToken(refreshToken), now);
+  }
+
   async deactivate(actorId: string, staffId: string, now: Date = new Date()): Promise<StaffMember> {
     const { record, changed } = await this.staff.transaction(async (tx) => {
       const admins = await tx.lockActiveAdminIds();
@@ -218,14 +308,27 @@ export class StaffService {
   }
 
   async me(actorId: string): Promise<StaffMe> {
-    const record = await findOrThrow(this.staff, actorId);
-    return {
-      id: record.id,
-      email: record.email,
-      role: record.role,
-      permissions: [...ROLE_PERMISSIONS[record.role]],
-    };
+    return toMe(await findOrThrow(this.staff, actorId));
   }
+}
+
+function toMe(record: StaffRecord): StaffMe {
+  return {
+    id: record.id,
+    email: record.email,
+    role: record.role,
+    permissions: [...ROLE_PERMISSIONS[record.role]],
+  };
+}
+
+function invalidCredentials(): GraphQLError {
+  return staffError(StaffErrorCode.InvalidCredentials, STAFF_ERROR_MESSAGES.invalidCredentials);
+}
+
+function accountLocked(lockedUntil: Date): GraphQLError {
+  return staffError(StaffErrorCode.AccountLocked, STAFF_ERROR_MESSAGES.accountLocked(lockedUntil), {
+    lockedUntil: lockedUntil.toISOString(),
+  });
 }
 
 /** `admins` must come from `lockActiveAdminIds` in the same transaction. */
