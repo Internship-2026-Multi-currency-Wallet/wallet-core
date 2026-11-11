@@ -179,10 +179,13 @@ export class StaffRepository {
     });
   }
 
-  async findInvitationStaffId(tokenHash: string): Promise<string | undefined> {
+  async findInvitationStaffId(tokenHash: string, now: Date): Promise<string | undefined> {
+    // Rejects dead tokens before argon2 and the admin locks; consumeInvitation under the locks stays authoritative.
     const row = (await this.db(INVITATIONS)
       .select('staff_id')
       .where({ token_hash: tokenHash })
+      .whereNull('used_at')
+      .where('expires_at', '>', now)
       .first()) as { staff_id: string } | undefined;
     return row?.staff_id;
   }

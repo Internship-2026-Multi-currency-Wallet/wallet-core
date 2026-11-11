@@ -123,6 +123,31 @@ describe('acceptStaffInvitation (e2e, real MySQL)', () => {
     expect((await repo.findById(STAFF_ID))?.status).toBe(StaffStatus.INVITED);
   });
 
+  it('many aliased accepts of one token in one request activate once and refuse the second', async () => {
+    await seedInvitation();
+    const aliases = ['a1', 'a2', 'a3', 'a4', 'a5'];
+    const query = `mutation { ${aliases
+      .map(
+        (a, i) =>
+          `${a}: acceptStaffInvitation(input: { token: "${TOKEN}", password: "Str0ng!Passw0rd${i}" })`,
+      )
+      .join(' ')} }`;
+    const body = (
+      await request(app.getHttpServer() as App)
+        .post('/graphql')
+        .send({ query })
+    ).body as GqlResponse;
+
+    // The field is Boolean!, so the first refusal (a2) nulls data and stops the serial mutations.
+    expect(body.data).toBeNull();
+    expect(body.errors).toHaveLength(1);
+    expect(body.errors![0].extensions.code).toBe('INVALID_INVITATION');
+    expect((body.errors![0] as { path?: string[] }).path).toEqual(['a2']);
+    const record = await repo.findById(STAFF_ID);
+    expect(record?.status).toBe(StaffStatus.ACTIVE);
+    await expect(verify(record!.passwordHash!, `Str0ng!Passw0rd0`)).resolves.toBe(true);
+  });
+
   it('a resend replaces the link: the old token fails, the new one works', async () => {
     await repo.insert({
       id: ADMIN_ID,
