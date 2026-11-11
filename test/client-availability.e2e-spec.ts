@@ -152,6 +152,7 @@ interface Booted {
 async function boot(client: ClientCode): Promise<Booted> {
   const config = AppConfig.fromEnv({
     NODE_ENV: 'production',
+    BACKOFFICE_URL: 'https://bo.example.com',
     APP_ENV: 'local',
     CLIENT: client,
     DEV_AUTH: 'true',

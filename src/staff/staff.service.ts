@@ -1,12 +1,19 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
+import { AppConfig } from '../config/app-config.js';
+import { EmailService } from '../email/email.service.js';
 import { registerInputSchema } from '../auth/register.schema.js';
 import { ROLE_PERMISSIONS, StaffRole } from './permissions.js';
 import type { InviteStaffInput } from './staff.inputs.js';
 import { StaffMe, StaffMember, StaffStatus } from './staff.model.js';
 import { InsertStaffResult, type StaffRecord, StaffRepository } from './staff.repository.js';
 import { STAFF_ERROR_MESSAGES, StaffErrorCode, staffError } from './staff-errors.js';
+
+export interface InvitationResult {
+  member: StaffMember;
+  link: string;
+}
 
 const INVITATION_TTL_MS = 48 * 60 * 60 * 1000;
 
@@ -16,6 +23,8 @@ export class StaffService {
     private readonly staff: StaffRepository,
     // Not `@InjectPinoLogger`: its provider only exists if this file loads before LoggingModule.
     private readonly logger: PinoLogger,
+    private readonly email: EmailService,
+    private readonly config: AppConfig,
   ) {
     logger.setContext(StaffService.name);
   }
@@ -25,9 +34,35 @@ export class StaffService {
     input: InviteStaffInput,
     now: Date = new Date(),
   ): Promise<StaffMember> {
+    return (await this.inviteWithLink(actorId, input, now)).member;
+  }
+
+  async inviteWithLink(
+    actorId: string,
+    input: InviteStaffInput,
+    now: Date = new Date(),
+  ): Promise<InvitationResult> {
+    return (await this.createInvitation(actorId, input, now, false))!;
+  }
+
+  async inviteFirstAdmin(
+    actorId: string,
+    email: string,
+    now: Date = new Date(),
+  ): Promise<InvitationResult | undefined> {
+    return this.createInvitation(actorId, { email, role: StaffRole.ADMIN }, now, true);
+  }
+
+  private async createInvitation(
+    actorId: string,
+    input: InviteStaffInput,
+    now: Date,
+    onlyIfNoAdmin: boolean,
+  ): Promise<InvitationResult | undefined> {
     const email = parseEmail(input.email);
     const id = randomUUID();
-    await this.staff.transaction(async (tx) => {
+    const token = await this.staff.transaction(async (tx) => {
+      if (onlyIfNoAdmin && (await tx.lockAdminIds()).length > 0) return undefined;
       const result = await tx.insert({ id, email, role: input.role, createdAt: now });
       if (result === InsertStaffResult.EmailTaken) {
         throw staffError(
@@ -35,13 +70,18 @@ export class StaffService {
           STAFF_ERROR_MESSAGES.staffAlreadyExists,
         );
       }
-      await insertInvitation(tx, id, now);
+      return insertInvitation(tx, id, now);
     });
+    if (token === undefined) return undefined;
+    const link = await this.sendInvitation(id, email, token);
     this.logger.info(
       { audit: 'staff.invite', actorId, staffId: id, role: input.role },
       'staff action',
     );
-    return { id, email, role: input.role, status: StaffStatus.INVITED, createdAt: now };
+    return {
+      member: { id, email, role: input.role, status: StaffStatus.INVITED, createdAt: now },
+      link,
+    };
   }
 
   async resendInvitation(
@@ -49,20 +89,43 @@ export class StaffService {
     staffId: string,
     now: Date = new Date(),
   ): Promise<StaffMember> {
-    const record = await this.staff.transaction(async (tx) => {
+    return (await this.resendInvitationWithLink(actorId, staffId, now)).member;
+  }
+
+  async resendInvitationWithLink(
+    actorId: string,
+    staffId: string,
+    now: Date = new Date(),
+    expectedRole?: StaffRole,
+  ): Promise<InvitationResult> {
+    const { record, token } = await this.staff.transaction(async (tx) => {
       const found = await lockOrThrow(tx, staffId);
-      if (found.status !== StaffStatus.INVITED) {
+      if (
+        found.status !== StaffStatus.INVITED ||
+        (expectedRole !== undefined && found.role !== expectedRole)
+      ) {
         throw staffError(StaffErrorCode.NotInvited, STAFF_ERROR_MESSAGES.notInvited);
       }
       await tx.expireInvitations(found.id, now);
-      await insertInvitation(tx, found.id, now);
-      return found;
+      return { record: found, token: await insertInvitation(tx, found.id, now) };
     });
+    const link = await this.sendInvitation(record.id, record.email, token);
     this.logger.info(
       { audit: 'staff.resendInvitation', actorId, staffId: record.id },
       'staff action',
     );
-    return toMember(record);
+    return { member: toMember(record), link };
+  }
+
+  /** Runs after the commit; a failed email must not fail the mutation, the admin can resend. */
+  private async sendInvitation(staffId: string, to: string, token: string): Promise<string> {
+    const link = `${this.config.backofficeUrl}/accept-invitation?token=${token}`;
+    try {
+      await this.email.send('staffInvitation', to, { link });
+    } catch (err) {
+      this.logger.warn({ err, staffId }, 'invitation email failed');
+    }
+    return link;
   }
 
   async deactivate(actorId: string, staffId: string, now: Date = new Date()): Promise<StaffMember> {
@@ -139,7 +202,7 @@ function assertNotLastAdmin(admins: string[], staffId: string): void {
   }
 }
 
-function parseEmail(email: string): string {
+export function parseEmail(email: string): string {
   const result = registerInputSchema.shape.email.safeParse(email);
   if (result.success) return result.data;
   throw staffError(StaffErrorCode.BadUserInput, result.error.issues[0].message, { field: 'email' });
@@ -157,8 +220,8 @@ async function lockOrThrow(tx: StaffRepository, staffId: string): Promise<StaffR
   return record;
 }
 
-/** Only the SHA-256 of the token is stored; the token is never returned or logged. */
-async function insertInvitation(tx: StaffRepository, staffId: string, now: Date): Promise<void> {
+/** Invitation tokens are credentials: only their SHA-256 is stored, and the plaintext goes only into the invitation link. */
+async function insertInvitation(tx: StaffRepository, staffId: string, now: Date): Promise<string> {
   const token = randomBytes(32).toString('base64url');
   await tx.insertInvitation({
     id: randomUUID(),
@@ -167,6 +230,7 @@ async function insertInvitation(tx: StaffRepository, staffId: string, now: Date)
     expiresAt: new Date(now.getTime() + INVITATION_TTL_MS),
     createdAt: now,
   });
+  return token;
 }
 
 function toMember(record: StaffRecord): StaffMember {

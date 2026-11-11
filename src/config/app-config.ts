@@ -49,6 +49,8 @@ export class AppConfig {
     smtpUrl: string;
   };
   readonly corsOrigins: string[];
+  readonly backofficeUrl: string;
+  readonly bootstrapAdminEmail: string | undefined;
   /** `LOG_LEVEL`: fatal, error, warn, info (default), debug, trace, silent. */
   readonly logLevel: LogLevel;
   readonly jwt: {
@@ -70,6 +72,8 @@ export class AppConfig {
     this.redisUrl = env.REDIS_URL;
     this.client = env.CLIENT;
     this.devAuth = env.DEV_AUTH;
+    this.backofficeUrl = env.BACKOFFICE_URL.replace(/\/+$/, '');
+    this.bootstrapAdminEmail = env.BOOTSTRAP_ADMIN_EMAIL || undefined;
     this.emailPreviewEnabled = env.EMAIL_PREVIEW_ENABLED;
     this.email = {
       transport: env.EMAIL_TRANSPORT,

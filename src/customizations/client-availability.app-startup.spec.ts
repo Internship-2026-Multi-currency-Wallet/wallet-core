@@ -47,6 +47,7 @@ class NonNullRestrictedModule {}
 async function initError(client: ClientCode, fixture: Type): Promise<Error | undefined> {
   const config = AppConfig.fromEnv({
     NODE_ENV: 'production',
+    BACKOFFICE_URL: 'https://bo.example.com',
     APP_ENV: 'local',
     CLIENT: client,
     JWT_SECRET: 'availability-spec-test-only-secret-0123456789',

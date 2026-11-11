@@ -47,8 +47,8 @@ import { ThrottlingModule } from './throttling/throttling.module.js';
     // After AuthModule: global guards run in module order, and the throttler needs req.user.
     ThrottlingModule,
     ClientSettingsModule,
-    RatesModule,
     EmailModule,
+    RatesModule,
     // Features
     HealthModule,
     DiagnosticsModule,

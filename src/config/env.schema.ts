@@ -25,6 +25,15 @@ const booleanFromString = z
 /** Must match rates-service's local default so development tokens work across services. */
 export const LOCAL_JWT_SECRET = 'local-only-jwt-secret-change-me-0123456789';
 
+const DEFAULT_BACKOFFICE_URL = 'http://localhost:5174';
+const LOCAL_HOSTS = new Set(['localhost', '[::1]', '0.0.0.0']);
+
+// URL() already normalizes 127.1, 0x7f.1 and [0:0:0:0:0:0:0:1]; a trailing dot and 127.0.0.0/8 it keeps.
+function isLocalHost(url: string): boolean {
+  const host = new URL(url).hostname.replace(/\.$/, '').toLowerCase();
+  return LOCAL_HOSTS.has(host) || host.endsWith('.localhost') || /^127(\.\d{1,3}){3}$/.test(host);
+}
+
 const SECONDS_PER_UNIT = { s: 1, m: 60, h: 3600, d: 86400 } as const;
 type DurationUnit = keyof typeof SECONDS_PER_UNIT;
 // Without a bound a long number passes the regex and becomes Infinity.
@@ -67,6 +76,12 @@ export const envSchema = z
       .refine((value) => /^smtps?:\/\//i.test(value), 'must use the smtp: or smtps: scheme')
       .default('smtp://localhost:1025'),
     CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174'),
+    BACKOFFICE_URL: z
+      .url({ protocol: /^https?$/ })
+      .refine((url) => !/[?#]/.test(url), 'must not contain a query or a fragment')
+      .optional(),
+    // Admin invited on start when no admin exists; not validated as an email so a typo cannot stop the app.
+    BOOTSTRAP_ADMIN_EMAIL: z.string().trim().optional(),
     APP_VERSION: z.string().optional(),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
     JWT_ISSUER: z.string().min(1).default('wallet-core'),
@@ -95,6 +110,23 @@ export const envSchema = z
         path: ['JWT_SECRET'],
         message: 'must not be the local-only secret in production',
       });
+    }
+    // Use NODE_ENV because APP_ENV defaults to local and could silently bypass production validation when omitted.
+    if (env.NODE_ENV === 'production') {
+      if (env.BACKOFFICE_URL === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['BACKOFFICE_URL'],
+          message:
+            'is required when NODE_ENV=production (the base URL of the back office, used in invitation links)',
+        });
+      } else if (isLocalHost(env.BACKOFFICE_URL)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['BACKOFFICE_URL'],
+          message: 'must not point to a local host when NODE_ENV=production',
+        });
+      }
     }
     // 0 is a random port that Alloy cannot scrape; only the e2e tests use it.
     if (env.METRICS_PORT === 0 && env.NODE_ENV !== 'test') {
@@ -144,7 +176,8 @@ export const envSchema = z
         message: `EMAIL_PREVIEW_ENABLED=true is not allowed in client environment "${env.APP_ENV}" (only local and staging)`,
       });
     }
-  });
+  })
+  .transform((env) => ({ ...env, BACKOFFICE_URL: env.BACKOFFICE_URL ?? DEFAULT_BACKOFFICE_URL }));
 
 export type Env = z.infer<typeof envSchema>;
 
