@@ -156,6 +156,16 @@ describe('staffRefreshSession (e2e, real MySQL)', () => {
     });
   });
 
+  it('does not rotate the session of a member deactivated without revoking it', async () => {
+    const token = staffCookieOf(await staffLogin());
+    const [before] = await db('staff_sessions').select('refresh_token_hash');
+    await db('staff').where({ id: MEMBER_ID }).update({ status: StaffStatus.DEACTIVATED });
+
+    expect(codeOf(await refresh(token))).toBe('INVALID_REFRESH_TOKEN');
+    const [after] = await db('staff_sessions').select('refresh_token_hash');
+    expect(after.refresh_token_hash).toBe(before.refresh_token_hash);
+  });
+
   it('rejects an expired session', async () => {
     const token = staffCookieOf(await staffLogin());
     await db('staff_sessions').update({ expires_at: new Date(Date.now() - 1000) });
@@ -199,6 +209,15 @@ describe('staffRefreshSession (e2e, real MySQL)', () => {
 
       expect(codeOf(res)).toBe('INVALID_REFRESH_TOKEN');
       expect(cookiesOf(res)).toEqual([]);
+    });
+
+    it('lets a user access token onto the same client endpoint', async () => {
+      const token = accessTokenOf(await userLogin(), 'login');
+
+      await request(app.getHttpServer() as App)
+        .get('/__test/wallet')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
     });
 
     it('keeps a staff access token off client endpoints', async () => {
