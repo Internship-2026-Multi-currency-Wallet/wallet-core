@@ -5,11 +5,7 @@ import { AcceptStaffInvitationInput, StaffLoginInput } from './staff.inputs.js';
 import { StaffAuthPayload } from './staff.model.js';
 import { StaffService } from './staff.service.js';
 
-/**
- * Back-office login, separate from user login: a staff token is never accepted as a user token and
- * vice versa. Contract only: every mutation except acceptStaffInvitation throws until it is implemented.
- * The staff refresh token travels in its own httpOnly cookie, never in arguments or results.
- */
+/** Staff authentication must remain isolated from user authentication, including its refresh cookie. */
 @Resolver()
 export class StaffAuthResolver {
   constructor(private readonly staff: StaffService) {}
