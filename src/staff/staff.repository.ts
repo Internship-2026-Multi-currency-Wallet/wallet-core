@@ -209,11 +209,7 @@ export class StaffRepository {
       .update({ revoked_at: at });
   }
 
-  /**
-   * Locks the session row, then reads the staff row WITHOUT a lock: deactivation and role changes
-   * lock the staff row first and then touch sessions, so locking it here would reverse that order.
-   * An inactive member is not rotated.
-   */
+  /** Reads staff without a lock, to avoid reversing the staff-then-session lock order of deactivation and role changes. */
   async rotateSession(
     refreshTokenHash: string,
     newRefreshTokenHash: string,
