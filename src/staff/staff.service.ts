@@ -141,13 +141,11 @@ export class StaffService {
       });
     }
     const tokenHash = createHash('sha256').update(input.token).digest('hex');
-    // Unknown tokens must not cost an argon2 hash.
-    if ((await this.staff.findInvitationStaffId(tokenHash)) === undefined)
-      throw invalidInvitation();
+    // Dead tokens must not cost an argon2 hash or the admin locks.
+    const id = await this.staff.findInvitationStaffId(tokenHash, clock());
+    if (id === undefined) throw invalidInvitation();
     const passwordHash = await hash(password.data);
     const staffId = await this.staff.transaction(async (tx) => {
-      const id = await tx.findInvitationStaffId(tokenHash);
-      if (id === undefined) throw invalidInvitation();
       await tx.lockActiveAdminIds();
       const member = await tx.lockById(id);
       // Read after the locks: a resend committed while argon2 ran must win.

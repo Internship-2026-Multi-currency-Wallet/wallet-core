@@ -131,9 +131,12 @@ class FakeStaffRepository {
     return Promise.resolve();
   }
 
-  async findInvitationStaffId(tokenHash: string): Promise<string | undefined> {
+  async findInvitationStaffId(tokenHash: string, now: Date): Promise<string | undefined> {
     this.calls.push('findInvitationStaffId');
-    const found = this.invitations.find((i) => i.tokenHash === tokenHash)?.staffId;
+    const invitation = this.invitations.find((i) => i.tokenHash === tokenHash);
+    const live =
+      invitation && !invitation.used && (invitation.expired ?? invitation.expiresAt) > now;
+    const found = live ? invitation.staffId : undefined;
     const hook = this.afterFirstFind;
     this.afterFirstFind = undefined;
     await hook?.();
@@ -950,29 +953,48 @@ describe('StaffService.acceptInvitation', () => {
     },
   );
 
-  it('takes the time after the locks, so a resend committed meanwhile wins', async () => {
+  it('reads the time after the locks, so a resend committed during the hash wins', async () => {
     const { service, repo } = invited();
     const later = new Date(NOW.getTime() + HOUR_MS);
+    let resent = false;
     repo.afterFirstFind = async () => {
       await service.resendInvitationWithLink(ADMIN_ID, SUPPORT_ID, later);
-      repo.calls.length = 0;
+      resent = true;
     };
-    const clock = jest.fn(() => {
-      repo.calls.push('clock');
-      return later;
-    });
 
     const error = await graphqlErrorOf(
-      service.acceptInvitation({ token: TOKEN, password: PASSWORD }, clock),
+      service.acceptInvitation({ token: TOKEN, password: PASSWORD }, () => (resent ? later : NOW)),
     );
     expect(error.extensions).toEqual({ code: 'INVALID_INVITATION' });
-    expect(repo.calls.slice(0, 4)).toEqual([
-      'findInvitationStaffId',
-      'lockActiveAdminIds',
-      'lockById',
-      'clock',
-    ]);
     expect(repo.records.get(SUPPORT_ID)!.status).toBe(StaffStatus.INVITED);
+  });
+
+  it.each([
+    [
+      'used',
+      async (s: StaffService) => {
+        await s.acceptInvitation({ token: TOKEN, password: PASSWORD }, () => NOW);
+      },
+      NOW,
+    ],
+    ['expired', () => Promise.resolve(), new Date(NOW.getTime() + 49 * HOUR_MS)],
+    [
+      'replaced by a resend',
+      async (s: StaffService) => {
+        await s.resendInvitationWithLink(ADMIN_ID, SUPPORT_ID, NOW);
+      },
+      NOW,
+    ],
+  ])('refuses a %s token before any lock', async (_name, prepare, at) => {
+    const { service, repo } = invited();
+    await prepare(service);
+    repo.calls.length = 0;
+    const error = await graphqlErrorOf(
+      service.acceptInvitation({ token: TOKEN, password: PASSWORD }, () => at),
+    );
+    expect(error.extensions).toEqual({ code: 'INVALID_INVITATION' });
+    expect(repo.calls).not.toContain('lockActiveAdminIds');
+    expect(repo.calls).not.toContain('lockById');
   });
 
   it('puts neither token, hash, email nor password into logs or error data', async () => {

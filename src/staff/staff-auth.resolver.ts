@@ -5,7 +5,10 @@ import { AcceptStaffInvitationInput, StaffLoginInput } from './staff.inputs.js';
 import { StaffAuthPayload } from './staff.model.js';
 import { StaffService } from './staff.service.js';
 
-/** Staff authentication must remain isolated from user authentication, including its refresh cookie. */
+/**
+ * Staff authentication stays isolated from user authentication: the staff refresh token travels only
+ * in its own httpOnly cookie, never in arguments or results.
+ */
 @Resolver()
 export class StaffAuthResolver {
   constructor(private readonly staff: StaffService) {}

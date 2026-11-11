@@ -282,6 +282,39 @@ describe('StaffRepository (e2e, real MySQL)', () => {
       await expect(repo.consumeInvitation(HASH, resentAt)).resolves.toBeNull();
       await expect(repo.consumeInvitation(NEW_HASH, resentAt)).resolves.toBe(ADMIN_ID);
     });
+
+    describe('findInvitationStaffId', () => {
+      const now = new Date('2026-11-05T10:00:00.000Z');
+
+      it('answers the staff id of a live invitation', async () => {
+        await invite();
+        await expect(repo.findInvitationStaffId(HASH, now)).resolves.toBe(ADMIN_ID);
+      });
+
+      it('answers undefined for an unknown token', async () => {
+        await invite();
+        await expect(repo.findInvitationStaffId('b'.repeat(64), now)).resolves.toBeUndefined();
+      });
+
+      it('answers undefined for a used invitation', async () => {
+        await invite();
+        await repo.consumeInvitation(HASH, now);
+        await expect(repo.findInvitationStaffId(HASH, now)).resolves.toBeUndefined();
+      });
+
+      it('answers undefined for an expired invitation, from the expiry moment on', async () => {
+        await invite();
+        await expect(repo.findInvitationStaffId(HASH, expiresAt)).resolves.toBeUndefined();
+      });
+
+      it('answers undefined for an invitation replaced by a newer one', async () => {
+        await invite();
+        await repo.expireInvitations(ADMIN_ID, now);
+        await invite({ id: '4f0d7a6c-2b8e-4d1f-9a5b-6e9c0d1e2f3a', tokenHash: 'c'.repeat(64) });
+        await expect(repo.findInvitationStaffId(HASH, now)).resolves.toBeUndefined();
+        await expect(repo.findInvitationStaffId('c'.repeat(64), now)).resolves.toBe(ADMIN_ID);
+      });
+    });
   });
 
   describe('sessions', () => {
