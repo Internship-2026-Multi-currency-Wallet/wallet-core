@@ -187,7 +187,6 @@ export class StaffRepository {
     return row?.staff_id;
   }
 
-  /** Sets the first password (or replaces it) and makes the member ACTIVE with a clean lockout state. */
   async activate(id: string, passwordHash: string, at: Date): Promise<void> {
     await this.db(STAFF).where({ id }).update({
       status: StaffStatus.ACTIVE,
