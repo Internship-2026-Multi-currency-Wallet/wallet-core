@@ -25,7 +25,7 @@ const SHUTDOWN_GRACE_MS = 3000;
 @Injectable()
 export class EmailWorker implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly worker?: Worker<EmailJobData>;
-  // Jobs acquired here whose outcome BullMQ has not yet written to Redis.
+  // Track acquisition before processor entry so shutdown cannot miss an acquired job.
   private readonly unsettled = new Set<string>();
   private onSettled?: () => void;
 
@@ -92,8 +92,7 @@ export class EmailWorker implements OnApplicationBootstrap, OnApplicationShutdow
       });
       clearTimeout(timer);
     }
-    // Force skips QUIT, which may not settle while Redis does not answer. It does not cancel a send
-    // still running (see README, Email).
+    // Force-close because graceful closure may wait indefinitely when Redis stops answering.
     await this.worker.close(true);
   }
 
