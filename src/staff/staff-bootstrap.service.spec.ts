@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import type { PinoLogger } from 'nestjs-pino';
+import type { TokenService } from '../auth/tokens.js';
 import type { AppConfig } from '../config/app-config.js';
 import { FakeEmailService, type SentEmail } from '../email/fake-email.service.js';
 import { StaffRole } from './permissions.js';
@@ -107,6 +108,7 @@ function setup(bootstrapAdminEmail?: string) {
     logger as unknown as PinoLogger,
     email,
     config,
+    {} as TokenService,
   );
   const bootstrap = new StaffBootstrapService(
     service,

@@ -322,6 +322,13 @@ back-office feature adds its own permissions there and extends the roles.
 
 In dev mode act as a staff member with e.g. `Dev 1:bo,bo:staff,bo:staff:modify`.
 
+#### Staff sessions
+
+`staffLogin` is separate from the user `login`. The session lasts 8 hours from login and is not extended. The
+refresh token travels only in the httpOnly `staff_refresh_token` cookie (path `/graphql`, SameSite=Strict), never in
+the user's `refresh_token`. Lockout works as for users: 5 wrong passwords in a row lock the account for 15 minutes
+(`ACCOUNT_LOCKED`). `staffLogout` ends the cookie's session and clears the cookie.
+
 ### Client settings — `src/settings`
 
 ```ts

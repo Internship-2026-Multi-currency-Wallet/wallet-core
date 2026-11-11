@@ -1,4 +1,5 @@
 import { GraphQLError } from 'graphql';
+import { AUTH_ERROR_MESSAGES } from '../auth/auth-errors.js';
 
 export const StaffErrorCode = {
   BadUserInput: 'BAD_USER_INPUT',
@@ -8,6 +9,8 @@ export const StaffErrorCode = {
   CannotDeactivateSelf: 'CANNOT_DEACTIVATE_SELF',
   LastAdmin: 'LAST_ADMIN',
   InvalidInvitation: 'INVALID_INVITATION',
+  InvalidCredentials: 'INVALID_CREDENTIALS',
+  AccountLocked: 'ACCOUNT_LOCKED',
 } as const;
 
 export type StaffErrorCode = (typeof StaffErrorCode)[keyof typeof StaffErrorCode];
@@ -20,6 +23,8 @@ export const STAFF_ERROR_MESSAGES = {
   cannotDeactivateSelf: 'You cannot deactivate your own account',
   lastAdmin: 'The last active admin cannot be deactivated or demoted',
   invalidInvitation: 'Invitation link is invalid or has expired',
+  invalidCredentials: AUTH_ERROR_MESSAGES.invalidCredentials,
+  accountLocked: AUTH_ERROR_MESSAGES.accountLocked,
 } as const;
 
 /** `code` is set last, so extra `extensions` cannot override the contract code. */
