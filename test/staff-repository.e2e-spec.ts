@@ -319,4 +319,22 @@ describe('StaffRepository (e2e, real MySQL)', () => {
       await expect(revokedIds()).resolves.toEqual([S2]);
     });
   });
+
+  it('activate sets ACTIVE and the hash, and resets failed attempts and the lockout', async () => {
+    await repo.insert(staff());
+    await db('staff')
+      .where({ id: ADMIN_ID })
+      .update({ failed_login_attempts: 4, locked_until: new Date('2030-01-01T00:00:00.000Z') });
+    const later = new Date('2026-11-05T10:00:00.456Z');
+
+    await repo.activate(ADMIN_ID, 'argon-hash', later);
+
+    await expect(repo.findById(ADMIN_ID)).resolves.toMatchObject({
+      status: StaffStatus.ACTIVE,
+      passwordHash: 'argon-hash',
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+      updatedAt: later,
+    });
+  });
 });

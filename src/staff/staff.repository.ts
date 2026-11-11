@@ -179,6 +179,25 @@ export class StaffRepository {
     });
   }
 
+  async findInvitationStaffId(tokenHash: string): Promise<string | undefined> {
+    const row = (await this.db(INVITATIONS)
+      .select('staff_id')
+      .where({ token_hash: tokenHash })
+      .first()) as { staff_id: string } | undefined;
+    return row?.staff_id;
+  }
+
+  /** Sets the first password (or replaces it) and makes the member ACTIVE with a clean lockout state. */
+  async activate(id: string, passwordHash: string, at: Date): Promise<void> {
+    await this.db(STAFF).where({ id }).update({
+      status: StaffStatus.ACTIVE,
+      password_hash: passwordHash,
+      failed_login_attempts: 0,
+      locked_until: null,
+      updated_at: at,
+    });
+  }
+
   async expireInvitations(staffId: string, at: Date): Promise<void> {
     await this.db(INVITATIONS)
       .where({ staff_id: staffId })

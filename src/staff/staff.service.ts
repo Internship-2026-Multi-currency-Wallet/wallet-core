@@ -1,11 +1,13 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import { hash } from '@node-rs/argon2';
+import type { GraphQLError } from 'graphql';
 import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { EmailService } from '../email/email.service.js';
 import { registerInputSchema } from '../auth/register.schema.js';
 import { ROLE_PERMISSIONS, StaffRole } from './permissions.js';
-import type { InviteStaffInput } from './staff.inputs.js';
+import type { AcceptStaffInvitationInput, InviteStaffInput } from './staff.inputs.js';
 import { StaffMe, StaffMember, StaffStatus } from './staff.model.js';
 import { InsertStaffResult, type StaffRecord, StaffRepository } from './staff.repository.js';
 import { STAFF_ERROR_MESSAGES, StaffErrorCode, staffError } from './staff-errors.js';
@@ -128,6 +130,39 @@ export class StaffService {
     return link;
   }
 
+  async acceptInvitation(
+    input: AcceptStaffInvitationInput,
+    clock: () => Date = () => new Date(),
+  ): Promise<void> {
+    const password = registerInputSchema.shape.password.safeParse(input.password);
+    if (!password.success) {
+      throw staffError(StaffErrorCode.BadUserInput, password.error.issues[0].message, {
+        field: 'password',
+      });
+    }
+    const tokenHash = createHash('sha256').update(input.token).digest('hex');
+    // Unknown tokens must not cost an argon2 hash.
+    if ((await this.staff.findInvitationStaffId(tokenHash)) === undefined)
+      throw invalidInvitation();
+    const passwordHash = await hash(password.data);
+    const staffId = await this.staff.transaction(async (tx) => {
+      const id = await tx.findInvitationStaffId(tokenHash);
+      if (id === undefined) throw invalidInvitation();
+      await tx.lockActiveAdminIds();
+      const member = await tx.lockById(id);
+      // Read after the locks: a resend committed while argon2 ran must win.
+      const now = clock();
+      if (member?.status !== StaffStatus.INVITED) throw invalidInvitation();
+      if ((await tx.consumeInvitation(tokenHash, now)) === null) throw invalidInvitation();
+      await tx.activate(member.id, passwordHash, now);
+      return member.id;
+    });
+    this.logger.info(
+      { audit: 'staff.acceptInvitation', actorId: staffId, staffId },
+      'staff action',
+    );
+  }
+
   async deactivate(actorId: string, staffId: string, now: Date = new Date()): Promise<StaffMember> {
     const { record, changed } = await this.staff.transaction(async (tx) => {
       const admins = await tx.lockActiveAdminIds();
@@ -206,6 +241,11 @@ export function parseEmail(email: string): string {
   const result = registerInputSchema.shape.email.safeParse(email);
   if (result.success) return result.data;
   throw staffError(StaffErrorCode.BadUserInput, result.error.issues[0].message, { field: 'email' });
+}
+
+/** One message for every cause, so a link reveals nothing about its state. */
+function invalidInvitation(): GraphQLError {
+  return staffError(StaffErrorCode.InvalidInvitation, STAFF_ERROR_MESSAGES.invalidInvitation);
 }
 
 async function findOrThrow(repo: StaffRepository, staffId: string): Promise<StaffRecord> {
