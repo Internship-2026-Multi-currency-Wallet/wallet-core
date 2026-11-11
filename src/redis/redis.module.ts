@@ -2,13 +2,22 @@ import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/comm
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Redis } from 'ioredis';
 import { AppConfig } from '../config/app-config.js';
+import {
+  closeRedis,
+  COMMAND_CLIENT_OPTIONS,
+  SUBSCRIBER_CLIENT_OPTIONS,
+  watchRedisConnection,
+} from './redis-connection.js';
 
 /** Injection token for the shared ioredis client (commands + publishing). */
 export const REDIS = Symbol('REDIS');
 
 export function createRedis(url: string): Redis {
-  // lazyConnect: the app can start (and generate its schema) without Redis running.
-  return new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 3 });
+  return new Redis(url, COMMAND_CLIENT_OPTIONS);
+}
+
+export function createSubscriberRedis(redis: Redis): Redis {
+  return redis.duplicate(SUBSCRIBER_CLIENT_OPTIONS);
 }
 
 @Global()
@@ -16,8 +25,13 @@ export function createRedis(url: string): Redis {
   providers: [
     {
       provide: REDIS,
-      inject: [AppConfig],
-      useFactory: (config: AppConfig) => createRedis(config.redisUrl),
+      inject: [AppConfig, PinoLogger],
+      useFactory: (config: AppConfig, logger: PinoLogger) => {
+        logger.setContext('Redis');
+        const redis = createRedis(config.redisUrl);
+        watchRedisConnection(redis, logger, 'command');
+        return redis;
+      },
     },
   ],
   exports: [REDIS],
@@ -29,11 +43,8 @@ export class RedisModule implements OnApplicationShutdown {
   ) {}
 
   async onApplicationShutdown(): Promise<void> {
-    if (this.redis.status !== 'end' && this.redis.status !== 'wait') {
-      await this.redis.quit();
-      this.logger.info('Redis connection closed');
-    } else {
-      this.redis.disconnect();
-    }
+    const wasReady = this.redis.status === 'ready';
+    await closeRedis(this.redis);
+    if (wasReady) this.logger.info('Redis connection closed');
   }
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { UnrecoverableError } from 'bullmq';
 import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
@@ -103,5 +103,113 @@ describe('EmailWorker constructor', () => {
     expect(() => new EmailWorker(config, undefined, logger as unknown as PinoLogger)).toThrow(
       /transport/i,
     );
+  });
+});
+
+describe('EmailWorker with Redis unavailable', () => {
+  type BullWorker = {
+    emit: (event: string, ...args: unknown[]) => boolean;
+    getBackend: () => { emit: (event: string) => boolean };
+    pause: (doNotWaitActive?: boolean) => Promise<void>;
+    close: (force?: boolean) => Promise<void>;
+  };
+
+  // A real BullMQ Worker pointed at a closed port; it never reaches Redis.
+  const setupReal = () => {
+    const config = AppConfig.fromEnv({
+      ...process.env,
+      EMAIL_TRANSPORT: 'smtp',
+      REDIS_URL: 'redis://127.0.0.1:1',
+    });
+    const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    const worker = new EmailWorker(
+      config,
+      { send: () => Promise.resolve() },
+      logger as unknown as PinoLogger,
+    );
+    const bull = (worker as unknown as { worker: BullWorker }).worker;
+    return { worker, bull, logger };
+  };
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('warns once per outage with a safe reason, reports recovery, and is quiet once closed', async () => {
+    const { bull, logger } = setupReal();
+    const refused = Object.assign(new Error('connect ECONNREFUSED 10.1.2.3:6379'), {
+      code: 'ECONNREFUSED',
+    });
+    try {
+      bull.emit('error', refused);
+      bull.emit('error', refused);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith({ reason: 'ECONNREFUSED' }, expect.any(String));
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('10.1.2.3');
+
+      bull.getBackend().emit('ready');
+      expect(logger.info).toHaveBeenCalledTimes(1);
+      bull.emit('error', refused);
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+    } finally {
+      await bull.close(true);
+    }
+    bull.emit('error', new Error('Connection is closed.'));
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+
+  // A real worker whose connections are already dropped; pause() and close() are observed.
+  const setupClosed = async () => {
+    const setup = setupReal();
+    await setup.bull.close(true);
+    const pause = jest.spyOn(setup.bull, 'pause').mockResolvedValue(undefined);
+    const close = jest.spyOn(setup.bull, 'close').mockResolvedValue(undefined);
+    return { ...setup, pause, close };
+  };
+
+  it('stops fetching without waiting and closes with force at once when no job is active', async () => {
+    const { worker, pause, close } = await setupClosed();
+    await worker.onApplicationShutdown();
+    // pause() without `true` would reconnect the blocking client after close().
+    expect(pause).toHaveBeenCalledWith(true);
+    expect(close).toHaveBeenCalledWith(true);
+  });
+
+  it('waits for jobs from acquisition (BullMQ "active") until recorded as completed or failed', async () => {
+    const { worker, bull, close } = await setupClosed();
+    jest.useFakeTimers();
+    // Acquired, but the processor has not started yet: shutdown must still wait for them.
+    bull.emit('active', { id: '1' }, 'waiting');
+    bull.emit('active', { id: '2' }, 'waiting');
+    const shutdown = worker.onApplicationShutdown();
+    await jest.advanceTimersByTimeAsync(500);
+    bull.emit('completed', { id: '1' });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(close).not.toHaveBeenCalled();
+    bull.emit('failed', { id: '2' }, new Error('smtp down'));
+    await shutdown;
+    expect(close).toHaveBeenCalledWith(true);
+  });
+
+  it('closes with force after the grace period when a send is still running', async () => {
+    const { worker, bull, close } = await setupClosed();
+    jest.useFakeTimers();
+    bull.emit('active', { id: '1' }, 'waiting');
+    let done = false;
+    const shutdown = worker.onApplicationShutdown().then(() => (done = true));
+    await jest.advanceTimersByTimeAsync(2999);
+    expect(done).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1);
+    await shutdown;
+    expect(close).toHaveBeenCalledWith(true);
+  });
+
+  it('real BullMQ: shuts down at once when Redis was never reachable', async () => {
+    const { worker } = setupReal();
+    worker.onApplicationBootstrap();
+    const started = Date.now();
+    await worker.onApplicationShutdown();
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });

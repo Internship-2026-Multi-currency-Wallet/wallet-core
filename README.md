@@ -26,7 +26,7 @@ DEV_AUTH=true npm run start:dev
 ```
 
 - GraphQL: <http://localhost:3000/graphql> (Apollo Sandbox in the browser)
-- Health: <http://localhost:3000/health>
+- Health: <http://localhost:3000/health> (`200` with `status: degraded` when only Redis is down, `503` when MySQL is down)
 
 Need another service as well? Run it in Docker next to yours, e.g. `npm run infra -- up rates-service`
 (several names allowed, `all` = the whole system). Containers reach this service at
@@ -381,6 +381,14 @@ idempotency key `<APP_ENV>/<job id>`, so a re-run does not duplicate mail on Res
 8 attempts with exponential backoff (5 s, 10 s, 20 s, ...). A permanent transport error (`retryable: false`) fails the
 job at once. Failed jobs are kept for 48 hours (at most 1000). Logs carry job id, template and attempt, never the
 recipient, data or link.
+While Redis is down, queue and worker reconnect with backoff.
+
+**Shutdown.** The worker stops taking jobs and gives running sends a grace period of 3 s to finish and have their
+outcome recorded in Redis, then closes without waiting for Redis. Closing does not cancel a send that is still running:
+it may complete, fail or be cut off when the process exits, and its outcome is not recorded. The job stays active and
+BullMQ's stalled-job check puts it back in the queue once its 30 s lock expires (when a worker runs again), so it may
+be sent twice: Resend deduplicates by the idempotency key, SMTP does not. This is separate from the uncertain outcome
+of a timed-out enqueue above, which exists with or without a shutdown.
 
 **Local delivery with Mailpit.** If `ops` does not start Mailpit yet, run it yourself
 (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`), set `EMAIL_TRANSPORT=smtp` and `SMTP_URL=smtp://localhost:1025`
@@ -417,6 +425,11 @@ const off = await subscriber.subscribe('rate.tick', (tick, meta) => ...); // SUB
 
 Stream consumers use consumer groups (`XREADGROUP` + `XACK`) and `decodeStreamEntry()`.
 Change the catalog only via a contract PR in all three repositories.
+
+**Redis down.** The service starts and keeps serving without Redis. A publication made while disconnected fails at
+once (`POST /diagnostics/ping` answers `503`) and is never sent later. Subscriptions are restored automatically when
+Redis is back, and `subscribe()` resolves only once Redis has confirmed the subscription. An in-flight command may be
+resent after reconnect; a timeout does not prove non-delivery.
 
 **Environment prefix.** Several environments may share one Redis, so every channel and stream is prefixed with
 `APP_ENV`: `staging:rate.tick`, `kvitka-uat:conversion.completed`. The helpers add the prefix; when you need a raw

@@ -8,13 +8,18 @@ import { DependencyStatus, type Health } from './health.model.js';
 
 const CHECK_TIMEOUT_MS = 2000;
 
-function withTimeout<T>(promise: Promise<T>): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), CHECK_TIMEOUT_MS).unref(),
-    ),
-  ]);
+async function withTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), CHECK_TIMEOUT_MS).unref();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 @Injectable()
@@ -48,7 +53,6 @@ export class HealthService {
 
   private async checkRedis(): Promise<DependencyStatus> {
     try {
-      if (this.redis.status === 'wait') await this.redis.connect();
       await withTimeout(this.redis.ping());
       return DependencyStatus.UP;
     } catch {
