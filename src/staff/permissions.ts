@@ -17,7 +17,10 @@ export enum StaffRole {
   FINANCE = 'FINANCE',
 }
 
-/** Fixed permission lists per role. A staff token carries its role list; no role may get `wallet`, the only thing keeping staff tokens off client endpoints (PermissionGuard checks no kind there; task 1220388983957407). */
+/**
+ * Fixed permission lists per role. No role may receive `wallet`: `PermissionGuard` does not check the token
+ * kind on client endpoints, so this is what keeps staff tokens off them (task 1220388983957407).
+ */
 export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
   [StaffRole.ADMIN]: PERMISSIONS,
   [StaffRole.SUPPORT]: ['bo'],
