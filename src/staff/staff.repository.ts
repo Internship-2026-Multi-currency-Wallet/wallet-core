@@ -207,10 +207,8 @@ export class StaffRepository {
       .update({ failed_login_attempts: 0, locked_until: null, updated_at: at });
   }
 
-  /**
-   * Locks the staff row, so parallel wrong guesses are all counted. Returns the lock end when this
-   * attempt (or a parallel one) locked the account, else null.
-   */
+  // Serialize failed-attempt updates on the staff row so concurrent guesses cannot bypass the
+  // lockout threshold.
   async recordFailedLogin(id: string, policy: LoginLockPolicy): Promise<Date | null> {
     return this.transaction(async (tx) => {
       const row = await tx.lockById(id);
