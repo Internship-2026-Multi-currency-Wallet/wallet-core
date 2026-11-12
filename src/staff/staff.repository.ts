@@ -77,6 +77,8 @@ interface StaffRow {
   updated_at: Date;
 }
 
+class RotationRejected extends Error {}
+
 interface StaffSessionRow {
   id: string;
   staff_id: string;
@@ -209,29 +211,35 @@ export class StaffRepository {
       .update({ revoked_at: at });
   }
 
-  /** Reads staff without a lock, to avoid reversing the staff-then-session lock order of deactivation and role changes. */
+  /** Reads staff without a lock, to keep the staff-then-session lock order of deactivation and role changes. */
   async rotateSession(
     refreshTokenHash: string,
     newRefreshTokenHash: string,
     now: Date,
   ): Promise<{ staff: StaffRecord; expiresAt: Date } | null> {
-    return this.transaction(async (tx) => {
-      const session = await tx
-        .db<StaffSessionRow>(SESSIONS)
-        .where({ refresh_token_hash: refreshTokenHash })
-        .whereNull('revoked_at')
-        .andWhere('expires_at', '>', now)
-        .forUpdate()
-        .first('id', 'staff_id', 'expires_at');
-      if (!session) return null;
-      const staff = await tx.findById(session.staff_id);
-      if (staff?.status !== StaffStatus.ACTIVE) return null;
-      await tx
-        .db(SESSIONS)
-        .where({ id: session.id })
-        .update({ refresh_token_hash: newRefreshTokenHash });
-      return { staff, expiresAt: session.expires_at };
-    });
+    try {
+      return await this.transaction(async (tx) => {
+        const updated = await tx
+          .db(SESSIONS)
+          .where({ refresh_token_hash: refreshTokenHash })
+          .whereNull('revoked_at')
+          .andWhere('expires_at', '>', now)
+          .update({ refresh_token_hash: newRefreshTokenHash });
+        if (updated === 0) throw new RotationRejected();
+        const session = await tx
+          .db<StaffSessionRow>(SESSIONS)
+          .where({ refresh_token_hash: newRefreshTokenHash })
+          .first('staff_id', 'expires_at');
+        if (!session) throw new RotationRejected();
+        const staff = await tx.findById(session.staff_id);
+        // Throwing rolls the rotation back.
+        if (staff?.status !== StaffStatus.ACTIVE) throw new RotationRejected();
+        return { staff, expiresAt: session.expires_at };
+      });
+    } catch (error) {
+      if (error instanceof RotationRejected) return null;
+      throw error;
+    }
   }
 
   async resetFailedLogins(id: string, at: Date): Promise<void> {
