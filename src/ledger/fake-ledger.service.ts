@@ -1,0 +1,114 @@
+import { randomUUID } from 'node:crypto';
+import { Injectable } from '@nestjs/common';
+import { CURRENCIES } from '../common/currency.js';
+import { LEDGER_ERROR_MESSAGES, LedgerErrorCode, ledgerError } from './ledger-errors.js';
+import { LedgerService } from './ledger.service.js';
+import {
+  PLATFORM_FUNDING,
+  accountKey,
+  platformAccount,
+  userAccount,
+  type PostOperation,
+  type PostResult,
+  type PostedOperation,
+  type UserBalance,
+} from './ledger.types.js';
+import { operationFingerprint } from './operation-fingerprint.js';
+
+interface StoredOperation {
+  operation: PostedOperation;
+  fingerprint: string;
+}
+
+/**
+ * In-memory `LedgerService` that obeys the same rules as the real one (zero-sum per currency, no
+ * negative user account, idempotent replay), so features can be built and tested before the database
+ * implementation exists. The platform funding account may go negative: it is where money enters.
+ */
+@Injectable()
+export class FakeLedgerService extends LedgerService {
+  private readonly balances = new Map<string, bigint>();
+  private readonly operations = new Map<string, StoredOperation>();
+
+  constructor() {
+    super();
+    for (const currency of CURRENCIES) {
+      this.balances.set(accountKey(platformAccount(PLATFORM_FUNDING, currency)), 0n);
+    }
+  }
+
+  // `async` so a broken rule rejects the promise, as the real service will; no `await` inside, so the
+  // checks and the writes run in one go, which is what makes the fake atomic.
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async post(operation: PostOperation): Promise<PostResult> {
+    this.assertWellFormed(operation);
+
+    const fingerprint = operationFingerprint(operation);
+    const known = this.operations.get(operation.idempotencyKey);
+    if (known) {
+      if (known.fingerprint !== fingerprint) {
+        throw ledgerError(
+          LedgerErrorCode.IdempotencyConflict,
+          LEDGER_ERROR_MESSAGES.idempotencyConflict,
+        );
+      }
+      return { operation: known.operation, replayed: true };
+    }
+
+    const sums = new Map<string, bigint>();
+    const updated = new Map<string, bigint>();
+    for (const { account, amount } of operation.entries) {
+      sums.set(account.currency, (sums.get(account.currency) ?? 0n) + amount);
+      const key = accountKey(account);
+      updated.set(key, (updated.get(key) ?? this.balances.get(key) ?? 0n) + amount);
+    }
+    if ([...sums.values()].some((sum) => sum !== 0n)) {
+      throw ledgerError(
+        LedgerErrorCode.UnbalancedOperation,
+        LEDGER_ERROR_MESSAGES.unbalancedOperation,
+      );
+    }
+    for (const { account } of operation.entries) {
+      if (account.type === 'user' && (updated.get(accountKey(account)) ?? 0n) < 0n) {
+        throw ledgerError(
+          LedgerErrorCode.InsufficientFunds,
+          LEDGER_ERROR_MESSAGES.insufficientFunds,
+        );
+      }
+    }
+
+    for (const [key, balance] of updated) this.balances.set(key, balance);
+    const posted: PostedOperation = {
+      ...operation,
+      entries: [...operation.entries],
+      id: randomUUID(),
+      createdAt: new Date(),
+    };
+    this.operations.set(operation.idempotencyKey, { operation: posted, fingerprint });
+    return { operation: posted, replayed: false };
+  }
+
+  getBalances(userId: string): Promise<UserBalance[]> {
+    return Promise.resolve(
+      CURRENCIES.map((currency) => {
+        const key = accountKey(userAccount(userId, currency));
+        const amount = this.balances.get(key) ?? 0n;
+        this.balances.set(key, amount);
+        return { currency, amount };
+      }),
+    );
+  }
+
+  /** Caller mistakes are programming errors, not client errors: a plain `Error`, no ledger code. */
+  private assertWellFormed(operation: PostOperation): void {
+    if (operation.entries.length === 0) {
+      throw new Error('Ledger operation has no entries');
+    }
+    for (const { account, amount } of operation.entries) {
+      if (amount === 0n) throw new Error('Ledger entry amount must not be zero');
+      if (account.type !== 'user' && !this.balances.has(accountKey(account))) {
+        throw new Error(`Unknown ledger account ${accountKey(account)}`);
+      }
+    }
+  }
+}

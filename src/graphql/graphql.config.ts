@@ -7,6 +7,7 @@ import { AppConfig } from '../config/app-config.js';
 import { AuthErrorCode } from '../auth/auth-errors.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { restrictClientFields } from '../customizations/client-field-availability.js';
+import { LedgerErrorCode } from '../ledger/ledger-errors.js';
 import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
 import { StaffErrorCode } from '../staff/staff-errors.js';
 import { ThrottleErrorCode } from '../throttling/throttle-errors.js';
@@ -28,9 +29,12 @@ interface ContextInput {
   extra?: { request?: unknown };
 }
 
-const CLIENT_ERROR_CODES = [AuthErrorCode, ThrottleErrorCode, StaffErrorCode].flatMap((codes) =>
-  Object.values(codes),
-);
+const CLIENT_ERROR_CODES = [
+  AuthErrorCode,
+  ThrottleErrorCode,
+  StaffErrorCode,
+  LedgerErrorCode,
+].flatMap((codes) => Object.values(codes));
 
 export interface GraphqlContext {
   req: RequestLike;
