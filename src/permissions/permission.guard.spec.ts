@@ -21,6 +21,12 @@ class WalletController {
   @RequirePermission('wallet')
   balance(): void {}
 
+  @RequirePermission('wallet:transfers')
+  transfer(): void {}
+
+  @RequirePermission('wallets')
+  wallets(): void {}
+
   @RequirePermission('bonus')
   bonus(): void {}
 }
@@ -86,6 +92,30 @@ describe('PermissionGuard', () => {
 
     it('does not take a permission that only starts with "bo" as a staff one', () => {
       expect(guard.canActivate(context(WalletController, 'bonus', client('bonus')))).toBe(true);
+    });
+  });
+
+  describe('client endpoints', () => {
+    it('refuses a staff token that somehow has the wallet permission', () => {
+      expect(() => guard.canActivate(context(WalletController, 'balance', user('wallet')))).toThrow(
+        'Clients only',
+      );
+    });
+
+    it('takes wallet:… as a client permission', () => {
+      expect(() =>
+        guard.canActivate(context(WalletController, 'transfer', user('wallet:transfers'))),
+      ).toThrow('Clients only');
+    });
+
+    it('does not take a permission that only starts with "wallet" as a client one', () => {
+      expect(guard.canActivate(context(WalletController, 'wallets', user('wallets')))).toBe(true);
+    });
+
+    it('still names the missing permission when the staff token does not have it', () => {
+      expect(() =>
+        guard.canActivate(context(WalletController, 'balance', user('bo:users'))),
+      ).toThrow('Missing permission: wallet');
     });
   });
 

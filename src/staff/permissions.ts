@@ -18,8 +18,8 @@ export enum StaffRole {
 }
 
 /**
- * Fixed permission lists per role. No role may receive `wallet`: `PermissionGuard` does not check the token
- * kind on client endpoints, so this is what keeps staff tokens off them (task 1220388983957407).
+ * Fixed permission lists per role. No role may receive `wallet`. `PermissionGuard` also refuses staff tokens
+ * on client endpoints; this is the first of the two locks.
  */
 export const ROLE_PERMISSIONS: Record<StaffRole, readonly Permission[]> = {
   [StaffRole.ADMIN]: PERMISSIONS,

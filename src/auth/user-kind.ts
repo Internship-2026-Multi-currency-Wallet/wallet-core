@@ -7,3 +7,8 @@ export enum UserKind {
 export function isStaffPermission(permission: string): boolean {
   return permission === 'bo' || permission.startsWith('bo:');
 }
+
+/** `wallet` and `wallet:…` only, like `isStaffPermission`. */
+export function isClientPermission(permission: string): boolean {
+  return permission === 'wallet' || permission.startsWith('wallet:');
+}
