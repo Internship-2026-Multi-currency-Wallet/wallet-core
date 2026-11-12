@@ -6,10 +6,7 @@ import { RequirePermission } from '../permissions/require-permission.decorator.j
 import { Balance, CurrencyEnum } from './balance.model.js';
 import { isTestCreditAllowed } from './test-credit.js';
 
-/**
- * GraphQL API of the ledger. Contract only for now: every operation answers "not implemented"
- * until the real ledger lands. The owner is always the caller (from the token), never an argument.
- */
+/** The owner is always the caller (from the token), never an argument. */
 @RequirePermission('wallet')
 @Resolver(() => Balance)
 export class LedgerResolver {
