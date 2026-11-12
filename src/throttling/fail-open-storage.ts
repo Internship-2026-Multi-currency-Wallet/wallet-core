@@ -6,7 +6,7 @@ import type { ThrottlerStorageRecord } from './window-throttler-storage.js';
 const WARN_INTERVAL_MS = 60_000;
 // A timed-out command is not cancelled, so without a pause new ones would pile up on the shared ioredis client.
 const COOLDOWN_MS = 10_000;
-// ioredis has no command timeout and a frozen connection keeps status `ready`, so without this every request would hang.
+// The shared client times out commands after 2 s; this shorter bound protects request latency.
 const STORAGE_TIMEOUT_MS = 300;
 
 const ALLOW: ThrottlerStorageRecord = {
@@ -56,7 +56,7 @@ export class FailOpenThrottlerStorage implements ThrottlerStorage {
     throttlerName: string,
   ): Promise<ThrottlerStorageRecord> {
     if (this.now() < this.skipRedisUntil) return ALLOW;
-    // While disconnected ioredis would hold the request for its command retries; 'wait' (lazyConnect) is fine because the call connects.
+    // Not connected: let the request through without sending a command.
     if (this.redis.status !== 'ready' && this.redis.status !== 'wait') {
       this.warn({ redisStatus: this.redis.status });
       return ALLOW;
