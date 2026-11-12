@@ -1,11 +1,12 @@
 /**
- * GraphQL logging. This file is IDENTICAL in wallet-core, rates-service and treasury-service.
+ * GraphQL logging. Keep this file and `graphql/expected-error.filter.ts` IDENTICAL in
+ * wallet-core, rates-service and treasury-service.
  *
  * - HTTP operations: the Apollo plugin stores the operation (`query Me`) on the request, so the
  *   access log line names it, and logs resolver errors with the request's `requestId`.
- * - Subscriptions (graphql-ws): one `requestId` per websocket connection, taken from
- *   `x-request-id` in the connection params or the upgrade request, else generated. Subscription
- *   start/end are logged with it.
+ * - graphql-ws: one `requestId` per websocket connection, taken from `x-request-id` in the
+ *   connection params or the upgrade request, else generated. Subscription start/end and errors
+ *   are logged with it.
  */
 import type { ApolloServerPlugin } from '@apollo/server';
 import { unwrapResolverError } from '@apollo/server/errors';
@@ -140,13 +141,10 @@ export function wsRequestId(ctx: WsContext): string {
 }
 
 /**
- * graphql-ws results skip the Apollo plugin, so they are logged here as the plugin does over HTTP:
- * expected errors at warn, server failures at error with the stack. `serverOriginal` gives the error
- * the server threw, the same one formatError classifies, or `undefined` for a client error
- * (validation, variables), which is not logged unless it is expected. Nest 4xx exceptions are not
- * logged here either, as before.
- * A resolver exception is also logged by Nest; failures outside Nest (serialization, a subscription
- * stream that throws) are logged only here.
+ * graphql-ws results bypass the Apollo plugin, so they are logged here at the same levels: expected
+ * errors at warn, other server failures at error with the stack. `serverOriginal` returns the error
+ * the server threw (the one formatError classifies), or `undefined` for a client error, logged only
+ * if expected. Nest 4xx exceptions are not logged; resolver exceptions are also logged by Nest.
  */
 export function logWsErrors(
   logger: PinoLogger,

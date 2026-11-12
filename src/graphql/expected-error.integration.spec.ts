@@ -28,9 +28,8 @@ import { GraphqlErrorsModule } from './graphql-errors.module.js';
 import { graphqlOptions } from './graphql.config.js';
 
 /**
- * Expected and unexpected resolver errors through a booted Nest + Apollo app with the real
- * `graphqlOptions()` (logging plugin, formatError), the real pino-http access log and the real
- * filter module, with pino, the websocket logger and Nest's own logger captured.
+ * Error logging through a booted Nest + Apollo app with the real `graphqlOptions()`, access log and
+ * filter module; pino, websocket and Nest logs are captured.
  */
 
 const SECRET = 'secret-hash-e1-17';

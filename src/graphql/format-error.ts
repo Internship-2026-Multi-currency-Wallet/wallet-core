@@ -54,10 +54,10 @@ export function formatExecutionResult(
 }
 
 /**
- * What a running subscription threw, from the graphql-ws `onError` error: graphql-ws wraps it in a
- * pathless GraphQLError (`originalError`, or `cause` with graphql 17) that copies its `extensions`,
- * so the wrapper's code says nothing about it and `unwrapResolverError` (path only) keeps the
- * wrapper. `undefined`: the client's validation error.
+ * What a running subscription threw. graphql-ws wraps it in a pathless GraphQLError
+ * (`originalError`, or `cause` with graphql 17) that copies its `extensions`, and
+ * `unwrapResolverError` keeps that wrapper.
+ * `undefined`: a client validation error.
  */
 export function serverProtocolOriginal(error: GraphQLError): unknown {
   return error.originalError ?? (error as { cause?: unknown }).cause ?? undefined;
