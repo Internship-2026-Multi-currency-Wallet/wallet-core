@@ -1,22 +1,30 @@
+import { unwrapResolverError } from '@apollo/server/errors';
 import { join } from 'node:path';
 import { ApolloDriver, type ApolloDriverConfig } from '@nestjs/apollo';
 import type { Response } from 'express';
 import { type DocumentNode, type GraphQLError, type GraphQLFormattedError, parse } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
-import { AuthErrorCode } from '../auth/auth-errors.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { restrictClientFields } from '../customizations/client-field-availability.js';
-import { graphqlLoggingPlugin, subscriptionLoggingHooks } from '../logging/graphql-logging.js';
-import { StaffErrorCode } from '../staff/staff-errors.js';
-import { ThrottleErrorCode } from '../throttling/throttle-errors.js';
+import {
+  graphqlLoggingPlugin,
+  logWsErrors,
+  subscriptionLoggingHooks,
+  type WsContext,
+} from '../logging/graphql-logging.js';
 import type { Metrics } from '../metrics/metrics.js';
 import {
   countGraphqlErrors,
   graphqlMetricsPlugin,
   wsOperationName,
 } from '../metrics/request-metrics.js';
-import { formatError, formatExecutionResult, formatProtocolErrors } from './format-error.js';
+import {
+  formatError,
+  formatExecutionResult,
+  formatProtocolErrors,
+  serverProtocolOriginal,
+} from './format-error.js';
 
 /** Path of the committed GraphQL contract. Other repositories consume this file. */
 export const SCHEMA_FILE = join(process.cwd(), 'schema.graphql');
@@ -27,10 +35,6 @@ interface ContextInput {
   connectionParams?: Record<string, unknown>;
   extra?: { request?: unknown };
 }
-
-const CLIENT_ERROR_CODES = [AuthErrorCode, ThrottleErrorCode, StaffErrorCode].flatMap((codes) =>
-  Object.values(codes),
-);
 
 export interface GraphqlContext {
   req: RequestLike;
@@ -59,11 +63,12 @@ export function graphqlOptions(
   const wsLogging = subscriptionLoggingHooks(logger);
   const countedSockets = new WeakSet<object>();
   const onProtocolError = (
-    _ctx: unknown,
+    ctx: WsContext,
     _id: string,
     payload: { query?: string; operationName?: string | null },
     errors: readonly GraphQLError[],
   ): GraphQLFormattedError[] => {
+    logWsErrors(logger, ctx, errors, serverProtocolOriginal);
     const formatted = formatProtocolErrors(errors);
     if (metrics) {
       const fromClient = formatted.filter((item) => item.fromClient).map((item) => item.error);
@@ -100,7 +105,11 @@ export function graphqlOptions(
           if (countedSockets.delete(ctx)) metrics?.graphqlWsConnections.dec();
         },
         // Apollo's formatError does not see websocket results: mask them the same way.
-        onNext: (_ctx, _id, _payload, args, result) => {
+        onNext: (ctx, _id, _payload, args, result) => {
+          // Execution errors carry a path; pathless ones are the client's variable errors.
+          logWsErrors(logger, ctx, result.errors, (error) =>
+            error.path !== undefined ? unwrapResolverError(error) : undefined,
+          );
           const formatted = formatExecutionResult(result);
           if (metrics) {
             countGraphqlErrors(
@@ -117,10 +126,7 @@ export function graphqlOptions(
       },
     },
     // Names the operation in the access log and logs resolver errors with the requestId.
-    plugins: [
-      graphqlLoggingPlugin({ clientErrorCodes: CLIENT_ERROR_CODES }),
-      ...(metrics ? [graphqlMetricsPlugin(metrics)] : []),
-    ],
+    plugins: [graphqlLoggingPlugin(), ...(metrics ? [graphqlMetricsPlugin(metrics)] : [])],
     // Unexpected errors reach the client as a bare INTERNAL_SERVER_ERROR (no SQL, no internals).
     formatError,
     // Nest runs no guards on field resolvers, so field restrictions are applied to the schema.

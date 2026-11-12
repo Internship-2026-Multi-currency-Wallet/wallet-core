@@ -1,11 +1,12 @@
 import { unwrapResolverError } from '@apollo/server/errors';
 import { HttpException } from '@nestjs/common';
-import {
-  type ExecutionResult,
-  type FormattedExecutionResult,
+import type {
+  ExecutionResult,
+  FormattedExecutionResult,
   GraphQLError,
-  type GraphQLFormattedError,
+  GraphQLFormattedError,
 } from 'graphql';
+import { isExpectedGraphqlError } from './expected-error.filter.js';
 
 export const INTERNAL_ERROR_MESSAGE = 'Internal server error';
 
@@ -31,9 +32,7 @@ export function formatError(
     // default code, and graphql-ws results never go through it.
     return { ...formatted, extensions: { ...formatted.extensions, code: 'NOT_FOUND' } };
   }
-  if (original instanceof GraphQLError && typeof original.extensions.code === 'string') {
-    return formatted;
-  }
+  if (isExpectedGraphqlError(original)) return formatted;
   return {
     message: INTERNAL_ERROR_MESSAGE,
     locations: formatted.locations,
@@ -55,21 +54,29 @@ export function formatExecutionResult(
 }
 
 /**
- * graphql-ws `onError` bypasses Apollo's formatError, so failures of a running subscription
- * (marked by `originalError`, or `cause` with graphql 17) must be masked here.
+ * What a running subscription threw, from the graphql-ws `onError` error: graphql-ws wraps it in a
+ * pathless GraphQLError (`originalError`, or `cause` with graphql 17) that copies its `extensions`,
+ * so the wrapper's code says nothing about it and `unwrapResolverError` (path only) keeps the
+ * wrapper. `undefined`: the client's validation error.
  */
+export function serverProtocolOriginal(error: GraphQLError): unknown {
+  return error.originalError ?? (error as { cause?: unknown }).cause ?? undefined;
+}
+
+/** graphql-ws `onError` bypasses Apollo's formatError, so server failures must be masked here. */
 export function formatProtocolErrors(
   errors: readonly GraphQLError[],
 ): { error: GraphQLFormattedError; fromClient: boolean }[] {
-  return errors.map((error) =>
-    error.originalError || (error as { cause?: unknown }).cause
-      ? { error: formatError(error.toJSON(), error), fromClient: false }
+  return errors.map((error) => {
+    const thrown = serverProtocolOriginal(error);
+    return thrown !== undefined
+      ? { error: formatError(error.toJSON(), thrown), fromClient: false }
       : {
           error: {
             ...error.toJSON(),
             extensions: { ...error.extensions, code: 'GRAPHQL_VALIDATION_FAILED' },
           },
           fromClient: true,
-        },
-  );
+        };
+  });
 }

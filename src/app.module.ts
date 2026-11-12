@@ -11,6 +11,7 @@ import { DiagnosticsModule } from './diagnostics/diagnostics.module.js';
 import { EmailModule } from './email/email.module.js';
 import { EventsModule } from './events/events.module.js';
 import { graphqlOptions } from './graphql/graphql.config.js';
+import { GraphqlErrorsModule } from './graphql/graphql-errors.module.js';
 import { HealthModule } from './health/health.module.js';
 import { LoggingModule } from './logging/logging.module.js';
 import { Metrics } from './metrics/metrics.js';
@@ -39,6 +40,7 @@ import { ThrottlingModule } from './throttling/throttling.module.js';
       inject: [AppConfig, PinoLogger, Metrics],
       useFactory: graphqlOptions,
     }),
+    GraphqlErrorsModule,
     // Seams
     // Before AuthModule: global guards run in import order, so a hidden endpoint answers NOT_FOUND
     // whatever the caller's credentials.

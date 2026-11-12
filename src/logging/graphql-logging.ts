@@ -8,25 +8,16 @@
  *   start/end are logged with it.
  */
 import type { ApolloServerPlugin } from '@apollo/server';
+import { unwrapResolverError } from '@apollo/server/errors';
+import type { GraphQLError } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Logger } from 'pino';
+import { isExpectedGraphqlError } from '../graphql/expected-error.filter.js';
 import { type GraphqlOperationInfo, REDACTED, requestIdFrom } from './logger.options.js';
 
 interface GraphqlContext {
   req?: { graphqlOperation?: GraphqlOperationInfo; log?: Logger };
 }
-
-/** Error codes caused by the client (logged as `warn`); anything else is a server `error`. */
-const CLIENT_ERROR_CODES = new Set([
-  'UNAUTHENTICATED',
-  'FORBIDDEN',
-  'BAD_USER_INPUT',
-  'BAD_REQUEST',
-  'GRAPHQL_PARSE_FAILED',
-  'GRAPHQL_VALIDATION_FAILED',
-  'PERSISTED_QUERY_NOT_FOUND',
-  'OPERATION_RESOLUTION_FAILURE',
-]);
 
 /**
  * GraphQL's coercion errors quote the value, which can be a whole row: a resolver returning a user
@@ -57,14 +48,24 @@ function loggableError(error: Error): Error {
   return copy;
 }
 
-export interface GraphqlLoggingOptions {
-  clientErrorCodes?: readonly string[];
+/** Nest HTTP exceptions (e.g. UnauthorizedException) carry a status before Apollo maps them. */
+function statusOf(thrown: unknown): unknown {
+  return (thrown as { status?: unknown } | null | undefined)?.status;
 }
 
-export function graphqlLoggingPlugin({
-  clientErrorCodes = [],
-}: GraphqlLoggingOptions = {}): ApolloServerPlugin<GraphqlContext> {
-  const clientCodes = new Set([...CLIENT_ERROR_CODES, ...clientErrorCodes]);
+function httpStatusOf(error: GraphQLError): unknown {
+  return statusOf(error.originalError);
+}
+
+function isClientStatus(status: unknown): boolean {
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+/**
+ * Expected errors (see `isExpectedGraphqlError`) and Nest 4xx exceptions are logged at warn
+ * without `err`; anything else at error with the stack.
+ */
+export function graphqlLoggingPlugin(): ApolloServerPlugin<GraphqlContext> {
   return {
     requestDidStart() {
       return Promise.resolve({
@@ -81,8 +82,7 @@ export function graphqlLoggingPlugin({
           const log = contextValue.req?.log;
           if (!log) return Promise.resolve();
           for (const error of errors) {
-            // Nest HTTP exceptions (e.g. UnauthorizedException) carry a status before Apollo maps them.
-            const status = (error.originalError as { status?: unknown } | undefined)?.status;
+            const status = httpStatusOf(error);
             const rawCode = error.extensions?.code;
             const code =
               typeof rawCode === 'string'
@@ -91,8 +91,7 @@ export function graphqlLoggingPlugin({
                   ? `HTTP_${status}`
                   : 'INTERNAL_SERVER_ERROR';
             const clientError =
-              clientCodes.has(code) ||
-              (typeof status === 'number' && status >= 400 && status < 500);
+              isExpectedGraphqlError(unwrapResolverError(error)) || isClientStatus(status);
             const fields = {
               context: 'GraphQL',
               operation: operationName ?? null,
@@ -116,7 +115,7 @@ interface WsExtra {
   requestId?: string;
 }
 
-interface WsContext {
+export interface WsContext {
   connectionParams?: Readonly<Record<string, unknown>>;
   extra: unknown;
 }
@@ -138,6 +137,42 @@ export function wsRequestId(ctx: WsContext): string {
     ...lowerCaseKeys(ctx.connectionParams),
   });
   return extra.requestId;
+}
+
+/**
+ * graphql-ws results skip the Apollo plugin, so they are logged here as the plugin does over HTTP:
+ * expected errors at warn, server failures at error with the stack. `serverOriginal` gives the error
+ * the server threw, the same one formatError classifies, or `undefined` for a client error
+ * (validation, variables), which is not logged unless it is expected. Nest 4xx exceptions are not
+ * logged here either, as before.
+ * A resolver exception is also logged by Nest; failures outside Nest (serialization, a subscription
+ * stream that throws) are logged only here.
+ */
+export function logWsErrors(
+  logger: PinoLogger,
+  ctx: WsContext,
+  errors: readonly GraphQLError[] | undefined,
+  serverOriginal: (error: GraphQLError) => unknown,
+): void {
+  for (const error of errors ?? []) {
+    const thrown = serverOriginal(error);
+    const original = thrown ?? error;
+    const expected = isExpectedGraphqlError(original);
+    if (!expected && (thrown === undefined || isClientStatus(statusOf(thrown)))) continue;
+    const fields = {
+      requestId: wsRequestId(ctx),
+      // The code the client gets: an unexpected error is masked, whatever its wrapper carries.
+      code: expected ? original.extensions.code : 'INTERNAL_SERVER_ERROR',
+      path: error.path?.join('.'),
+    };
+    const msg = `GraphQL error: ${withoutValue(error.message)}`;
+    if (expected) logger.warn(fields, msg);
+    else
+      logger.error(
+        { ...fields, err: loggableError(original instanceof Error ? original : error) },
+        msg,
+      );
+  }
 }
 
 function operationOf(payload: WsSubscribePayload): string {
