@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { getRequest } from '../auth/request-context.js';
-import { UserKind, isStaffPermission } from '../auth/user-kind.js';
+import { UserKind, isClientPermission, isStaffPermission } from '../auth/user-kind.js';
 import { REQUIRED_PERMISSIONS_KEY } from './require-permission.decorator.js';
 
 /** Global guard (runs after `AuthGuard`): enforces `@RequirePermission(...)`. */
@@ -29,9 +29,12 @@ export class PermissionGuard implements CanActivate {
     if (missing.length > 0) {
       throw new ForbiddenException(`Missing permission: ${missing.join(', ')}`);
     }
-    // Second lock: a client never reaches a staff endpoint, even with a staff permission by mistake.
+    // Second lock: the token kind must match the endpoint, even if a permission was granted by mistake.
     if (required.some(isStaffPermission) && user.kind !== UserKind.STAFF) {
       throw new ForbiddenException('Staff only');
+    }
+    if (required.some(isClientPermission) && user.kind !== UserKind.CLIENT) {
+      throw new ForbiddenException('Clients only');
     }
     return true;
   }
