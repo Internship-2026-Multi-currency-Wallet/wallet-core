@@ -61,6 +61,7 @@ export class EmailWorker implements OnApplicationBootstrap, OnApplicationShutdow
     };
     // 'active' is emitted when a job is acquired, a few awaits before the processor starts.
     this.worker.on('active', (job) => this.unsettled.add(String(job.id)));
+    // Redis finalization errors may leave an ID unsettled until the bounded shutdown grace expires.
     this.worker.on('completed', settle);
     this.worker.on('failed', settle);
     this.worker.getBackend().on('ready', () => {
