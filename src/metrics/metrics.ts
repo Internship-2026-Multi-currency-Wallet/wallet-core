@@ -20,11 +20,12 @@ export const DURATION_BUCKETS = [0.005, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 
 // throws past that, and a client may send an x-request-id of up to 128 characters.
 const MAX_TRACE_ID_LENGTH = 128 - 'trace_id'.length;
 
-/** Exemplar labels that link a sample to the logs of its request; empty means no exemplar. */
-export function requestExemplar(requestId: unknown): Record<string, string> {
+// undefined, not {}: a prom-client counter skips only its own default object and would store a new {}
+// as an empty exemplar, replacing the last real one.
+export function requestExemplar(requestId: unknown): Record<string, string> | undefined {
   return typeof requestId === 'string' && requestId.length <= MAX_TRACE_ID_LENGTH
     ? { trace_id: requestId }
-    : {};
+    : undefined;
 }
 
 type Config<T> = Omit<T, 'registers'>;

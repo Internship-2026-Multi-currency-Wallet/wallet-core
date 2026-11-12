@@ -1,7 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 import { MAX_OPERATIONS, Metrics, requestExemplar, UNKNOWN_OPERATION } from './metrics.js';
 import { parse } from 'graphql';
-import { graphqlErrorCode, operationName, wsOperationName } from './request-metrics.js';
+import {
+  countGraphqlErrors,
+  graphqlErrorCode,
+  operationName,
+  wsOperationName,
+} from './request-metrics.js';
 
 describe('Metrics.operation', () => {
   it('keeps names until the cap, then sends new ones to the unknown bucket', () => {
@@ -49,8 +54,29 @@ describe('Metrics.operation', () => {
 describe('requestExemplar', () => {
   it('links to the request id, unless the id is missing or too long for an exemplar', () => {
     expect(requestExemplar('a'.repeat(120))).toEqual({ trace_id: 'a'.repeat(120) });
-    expect(requestExemplar('a'.repeat(121))).toEqual({});
-    expect(requestExemplar(undefined)).toEqual({});
+    expect(requestExemplar('a'.repeat(121))).toBeUndefined();
+    expect(requestExemplar(undefined)).toBeUndefined();
+  });
+});
+
+describe('countGraphqlErrors', () => {
+  const errorsLine = async (metrics: Metrics) =>
+    (await metrics.registry.metrics())
+      .split('\n')
+      .find((l) => l.startsWith('graphql_errors_total{'));
+
+  it('writes no exemplar for an error without a request id (websocket)', async () => {
+    const metrics = new Metrics({ service: 'wallet-core', env: 'local' });
+    countGraphqlErrors(metrics, 'query me', [{ message: 'x' }]);
+    expect(await errorsLine(metrics)).not.toContain('# {');
+  });
+
+  it('keeps the last real exemplar when a later error has no usable request id', async () => {
+    const metrics = new Metrics({ service: 'wallet-core', env: 'local' });
+    countGraphqlErrors(metrics, 'query me', [{ message: 'x' }], 'req-1');
+    countGraphqlErrors(metrics, 'query me', [{ message: 'x' }]);
+    countGraphqlErrors(metrics, 'query me', [{ message: 'x' }], 'a'.repeat(121));
+    expect(await errorsLine(metrics)).toMatch(/\} 3 # \{trace_id="req-1"\}/);
   });
 });
 
