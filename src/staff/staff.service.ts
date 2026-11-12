@@ -334,7 +334,10 @@ export class StaffService {
     refreshToken: string | undefined,
     clock: () => Date = () => new Date(),
   ): Promise<void> {
-    if (input.currentPassword.length > PASSWORD_MAX_LENGTH) throw invalidCurrentPassword();
+    if (input.currentPassword.length > PASSWORD_MAX_LENGTH) {
+      this.logger.warn({ staffId }, WRONG_CURRENT_PASSWORD_LOG);
+      throw invalidCurrentPassword();
+    }
     const next = registerInputSchema.shape.password.safeParse(input.newPassword);
     if (!next.success) {
       throw staffError(StaffErrorCode.BadUserInput, next.error.issues[0].message, {
@@ -345,7 +348,10 @@ export class StaffService {
     if (row?.status !== StaffStatus.ACTIVE || row.passwordHash === null) throw accountNotActive();
     const verifiedHash = row.passwordHash;
     // A wrong current password deliberately does not count toward the login lockout.
-    if (!(await verify(verifiedHash, input.currentPassword))) throw invalidCurrentPassword();
+    if (!(await verify(verifiedHash, input.currentPassword))) {
+      this.logger.warn({ staffId: row.id }, WRONG_CURRENT_PASSWORD_LOG);
+      throw invalidCurrentPassword();
+    }
     const newHash = await hash(next.data);
 
     await this.staff.transaction(async (tx) => {
@@ -379,6 +385,8 @@ export class StaffService {
     return toMe(await findOrThrow(this.staff, actorId));
   }
 }
+
+const WRONG_CURRENT_PASSWORD_LOG = 'staff password change rejected: wrong current password';
 
 function toMe(record: StaffRecord): StaffMe {
   return {

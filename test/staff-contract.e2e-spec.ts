@@ -7,8 +7,7 @@ import { createApp } from './create-app.js';
 
 /**
  * Staff GraphQL contract: who may call which operation. Staff management operations are implemented
- * and reach the service once the guards pass; `staffLogin` and `staffLogout` are implemented; `changeOwnStaffPassword` is implemented (a weak new password is rejected before any lookup); the other public staff auth
- * mutations are still stubs and answer "not implemented" (`STUB`).
+ * and reach the service once the guards pass; `staffLogin` and `staffLogout` are implemented; `changeOwnStaffPassword` is implemented (a weak new password is rejected before any lookup).
  */
 describe('staff contract (e2e, DEV_AUTH=true)', () => {
   let app: INestApplication;
@@ -25,11 +24,8 @@ describe('staff contract (e2e, DEV_AUTH=true)', () => {
     return (await req.send({ query })).body as GqlResponse;
   };
 
-  /** The first error's code, or `STUB` when the call passed the guards and reached a stub. */
-  const errorCode = async (query: string, authorization?: string): Promise<string | undefined> => {
-    const error = (await call(query, authorization)).errors?.[0];
-    return error && /is not implemented yet$/.test(error.message) ? 'STUB' : error?.extensions.code;
-  };
+  const errorCode = async (query: string, authorization?: string): Promise<string | undefined> =>
+    (await call(query, authorization)).errors?.[0]?.extensions.code;
 
   beforeAll(async () => {
     app = await createApp({ DEV_AUTH: 'true', CLIENT: 'demo' });

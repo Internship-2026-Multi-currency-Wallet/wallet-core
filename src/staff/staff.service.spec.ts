@@ -1464,7 +1464,7 @@ describe('StaffService.changeOwnPassword', () => {
   });
 
   it('answers INVALID_CURRENT_PASSWORD for a wrong current password, changing and counting nothing', async () => {
-    const { service, repo, email, first } = await ready();
+    const { service, repo, email, logger, first } = await ready();
 
     const error = await graphqlErrorOf(
       service.changeOwnPassword(
@@ -1485,10 +1485,18 @@ describe('StaffService.changeOwnPassword', () => {
     expect(repo.calls).toEqual(['findById']);
     expect(repo.sessions.map((s) => s.revokedAt)).toEqual([undefined, undefined]);
     expect(email.sent).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { staffId: SUPPORT_ID },
+      'staff password change rejected: wrong current password',
+    );
+    const logged = JSON.stringify(logger.warn.mock.calls);
+    for (const secret of [WRONG, CURRENT, passwordHash, EMAIL])
+      expect(logged).not.toContain(secret);
   });
 
   it('rejects an oversized current password before reading the repository', async () => {
-    const { service, repo, email } = await ready();
+    const { service, repo, email, logger } = await ready();
 
     const error = await graphqlErrorOf(
       service.changeOwnPassword(
@@ -1502,6 +1510,10 @@ describe('StaffService.changeOwnPassword', () => {
     expect(error.extensions).toEqual({ code: 'INVALID_CURRENT_PASSWORD' });
     expect(repo.calls).toEqual([]);
     expect(email.sent).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { staffId: SUPPORT_ID },
+      'staff password change rejected: wrong current password',
+    );
   });
 
   it('rejects a weak new password with BAD_USER_INPUT on field newPassword, changing nothing', async () => {
