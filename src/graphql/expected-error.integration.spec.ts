@@ -80,6 +80,18 @@ class ProbeResolver {
     throw new GraphQLError('Business refused', { extensions: { code: 'BUSINESS_REFUSAL' } });
   }
 
+  /** A coded GraphQLError that has its own path and cause: classified as thrown, not unwrapped. */
+  @Subscription(() => Boolean)
+  async *upstreamFailure(): AsyncGenerator<{ upstreamFailure: boolean }> {
+    yield { upstreamFailure: true };
+    await Promise.resolve();
+    throw new GraphQLError('Business refused', {
+      path: ['upstream'],
+      originalError: new Error(PRIVATE),
+      extensions: { code: 'BUSINESS_REFUSAL' },
+    });
+  }
+
   @Subscription(() => Boolean)
   refused(): AsyncIterator<boolean> {
     throw new GraphQLError('Subscription refused', {
@@ -525,6 +537,30 @@ describe('GraphQL error logging in Nest + Apollo', () => {
       expect(wsErrors).toEqual([]);
       expect(nestErrors).toEqual([]);
       expect(await countedCodes('subscription codedFailure')).toEqual(['BUSINESS_REFUSAL']);
+    });
+
+    it('keeps a coded GraphQLError with its own path and cause: one warn, private cause hidden', async () => {
+      const requestId = 'e1-17-ws-upstream';
+      const { results, failure, warns, wsErrors, nestErrors } = await runWs(
+        'subscription Upstream { upstreamFailure }',
+        requestId,
+      );
+
+      expect(results).toEqual([{ data: { upstreamFailure: true } }]);
+      expect(failure).toEqual([
+        { message: 'Business refused', extensions: { code: 'BUSINESS_REFUSAL' } },
+      ]);
+      expect(JSON.stringify(failure)).not.toContain(PRIVATE);
+      expect(warns).toEqual([
+        {
+          level: 'warn',
+          fields: { requestId, code: 'BUSINESS_REFUSAL', path: undefined },
+          msg: 'GraphQL error: Business refused',
+        },
+      ]);
+      expect(wsErrors).toEqual([]);
+      expect(nestErrors).toEqual([]);
+      expect(await countedCodes('subscription upstreamFailure')).toEqual(['BUSINESS_REFUSAL']);
     });
 
     it('keeps the first event and logs the stream failure at ERROR with the stack, masked', async () => {

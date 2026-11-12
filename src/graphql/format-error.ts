@@ -24,7 +24,17 @@ export function formatError(
   formatted: GraphQLFormattedError,
   error: unknown,
 ): GraphQLFormattedError {
-  const original = unwrapResolverError(error);
+  return formatOriginal(formatted, unwrapResolverError(error));
+}
+
+/**
+ * `formatError` for the error already known to be the one thrown. It is not unwrapped again: a
+ * thrown GraphQLError can itself carry a path and an `originalError`.
+ */
+function formatOriginal(
+  formatted: GraphQLFormattedError,
+  original: unknown,
+): GraphQLFormattedError {
   if (original instanceof HttpException) {
     if (original.getStatus() !== 404) return formatted;
     // @nestjs/apollo maps only 400/401/403/422: a NotFoundException leaves it as
@@ -70,7 +80,7 @@ export function formatProtocolErrors(
   return errors.map((error) => {
     const thrown = serverProtocolOriginal(error);
     return thrown !== undefined
-      ? { error: formatError(error.toJSON(), thrown), fromClient: false }
+      ? { error: formatOriginal(error.toJSON(), thrown), fromClient: false }
       : {
           error: {
             ...error.toJSON(),
