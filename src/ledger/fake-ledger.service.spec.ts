@@ -51,6 +51,15 @@ async function expectLedgerError(promise: Promise<unknown>, code: LedgerErrorCod
   expect((error as GraphQLError).extensions['code']).toBe(code);
 }
 
+async function expectPlainError(promise: Promise<unknown>): Promise<void> {
+  const error: unknown = await promise.then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  expect(error).toBeInstanceOf(Error);
+  expect(error).not.toBeInstanceOf(GraphQLError);
+}
+
 /**
  * The behaviour every `LedgerService` must have. It only uses the public API, so the Knex
  * implementation can run the same cases.
@@ -75,28 +84,26 @@ function describeLedgerContract(name: string, createService: () => LedgerService
       expect(await balanceOf(service, 'user-1', 'USD')).toBe(0n);
     });
 
-    it('rejects an operation that does not sum to zero and changes nothing', async () => {
-      await expectLedgerError(
+    it('throws a plain Error for an operation that does not sum to zero and changes nothing', async () => {
+      await expectPlainError(
         service.post(
           operation('k1', [
             { account: platformAccount(PLATFORM_FUNDING, 'UAH'), amount: -100n },
             { account: userAccount('user-1', 'UAH'), amount: 90n },
           ]),
         ),
-        LedgerErrorCode.UnbalancedOperation,
       );
       expect(await balanceOf(service, 'user-1', 'UAH')).toBe(0n);
     });
 
-    it('rejects an operation that balances in total but not per currency', async () => {
-      await expectLedgerError(
+    it('throws a plain Error for an operation that balances in total but not per currency', async () => {
+      await expectPlainError(
         service.post(
           operation('k1', [
             { account: platformAccount(PLATFORM_FUNDING, 'UAH'), amount: -100n },
             { account: userAccount('user-1', 'USD'), amount: 100n },
           ]),
         ),
-        LedgerErrorCode.UnbalancedOperation,
       );
       expect(await balanceOf(service, 'user-1', 'USD')).toBe(0n);
     });
@@ -155,6 +162,61 @@ function describeLedgerContract(name: string, createService: () => LedgerService
       expect(second.operation.id).toBe(first.operation.id);
     });
 
+    it('replays after the funds moved: the original operation, nothing changes', async () => {
+      await service.post(credit('k1', 'user-a', 'UAH', 500n));
+      const move = operation('k2', [
+        { account: userAccount('user-a', 'UAH'), amount: -500n },
+        { account: userAccount('user-b', 'UAH'), amount: 500n },
+      ]);
+      const first = await service.post(move);
+      const second = await service.post(move);
+      expect(second.replayed).toBe(true);
+      expect(second.operation.id).toBe(first.operation.id);
+      expect(await balanceOf(service, 'user-a', 'UAH')).toBe(0n);
+      expect(await balanceOf(service, 'user-b', 'UAH')).toBe(500n);
+    });
+
+    it('checks a user account that appears twice in one operation on its net change', async () => {
+      const funding = platformAccount(PLATFORM_FUNDING, 'UAH');
+      await service.post(credit('k1', 'user-a', 'UAH', 100n));
+      await service.post(credit('k2', 'user-b', 'UAH', 100n));
+
+      await service.post(
+        operation('k3', [
+          { account: userAccount('user-a', 'UAH'), amount: -150n },
+          { account: userAccount('user-a', 'UAH'), amount: 100n },
+          { account: funding, amount: 50n },
+        ]),
+      );
+      expect(await balanceOf(service, 'user-a', 'UAH')).toBe(50n);
+
+      await expectLedgerError(
+        service.post(
+          operation('k4', [
+            { account: userAccount('user-b', 'UAH'), amount: -150n },
+            { account: userAccount('user-b', 'UAH'), amount: 40n },
+            { account: funding, amount: 110n },
+          ]),
+        ),
+        LedgerErrorCode.InsufficientFunds,
+      );
+      expect(await balanceOf(service, 'user-b', 'UAH')).toBe(100n);
+    });
+
+    it('does not share objects with callers: changing what was passed or returned changes no replay', async () => {
+      const posting = credit('k1', 'user-1', 'UAH', 500n);
+      const first = await service.post(posting);
+      posting.entries[1].amount = 1n;
+      first.operation.entries[1].amount = 2n;
+
+      const second = await service.post(credit('k1', 'user-1', 'UAH', 500n));
+      expect(second.operation.entries).toEqual(credit('k1', 'user-1', 'UAH', 500n).entries);
+      second.operation.entries[1].amount = 3n;
+
+      const third = await service.post(credit('k1', 'user-1', 'UAH', 500n));
+      expect(third.operation.entries).toEqual(credit('k1', 'user-1', 'UAH', 500n).entries);
+    });
+
     it('throws a plain Error for caller mistakes', async () => {
       const mistakes: PostOperation[] = [
         operation('k1', []),
@@ -168,23 +230,11 @@ function describeLedgerContract(name: string, createService: () => LedgerService
         ]),
       ];
       for (const mistake of mistakes) {
-        const error: unknown = await service.post(mistake).then(
-          () => undefined,
-          (reason: unknown) => reason,
-        );
-        expect(error).toBeInstanceOf(Error);
-        expect(error).not.toBeInstanceOf(GraphQLError);
+        await expectPlainError(service.post(mistake));
       }
     });
 
     it('reports business errors as GraphQLError with the ledger code', async () => {
-      const unbalanced = service.post(
-        operation('k1', [
-          { account: platformAccount(PLATFORM_FUNDING, 'UAH'), amount: -1n },
-          { account: userAccount('user-1', 'UAH'), amount: 2n },
-        ]),
-      );
-      await expectLedgerError(unbalanced, 'UNBALANCED_OPERATION');
       await expectLedgerError(
         service.post(
           operation('k2', [

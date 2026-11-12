@@ -52,7 +52,7 @@ export class FakeLedgerService extends LedgerService {
           LEDGER_ERROR_MESSAGES.idempotencyConflict,
         );
       }
-      return { operation: known.operation, replayed: true };
+      return { operation: structuredClone(known.operation), replayed: true };
     }
 
     const sums = new Map<string, bigint>();
@@ -62,11 +62,9 @@ export class FakeLedgerService extends LedgerService {
       const key = accountKey(account);
       updated.set(key, (updated.get(key) ?? this.balances.get(key) ?? 0n) + amount);
     }
-    if ([...sums.values()].some((sum) => sum !== 0n)) {
-      throw ledgerError(
-        LedgerErrorCode.UnbalancedOperation,
-        LEDGER_ERROR_MESSAGES.unbalancedOperation,
-      );
+    // A caller bug, not a client error: the message names only the currency, never ids or amounts.
+    for (const [currency, sum] of sums) {
+      if (sum !== 0n) throw new Error(`Ledger operation does not sum to zero in ${currency}`);
     }
     for (const { account } of operation.entries) {
       if (account.type === 'user' && (updated.get(accountKey(account)) ?? 0n) < 0n) {
@@ -78,14 +76,14 @@ export class FakeLedgerService extends LedgerService {
     }
 
     for (const [key, balance] of updated) this.balances.set(key, balance);
-    const posted: PostedOperation = {
+    // Cloned on the way in and out: the caller's objects must never alias what a replay returns.
+    const posted: PostedOperation = structuredClone({
       ...operation,
-      entries: [...operation.entries],
       id: randomUUID(),
       createdAt: new Date(),
-    };
+    });
     this.operations.set(operation.idempotencyKey, { operation: posted, fingerprint });
-    return { operation: posted, replayed: false };
+    return { operation: structuredClone(posted), replayed: false };
   }
 
   getBalances(userId: string): Promise<UserBalance[]> {

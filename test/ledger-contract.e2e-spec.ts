@@ -14,11 +14,18 @@ import { createApp } from './create-app.js';
 describe('ledger contract (e2e)', () => {
   const USER_ID = '00000000-0000-4000-8000-000000000001';
   const DEV_USER = 'Dev 1:wallet';
+  // A staff token carries no `wallet` permission; `bo` is how dev auth makes a staff caller.
+  const STAFF = 'Dev 1:bo';
   const TEST_CREDIT = 'mutation { testCredit(currency: UAH, amount: "10050") { currency amount } }';
+
+  interface GqlError {
+    message: string;
+    extensions: { code: string };
+  }
 
   interface GqlBody {
     data?: Record<string, unknown> | null;
-    errors?: { message: string; extensions: { code: string } }[];
+    errors?: GqlError[];
   }
 
   interface FieldInfo {
@@ -42,8 +49,14 @@ describe('ledger contract (e2e)', () => {
   };
 
   describe('on APP_ENV=local with dev auth', () => {
-    let app: INestApplication;
+    let app: INestApplication | undefined;
     let wsUrl: string;
+
+    // If `createApp` fails, the tests fail here with a clear message instead of a TypeError on `undefined`.
+    const server = (): INestApplication => {
+      if (!app) throw new Error('the application was not created');
+      return app;
+    };
 
     beforeAll(async () => {
       app = await createApp({ APP_ENV: 'local', DEV_AUTH: 'true' });
@@ -53,11 +66,11 @@ describe('ledger contract (e2e)', () => {
     });
 
     afterAll(async () => {
-      await app.close();
+      await app?.close();
     });
 
-    /** Message of the first error of a subscription; fails if it delivers data. A resolver error arrives as a result with `errors`. */
-    const subscribeError = async (query: string, authorization?: string): Promise<string> => {
+    /** First error of a subscription; fails if it delivers data. A resolver error arrives as a result with `errors`. */
+    const subscribeError = async (query: string, authorization?: string): Promise<GqlError> => {
       const client = createClient({
         url: wsUrl,
         webSocketImpl: WebSocket,
@@ -65,12 +78,12 @@ describe('ledger contract (e2e)', () => {
         connectionParams: authorization ? { Authorization: authorization } : {},
       });
       try {
-        return await new Promise<string>((resolve, reject) => {
+        return await new Promise<GqlError>((resolve, reject) => {
           client.subscribe(
             { query },
             {
               next: (result) => {
-                if (result.errors?.length) resolve(result.errors[0].message);
+                if (result.errors?.length) resolve(result.errors[0] as GqlError);
                 else reject(new Error(`unexpected result: ${JSON.stringify(result)}`));
               },
               error: reject,
@@ -84,7 +97,7 @@ describe('ledger contract (e2e)', () => {
     };
 
     it('balances requires authentication', async () => {
-      const body = await gql(app, '{ balances { currency amount decimals } }');
+      const body = await gql(server(), '{ balances { currency amount decimals } }');
       expect(body.errors?.[0]).toMatchObject({
         message: 'Authentication required',
         extensions: { code: 'UNAUTHENTICATED' },
@@ -92,12 +105,17 @@ describe('ledger contract (e2e)', () => {
     });
 
     it('balances reaches the stub for a logged-in user', async () => {
-      const body = await gql(app, '{ balances { currency amount decimals } }', DEV_USER);
+      const body = await gql(server(), '{ balances { currency amount decimals } }', DEV_USER);
       expect(body.errors?.[0].message).toBe('balances is not implemented yet');
     });
 
+    it('balances is forbidden for staff', async () => {
+      const body = await gql(server(), '{ balances { currency } }', STAFF);
+      expect(body.errors?.[0].extensions.code).toBe('FORBIDDEN');
+    });
+
     it('testCredit requires authentication', async () => {
-      const body = await gql(app, TEST_CREDIT);
+      const body = await gql(server(), TEST_CREDIT);
       expect(body.errors?.[0]).toMatchObject({
         message: 'Authentication required',
         extensions: { code: 'UNAUTHENTICATED' },
@@ -106,29 +124,43 @@ describe('ledger contract (e2e)', () => {
 
     it('testCredit rejects an unknown currency before reaching the stub', async () => {
       const body = await gql(
-        app,
+        server(),
         'mutation { testCredit(currency: BTC, amount: "1") { amount } }',
         DEV_USER,
       );
       expect(body.errors).toHaveLength(1);
-      expect(body.errors?.[0].message).not.toMatch(/not implemented/);
+      expect(body.errors?.[0].extensions.code).toBe('GRAPHQL_VALIDATION_FAILED');
+    });
+
+    it('testCredit is forbidden for staff', async () => {
+      const body = await gql(server(), TEST_CREDIT, STAFF);
+      expect(body.errors?.[0].extensions.code).toBe('FORBIDDEN');
     });
 
     it('balanceChanged requires authentication', async () => {
-      await expect(subscribeError('subscription { balanceChanged { currency } }')).resolves.toBe(
-        'Authentication required',
-      );
+      await expect(
+        subscribeError('subscription { balanceChanged { currency } }'),
+      ).resolves.toMatchObject({
+        message: 'Authentication required',
+        extensions: { code: 'UNAUTHENTICATED' },
+      });
     });
 
     it('balanceChanged reaches the stub for a logged-in user', async () => {
       await expect(
         subscribeError('subscription { balanceChanged { currency } }', DEV_USER),
-      ).resolves.toBe('balanceChanged is not implemented yet');
+      ).resolves.toMatchObject({ message: 'balanceChanged is not implemented yet' });
+    });
+
+    it('balanceChanged is forbidden for staff', async () => {
+      await expect(
+        subscribeError('subscription { balanceChanged { currency } }', STAFF),
+      ).resolves.toMatchObject({ extensions: { code: 'FORBIDDEN' } });
     });
 
     it('takes the owner from the token: no userId argument anywhere', async () => {
       const body = await gql(
-        app,
+        server(),
         `{
           subscription: __type(name: "Subscription") { fields { name args { name } } }
           mutation: __type(name: "Mutation") { fields { name args { name } } }
@@ -162,6 +194,16 @@ describe('ledger contract (e2e)', () => {
       app = await createApp({ APP_ENV: appEnv, DEV_AUTH: 'true' });
       const body = await gql(app, TEST_CREDIT, DEV_USER);
       expect(body.errors?.[0].message).toBe('testCredit is not implemented yet');
+    });
+
+    // The authentication guard runs before the handler, so "not found" is only for logged-in callers.
+    it('asks an anonymous caller to log in on kvitka-uat instead of answering NOT_FOUND', async () => {
+      app = await createApp({ APP_ENV: 'kvitka-uat', DEV_AUTH: 'false' });
+      const body = await gql(app, TEST_CREDIT);
+      expect(body.errors?.[0]).toMatchObject({
+        message: 'Authentication required',
+        extensions: { code: 'UNAUTHENTICATED' },
+      });
     });
 
     // Dev auth is refused on client environments, so a real token is the only way in.

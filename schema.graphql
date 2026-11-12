@@ -186,7 +186,7 @@ type Mutation {
   staffRefreshSession: StaffAuthPayload!
 
   """
-  Moves money from the platform funding account to the caller. Exists only on local and staging. `amount` is a positive integer string in minor units. Returns the new TOTAL balance of that currency. Errors: BAD_USER_INPUT (extensions.field), UNAUTHENTICATED, NOT_FOUND (kvitka-uat, wisla-uat).
+  Moves money from the platform funding account to the caller. Exists only on local and staging. `amount` is a positive integer string in minor units. Returns the new TOTAL balance of that currency. Errors: BAD_USER_INPUT (extensions.field), UNAUTHENTICATED, FORBIDDEN (staff tokens have no `wallet` permission), NOT_FOUND (on kvitka-uat and wisla-uat, for authenticated callers: an anonymous caller gets UNAUTHENTICATED first).
   """
   testCredit(
     """Positive integer in minor units, as a string."""
@@ -213,7 +213,7 @@ type PublicSetting {
 
 type Query {
   """
-  The balances of the caller: always five rows, in the order UAH, USD, EUR, PLN, USDT, zeros included. Errors: UNAUTHENTICATED.
+  The balances of the caller: always five rows, in the order UAH, USD, EUR, PLN, USDT, zeros included. Errors: UNAUTHENTICATED, FORBIDDEN (staff tokens have no `wallet` permission).
   """
   balances: [Balance!]!
 
@@ -384,7 +384,7 @@ enum StaffStatus {
 
 type Subscription {
   """
-  Live balance changes of the caller, one message per operation. A message lists every balance that operation changed, each with its full new amount (not a delta). Only the caller's own changes are delivered. Errors: UNAUTHENTICATED.
+  Live balance changes of the caller, one message per operation. A message lists every balance that operation changed, each with its full new amount (not a delta). Only the caller's own changes are delivered. Errors: UNAUTHENTICATED, FORBIDDEN (staff tokens have no `wallet` permission).
   """
   balanceChanged: [Balance!]!
 }
