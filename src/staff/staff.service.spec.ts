@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
+import { ForbiddenException } from '@nestjs/common';
 import { jest } from '@jest/globals';
 import { hash, verify } from '@node-rs/argon2';
 import { GraphQLError } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import { MAX_FAILED_LOGINS } from '../auth/auth.service.js';
+import { PASSWORD_MAX_LENGTH } from '../auth/register.schema.js';
 import type { TokenService } from '../auth/tokens.js';
 import { AppConfig } from '../config/app-config.js';
 import { EmailService, type EmailTemplate, type EmailTemplates } from '../email/email.service.js';
@@ -27,6 +29,7 @@ const HOUR_MS = 60 * 60 * 1000;
 interface Revocation {
   staffId: string;
   at: Date;
+  except?: string;
 }
 
 /** In-memory StaffRepository: same methods, same rules (email unique, case-insensitive). */
@@ -148,8 +151,14 @@ class FakeStaffRepository {
     return Promise.resolve(this.find(id));
   }
 
+  /** Runs once, before the first lockById: lets a test commit a change between a read and the lock. */
+  beforeLock: (() => void) | undefined;
+
   lockById(id: string): Promise<StaffRecord | undefined> {
     this.calls.push('lockById');
+    const hook = this.beforeLock;
+    this.beforeLock = undefined;
+    hook?.();
     return Promise.resolve(this.find(id));
   }
 
@@ -187,10 +196,36 @@ class FakeStaffRepository {
     return Promise.resolve(ids);
   }
 
-  revokeSessions(staffId: string, at: Date): Promise<void> {
+  revokeSessions(staffId: string, at: Date, options: { except?: string } = {}): Promise<void> {
     this.calls.push('revokeSessions');
-    this.revocations.push({ staffId, at });
+    this.revocations.push({ staffId, at, except: options.except });
+    for (const s of this.sessions) {
+      if (s.staffId === staffId && !s.revokedAt && s.id !== options.except) s.revokedAt = at;
+    }
     return Promise.resolve();
+  }
+
+  setPassword(id: string, passwordHash: string, at: Date): Promise<void> {
+    this.calls.push('setPassword');
+    const record = this.records.get(id);
+    if (record) this.records.set(id, { ...record, passwordHash, updatedAt: at });
+    return Promise.resolve();
+  }
+
+  findActiveSessionId(
+    staffId: string,
+    refreshTokenHash: string,
+    now: Date,
+  ): Promise<string | undefined> {
+    this.calls.push('findActiveSessionId');
+    const found = this.sessions.find(
+      (s) =>
+        s.staffId === staffId &&
+        s.refreshTokenHash === refreshTokenHash &&
+        !s.revokedAt &&
+        s.expiresAt > now,
+    );
+    return Promise.resolve(found?.id);
   }
 
   insertInvitation(invitation: NewInvitation): Promise<void> {
@@ -1363,5 +1398,225 @@ describe('StaffService.refresh', () => {
       expect(seen).not.toContain(secret);
     }
     expect(logger.info).toHaveBeenCalledWith({ staffId: SUPPORT_ID }, 'staff session refreshed');
+  });
+});
+
+describe('StaffService.changeOwnPassword', () => {
+  const CURRENT = 'Str0ng!Passw0rd';
+  const WRONG = 'Wr0ng!Passw0rd';
+  const NEXT = 'N3w!Passw0rd-xyz';
+  const EMAIL = 'change.person@test.com';
+  const clock = () => NOW;
+  let passwordHash: string;
+  beforeAll(async () => {
+    passwordHash = await hash(CURRENT);
+  });
+
+  const ready = async () => {
+    const ctx = setup();
+    ctx.repo.seed(SUPPORT_ID, { email: EMAIL, passwordHash });
+    const login = () => ctx.service.login({ email: EMAIL, password: CURRENT }, undefined, NOW);
+    const first = await login();
+    const second = await login();
+    ctx.repo.calls.length = 0;
+    return { ...ctx, first, second };
+  };
+  const input = (overrides: Partial<{ currentPassword: string; newPassword: string }> = {}) => ({
+    currentPassword: CURRENT,
+    newPassword: NEXT,
+    ...overrides,
+  });
+
+  it('stores a verifiable new hash, keeping the session of the cookie and revoking the others', async () => {
+    const { service, repo, first } = await ready();
+
+    await service.changeOwnPassword(SUPPORT_ID, input(), first.refreshToken, clock);
+
+    const stored = repo.records.get(SUPPORT_ID)!;
+    expect(await verify(stored.passwordHash!, NEXT)).toBe(true);
+    expect(await verify(stored.passwordHash!, CURRENT)).toBe(false);
+    expect(stored.status).toBe(StaffStatus.ACTIVE);
+    expect(repo.sessions.map((s) => s.revokedAt)).toEqual([undefined, NOW]);
+  });
+
+  it('revokes every session when there is no cookie', async () => {
+    const { service, repo } = await ready();
+
+    await service.changeOwnPassword(SUPPORT_ID, input(), undefined, clock);
+
+    expect(repo.sessions.map((s) => s.revokedAt)).toEqual([NOW, NOW]);
+  });
+
+  it('does not treat the cookie of another member as the current session', async () => {
+    const { service, repo } = await ready();
+    repo.seed(ADMIN_ID, { email: 'other@test.com', passwordHash });
+    const other = await service.login(
+      { email: 'other@test.com', password: CURRENT },
+      undefined,
+      NOW,
+    );
+
+    await service.changeOwnPassword(SUPPORT_ID, input(), other.refreshToken, clock);
+
+    const own = repo.sessions.filter((s) => s.staffId === SUPPORT_ID);
+    expect(own.map((s) => s.revokedAt)).toEqual([NOW, NOW]);
+    expect(repo.sessions.find((s) => s.staffId === ADMIN_ID)!.revokedAt).toBeUndefined();
+  });
+
+  it('answers INVALID_CURRENT_PASSWORD for a wrong current password, changing and counting nothing', async () => {
+    const { service, repo, email, first } = await ready();
+
+    const error = await graphqlErrorOf(
+      service.changeOwnPassword(
+        SUPPORT_ID,
+        input({ currentPassword: WRONG }),
+        first.refreshToken,
+        clock,
+      ),
+    );
+
+    expect(error.extensions).toEqual({ code: 'INVALID_CURRENT_PASSWORD' });
+    expect(error.message).toBe('Current password is incorrect');
+    expect(repo.records.get(SUPPORT_ID)).toMatchObject({
+      passwordHash,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+    });
+    expect(repo.calls).toEqual(['findById']);
+    expect(repo.sessions.map((s) => s.revokedAt)).toEqual([undefined, undefined]);
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('rejects an oversized current password before reading the repository', async () => {
+    const { service, repo, email } = await ready();
+
+    const error = await graphqlErrorOf(
+      service.changeOwnPassword(
+        SUPPORT_ID,
+        input({ currentPassword: 'a'.repeat(PASSWORD_MAX_LENGTH + 1) }),
+        undefined,
+        clock,
+      ),
+    );
+
+    expect(error.extensions).toEqual({ code: 'INVALID_CURRENT_PASSWORD' });
+    expect(repo.calls).toEqual([]);
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('rejects a weak new password with BAD_USER_INPUT on field newPassword, changing nothing', async () => {
+    const { service, repo, email } = await ready();
+
+    const error = await graphqlErrorOf(
+      service.changeOwnPassword(SUPPORT_ID, input({ newPassword: 'short' }), undefined, clock),
+    );
+
+    expect(error.extensions).toEqual({ code: 'BAD_USER_INPUT', field: 'newPassword' });
+    expect(repo.calls).toEqual([]);
+    expect(repo.records.get(SUPPORT_ID)!.passwordHash).toBe(passwordHash);
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it.each([
+    ['unknown', undefined],
+    ['deactivated', { status: StaffStatus.DEACTIVATED }],
+    ['invited', { status: StaffStatus.INVITED }],
+    ['passwordless', { passwordHash: null }],
+  ])('answers FORBIDDEN for a %s account', async (_name, overrides) => {
+    const { service, repo, email } = setup();
+    if (overrides) repo.seed(SUPPORT_ID, { passwordHash, ...overrides });
+
+    await expect(service.changeOwnPassword(SUPPORT_ID, input(), undefined, clock)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(repo.calls).not.toContain('setPassword');
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('answers INVALID_CURRENT_PASSWORD, writing nothing, when the password changed between the check and the lock', async () => {
+    const { service, repo, email } = await ready();
+    repo.beforeLock = () =>
+      repo.records.set(SUPPORT_ID, { ...repo.records.get(SUPPORT_ID)!, passwordHash: 'other' });
+
+    const error = await graphqlErrorOf(
+      service.changeOwnPassword(SUPPORT_ID, input(), undefined, clock),
+    );
+
+    expect(error.extensions).toEqual({ code: 'INVALID_CURRENT_PASSWORD' });
+    expect(repo.calls).not.toContain('setPassword');
+    expect(repo.calls).not.toContain('revokeSessions');
+    expect(email.sent).toHaveLength(0);
+  });
+
+  it('answers FORBIDDEN, writing nothing, when the member was deactivated between the read and the lock', async () => {
+    const { service, repo } = await ready();
+    repo.beforeLock = () =>
+      repo.records.set(SUPPORT_ID, {
+        ...repo.records.get(SUPPORT_ID)!,
+        status: StaffStatus.DEACTIVATED,
+      });
+
+    await expect(service.changeOwnPassword(SUPPORT_ID, input(), undefined, clock)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(repo.calls).not.toContain('setPassword');
+  });
+
+  it('locks the staff row before touching sessions, and never the admin set', async () => {
+    const { service, repo, first } = await ready();
+
+    await service.changeOwnPassword(SUPPORT_ID, input(), first.refreshToken, clock);
+
+    expect(repo.calls).toEqual([
+      'findById',
+      'lockById',
+      'setPassword',
+      'findActiveSessionId',
+      'revokeSessions',
+    ]);
+  });
+
+  it('emails the member once, after the commit', async () => {
+    const { service, email } = await ready();
+
+    await service.changeOwnPassword(SUPPORT_ID, input(), undefined, clock);
+
+    expect(email.sent).toEqual([
+      { template: 'passwordChanged', to: EMAIL, data: {}, duringTransaction: false },
+    ]);
+  });
+
+  it('succeeds and warns with the error and staff id only when the email fails', async () => {
+    const { service, repo, email, logger } = await ready();
+    const failure = new Error('smtp down');
+    email.failWith = () => Promise.reject(failure);
+
+    await expect(
+      service.changeOwnPassword(SUPPORT_ID, input(), undefined, clock),
+    ).resolves.toBeUndefined();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { err: failure, staffId: SUPPORT_ID },
+      'password changed email failed',
+    );
+    expect(await verify(repo.records.get(SUPPORT_ID)!.passwordHash!, NEXT)).toBe(true);
+  });
+
+  it('logs an audit line, and never passwords, hashes or the email', async () => {
+    const { service, repo, logger, first } = await ready();
+    await graphqlErrorOf(
+      service.changeOwnPassword(SUPPORT_ID, input({ currentPassword: WRONG }), undefined, clock),
+    );
+    await service.changeOwnPassword(SUPPORT_ID, input(), first.refreshToken, clock);
+
+    expect(logger.info).toHaveBeenCalledWith(
+      { audit: 'staff.changeOwnPassword', actorId: SUPPORT_ID, staffId: SUPPORT_ID },
+      'staff action',
+    );
+    const seen = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls]);
+    const newHash = repo.records.get(SUPPORT_ID)!.passwordHash!;
+    for (const secret of [CURRENT, NEXT, WRONG, passwordHash, newHash, EMAIL]) {
+      expect(seen).not.toContain(secret);
+    }
   });
 });

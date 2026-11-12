@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { hash, verify } from '@node-rs/argon2';
 import type { GraphQLError } from 'graphql';
 import { PinoLogger } from 'nestjs-pino';
@@ -11,6 +11,7 @@ import { TokenService, hashRefreshToken, newRefreshToken } from '../auth/tokens.
 import { ROLE_PERMISSIONS, StaffRole } from './permissions.js';
 import type {
   AcceptStaffInvitationInput,
+  ChangeOwnStaffPasswordInput,
   InviteStaffInput,
   StaffLoginInput,
 } from './staff.inputs.js';
@@ -327,6 +328,49 @@ export class StaffService {
     return toMember(record);
   }
 
+  async changeOwnPassword(
+    staffId: string,
+    input: ChangeOwnStaffPasswordInput,
+    refreshToken: string | undefined,
+    clock: () => Date = () => new Date(),
+  ): Promise<void> {
+    if (input.currentPassword.length > PASSWORD_MAX_LENGTH) throw invalidCurrentPassword();
+    const next = registerInputSchema.shape.password.safeParse(input.newPassword);
+    if (!next.success) {
+      throw staffError(StaffErrorCode.BadUserInput, next.error.issues[0].message, {
+        field: 'newPassword',
+      });
+    }
+    const row = await this.staff.findById(staffId);
+    if (row?.status !== StaffStatus.ACTIVE || row.passwordHash === null) throw accountNotActive();
+    const verifiedHash = row.passwordHash;
+    // A wrong current password deliberately does not count toward the login lockout.
+    if (!(await verify(verifiedHash, input.currentPassword))) throw invalidCurrentPassword();
+    const newHash = await hash(next.data);
+
+    await this.staff.transaction(async (tx) => {
+      const locked = await tx.lockById(row.id);
+      if (locked?.status !== StaffStatus.ACTIVE) throw accountNotActive();
+      if (locked.passwordHash !== verifiedHash) throw invalidCurrentPassword();
+      const now = clock();
+      await tx.setPassword(locked.id, newHash, now);
+      const current = refreshToken
+        ? await tx.findActiveSessionId(locked.id, hashRefreshToken(refreshToken), now)
+        : undefined;
+      await tx.revokeSessions(locked.id, now, { except: current });
+    });
+
+    try {
+      await this.email.send('passwordChanged', row.email, {});
+    } catch (err) {
+      this.logger.warn({ err, staffId: row.id }, 'password changed email failed');
+    }
+    this.logger.info(
+      { audit: 'staff.changeOwnPassword', actorId: row.id, staffId: row.id },
+      'staff action',
+    );
+  }
+
   async list(): Promise<StaffMember[]> {
     return (await this.staff.list()).map(toMember);
   }
@@ -347,6 +391,18 @@ function toMe(record: StaffRecord): StaffMe {
 
 function invalidCredentials(): GraphQLError {
   return staffError(StaffErrorCode.InvalidCredentials, STAFF_ERROR_MESSAGES.invalidCredentials);
+}
+
+function invalidCurrentPassword(): GraphQLError {
+  return staffError(
+    StaffErrorCode.InvalidCurrentPassword,
+    STAFF_ERROR_MESSAGES.invalidCurrentPassword,
+  );
+}
+
+/** Same exception the permission guard throws, so the client sees one FORBIDDEN. */
+function accountNotActive(): ForbiddenException {
+  return new ForbiddenException('Account is not active');
 }
 
 function accountLocked(lockedUntil: Date): GraphQLError {

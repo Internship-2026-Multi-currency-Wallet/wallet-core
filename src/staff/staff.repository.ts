@@ -194,6 +194,24 @@ export class StaffRepository {
       .update({ revoked_at: at });
   }
 
+  /** Changes only the hash: status, role and the lockout counters stay as they are. */
+  async setPassword(id: string, passwordHash: string, at: Date): Promise<void> {
+    await this.db(STAFF).where({ id }).update({ password_hash: passwordHash, updated_at: at });
+  }
+
+  async findActiveSessionId(
+    staffId: string,
+    refreshTokenHash: string,
+    now: Date,
+  ): Promise<string | undefined> {
+    const row = await this.db<StaffSessionRow>(SESSIONS)
+      .where({ staff_id: staffId, refresh_token_hash: refreshTokenHash })
+      .whereNull('revoked_at')
+      .andWhere('expires_at', '>', now)
+      .first('id');
+    return row?.id;
+  }
+
   async createSession(session: NewStaffSession): Promise<void> {
     await this.db(SESSIONS).insert({
       id: session.id,

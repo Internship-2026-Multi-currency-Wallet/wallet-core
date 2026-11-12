@@ -331,6 +331,8 @@ the user's `refresh_token`. Lockout works as for users: 5 wrong passwords in a r
 (`ACCOUNT_LOCKED`). `staffLogout` ends the cookie's session and clears the cookie.
 `staffRefreshSession` rotates the cookie and issues an access token with the current role; it does not extend the session, and a user `refresh_token` cookie never works on it (nor the staff cookie on `refreshSession`).
 
+A role change, a deactivation and `changeOwnStaffPassword` revoke refresh tokens: a role change or deactivation ends all of the member's sessions, and a password change ends all but the current one. An access token that was already issued stays valid for up to 15 minutes, because permissions travel in the token; the permission cache planned in E1-12 will shorten this.
+
 ### Client settings — `src/settings`
 
 ```ts

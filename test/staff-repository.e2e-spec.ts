@@ -353,6 +353,63 @@ describe('StaffRepository (e2e, real MySQL)', () => {
     });
   });
 
+  describe('password and current session', () => {
+    const S1 = '5a1e8b7d-3c9f-4e2a-8b6c-7f0d1e2f3a4b';
+    const now = new Date('2026-11-04T12:00:00.000Z');
+    const hashOf = (c: string) => c.repeat(64);
+    const session = (id: string, staffId: string, c: string, extra: object = {}) =>
+      db('staff_sessions').insert({
+        id,
+        staff_id: staffId,
+        refresh_token_hash: hashOf(c),
+        expires_at: new Date('2026-11-04T18:00:00.000Z'),
+        created_at: at,
+        ...extra,
+      });
+
+    beforeEach(async () => {
+      await repo.insert(staff());
+      await repo.insert(staff({ id: OTHER_ID, email: 'other@test.com' }));
+    });
+
+    it('setPassword changes only the hash and the update time', async () => {
+      await repo.activate(ADMIN_ID, 'old-hash', at);
+      await db('staff').where({ id: ADMIN_ID }).update({ failed_login_attempts: 3 });
+
+      await repo.setPassword(ADMIN_ID, 'new-hash', now);
+
+      await expect(repo.findById(ADMIN_ID)).resolves.toMatchObject({
+        status: StaffStatus.ACTIVE,
+        role: StaffRole.ADMIN,
+        passwordHash: 'new-hash',
+        failedLoginAttempts: 3,
+        updatedAt: now,
+      });
+    });
+
+    it('findActiveSessionId finds the live session of that staff member by hash', async () => {
+      await session(S1, ADMIN_ID, 'd');
+      await expect(repo.findActiveSessionId(ADMIN_ID, hashOf('d'), now)).resolves.toBe(S1);
+    });
+
+    it.each([
+      ['another staff member', () => repo.findActiveSessionId(OTHER_ID, hashOf('d'), now)],
+      ['an unknown hash', () => repo.findActiveSessionId(ADMIN_ID, hashOf('z'), now)],
+      [
+        'an expired session',
+        () => repo.findActiveSessionId(ADMIN_ID, hashOf('d'), new Date('2026-11-04T18:00:00.000Z')),
+      ],
+    ])('findActiveSessionId answers undefined for %s', async (_name, find) => {
+      await session(S1, ADMIN_ID, 'd');
+      await expect(find()).resolves.toBeUndefined();
+    });
+
+    it('findActiveSessionId answers undefined for a revoked session', async () => {
+      await session(S1, ADMIN_ID, 'd', { revoked_at: now });
+      await expect(repo.findActiveSessionId(ADMIN_ID, hashOf('d'), now)).resolves.toBeUndefined();
+    });
+  });
+
   it('activate sets ACTIVE and the hash, and resets failed attempts and the lockout', async () => {
     await repo.insert(staff());
     await db('staff')

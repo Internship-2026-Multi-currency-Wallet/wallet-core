@@ -12,6 +12,7 @@ export const StaffErrorCode = {
   InvalidCredentials: 'INVALID_CREDENTIALS',
   AccountLocked: 'ACCOUNT_LOCKED',
   InvalidRefreshToken: 'INVALID_REFRESH_TOKEN',
+  InvalidCurrentPassword: 'INVALID_CURRENT_PASSWORD',
 } as const;
 
 export type StaffErrorCode = (typeof StaffErrorCode)[keyof typeof StaffErrorCode];
@@ -27,6 +28,7 @@ export const STAFF_ERROR_MESSAGES = {
   invalidCredentials: AUTH_ERROR_MESSAGES.invalidCredentials,
   accountLocked: AUTH_ERROR_MESSAGES.accountLocked,
   invalidRefreshToken: AUTH_ERROR_MESSAGES.invalidRefreshToken,
+  invalidCurrentPassword: 'Current password is incorrect',
 } as const;
 
 /** `code` is set last, so extra `extensions` cannot override the contract code. */
