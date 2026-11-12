@@ -34,6 +34,7 @@ import { graphqlOptions } from './graphql.config.js';
 
 const SECRET = 'secret-hash-e1-17';
 const PRIVATE = 'review-private-db-message';
+const DOWNSTREAM = 'Request failed with status code 401';
 const LEAK = "Duplicate entry 'artem@test.com' for key 'users.users_email_unique'";
 
 @Injectable()
@@ -80,6 +81,20 @@ class ProbeResolver {
     throw new GraphQLError('Business refused', { extensions: { code: 'BUSINESS_REFUSAL' } });
   }
 
+  @Subscription(() => Boolean)
+  async *downstream401(): AsyncGenerator<{ downstream401: boolean }> {
+    yield { downstream401: true };
+    await Promise.resolve();
+    throw Object.assign(new Error(DOWNSTREAM), { status: 401 });
+  }
+
+  @Subscription(() => Boolean)
+  async *unauthorizedStream(): AsyncGenerator<{ unauthorizedStream: boolean }> {
+    yield { unauthorizedStream: true };
+    await Promise.resolve();
+    throw new UnauthorizedException();
+  }
+
   /** A coded GraphQLError that has its own path and cause: classified as thrown, not unwrapped. */
   @Subscription(() => Boolean)
   async *upstreamFailure(): AsyncGenerator<{ upstreamFailure: boolean }> {
@@ -117,6 +132,12 @@ class ProbeResolver {
   @Query(() => Boolean)
   crash(): boolean {
     throw new Error(LEAK);
+  }
+
+  /** A status alone (e.g. from a downstream HTTP client) does not make a Nest exception. */
+  @Query(() => Boolean)
+  statusCrash(): boolean {
+    throw Object.assign(new Error(LEAK), { status: 401 });
   }
 
   @Query(() => Boolean)
@@ -319,6 +340,7 @@ describe('GraphQL error logging in Nest + Apollo', () => {
 
   it.each([
     ['crash', 'Error'],
+    ['statusCrash', 'Error'],
     ['codeless', 'GraphQLError'],
   ])(
     '%s: ERROR with the stack from the plugin and Nest, masked for the client',
@@ -537,6 +559,49 @@ describe('GraphQL error logging in Nest + Apollo', () => {
       expect(wsErrors).toEqual([]);
       expect(nestErrors).toEqual([]);
       expect(await countedCodes('subscription codedFailure')).toEqual(['BUSINESS_REFUSAL']);
+    });
+
+    it('logs a plain Error with a 4xx status at ERROR with the stack, masked', async () => {
+      const requestId = 'e1-17-ws-downstream-401';
+      const { results, failure, warns, wsErrors, nestErrors } = await runWs(
+        'subscription Downstream { downstream401 }',
+        requestId,
+      );
+
+      expect(results).toEqual([{ data: { downstream401: true } }]);
+      expect(failure).toEqual([
+        { message: 'Internal server error', extensions: { code: 'INTERNAL_SERVER_ERROR' } },
+      ]);
+      expect(warns).toEqual([]);
+      expect(wsErrors).toEqual([
+        {
+          level: 'error',
+          fields: {
+            requestId,
+            code: 'INTERNAL_SERVER_ERROR',
+            path: undefined,
+            err: expect.any(Error),
+          },
+          msg: `GraphQL error: ${DOWNSTREAM}`,
+        },
+      ]);
+      expect((wsErrors[0].fields.err as Error).stack).toContain('ProbeResolver.downstream401');
+      expect(nestErrors).toEqual([]);
+      expect(await countedCodes('subscription downstream401')).toEqual(['INTERNAL_SERVER_ERROR']);
+    });
+
+    it('keeps an actual Nest 4xx exception from a stream unlogged, as before', async () => {
+      const requestId = 'e1-17-ws-unauthorized-stream';
+      const { results, failure, warns, wsErrors, nestErrors } = await runWs(
+        'subscription Unauthorized { unauthorizedStream }',
+        requestId,
+      );
+
+      expect(results).toEqual([{ data: { unauthorizedStream: true } }]);
+      expect(failure).toEqual([{ message: 'Unauthorized' }]);
+      expect(warns).toEqual([]);
+      expect(wsErrors).toEqual([]);
+      expect(nestErrors).toEqual([]);
     });
 
     it('keeps a coded GraphQLError with its own path and cause: one warn, private cause hidden', async () => {

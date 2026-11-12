@@ -10,6 +10,7 @@
  */
 import type { ApolloServerPlugin } from '@apollo/server';
 import { unwrapResolverError } from '@apollo/server/errors';
+import { HttpException } from '@nestjs/common';
 import type { GraphQLError } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Logger } from 'pino';
@@ -49,17 +50,16 @@ function loggableError(error: Error): Error {
   return copy;
 }
 
-/** Nest HTTP exceptions (e.g. UnauthorizedException) carry a status before Apollo maps them. */
-function statusOf(thrown: unknown): unknown {
-  return (thrown as { status?: unknown } | null | undefined)?.status;
+/**
+ * Nest HTTP exceptions (e.g. UnauthorizedException) carry a status before Apollo maps them. A
+ * `status` on any other error (e.g. from a downstream HTTP client) does not make it one.
+ */
+function httpStatusOf(thrown: unknown): number | undefined {
+  return thrown instanceof HttpException ? thrown.getStatus() : undefined;
 }
 
-function httpStatusOf(error: GraphQLError): unknown {
-  return statusOf(error.originalError);
-}
-
-function isClientStatus(status: unknown): boolean {
-  return typeof status === 'number' && status >= 400 && status < 500;
+function isClientStatus(status: number | undefined): boolean {
+  return status !== undefined && status >= 400 && status < 500;
 }
 
 /**
@@ -83,12 +83,12 @@ export function graphqlLoggingPlugin(): ApolloServerPlugin<GraphqlContext> {
           const log = contextValue.req?.log;
           if (!log) return Promise.resolve();
           for (const error of errors) {
-            const status = httpStatusOf(error);
+            const status = httpStatusOf(error.originalError);
             const rawCode = error.extensions?.code;
             const code =
               typeof rawCode === 'string'
                 ? rawCode
-                : typeof status === 'number'
+                : status !== undefined
                   ? `HTTP_${status}`
                   : 'INTERNAL_SERVER_ERROR';
             const clientError =
@@ -156,7 +156,7 @@ export function logWsErrors(
     const thrown = serverOriginal(error);
     const original = thrown ?? error;
     const expected = isExpectedGraphqlError(original);
-    if (!expected && (thrown === undefined || isClientStatus(statusOf(thrown)))) continue;
+    if (!expected && (thrown === undefined || isClientStatus(httpStatusOf(thrown)))) continue;
     const fields = {
       requestId: wsRequestId(ctx),
       // The code the client gets: an unexpected error is masked, whatever its wrapper carries.

@@ -27,10 +27,7 @@ export function formatError(
   return formatOriginal(formatted, unwrapResolverError(error));
 }
 
-/**
- * `formatError` for the error already known to be the one thrown. It is not unwrapped again: a
- * thrown GraphQLError can itself carry a path and an `originalError`.
- */
+/** Not unwrapped again: an intentionally thrown GraphQLError can itself have a path and cause. */
 function formatOriginal(
   formatted: GraphQLFormattedError,
   original: unknown,

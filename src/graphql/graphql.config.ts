@@ -106,7 +106,7 @@ export function graphqlOptions(
         },
         // Apollo's formatError does not see websocket results: mask them the same way.
         onNext: (ctx, _id, _payload, args, result) => {
-          // Execution errors carry a path; pathless ones are the client's variable errors.
+          // Pathless errors are variable coercion failures: not server failures.
           logWsErrors(logger, ctx, result.errors, (error) =>
             error.path !== undefined ? unwrapResolverError(error) : undefined,
           );

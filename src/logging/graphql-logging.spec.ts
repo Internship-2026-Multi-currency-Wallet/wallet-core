@@ -73,6 +73,15 @@ describe('graphqlLoggingPlugin', () => {
     expect(line.err).toBeUndefined();
   });
 
+  it('logs a plain Error with a 4xx status as error with the stack', async () => {
+    const original = Object.assign(new Error('Request failed with status code 401'), {
+      status: 401,
+    });
+    const line = await logError(fromResolver(original));
+    expect(line).toMatchObject({ level: 'error', code: 'INTERNAL_SERVER_ERROR' });
+    expect(line.err).toMatchObject({ type: 'Error', stack: original.stack });
+  });
+
   it('logs a GraphQLError without a code as INTERNAL_SERVER_ERROR with the stack', async () => {
     const original = new GraphQLError('resolver bug');
     const line = await logError(fromResolver(original));
