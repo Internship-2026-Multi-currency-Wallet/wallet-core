@@ -7,7 +7,7 @@ import { createApp } from './create-app.js';
 
 /**
  * Staff GraphQL contract: who may call which operation. Staff management operations are implemented
- * and reach the service once the guards pass; `staffLogin` and `staffLogout` are implemented; `changeOwnStaffPassword` and the other public staff auth
+ * and reach the service once the guards pass; `staffLogin` and `staffLogout` are implemented; `changeOwnStaffPassword` is implemented (a weak new password is rejected before any lookup); the other public staff auth
  * mutations are still stubs and answer "not implemented" (`STUB`).
  */
 describe('staff contract (e2e, DEV_AUTH=true)', () => {
@@ -86,7 +86,7 @@ describe('staff contract (e2e, DEV_AUTH=true)', () => {
     [
       'changeOwnStaffPassword',
       'mutation { changeOwnStaffPassword(input: { currentPassword: "a", newPassword: "b" }) }',
-      'STUB',
+      'BAD_USER_INPUT',
     ],
   ])('%s requires the base staff permission bo', async (_name, query, passesGuardsWith) => {
     expect(await errorCode(query)).toBe('UNAUTHENTICATED');
