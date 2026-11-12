@@ -24,11 +24,36 @@ type AuthPayload {
   user: User!
 }
 
+"""The balance of one currency."""
+type Balance {
+  """
+  Integer in minor units as a decimal string, e.g. "10050" = 100.50 UAH. A string because USDT amounts do not fit a safe JavaScript number.
+  """
+  amount: String!
+
+  """Currency of this balance."""
+  currency: Currency!
+
+  """
+  Number of fractional digits of the currency (2 for fiat, 6 for USDT): the amount divided by 10^decimals is the human value.
+  """
+  decimals: Int!
+}
+
 input ChangeOwnStaffPasswordInput {
   currentPassword: String!
 
   """Same rules as AcceptStaffInvitationInput.password."""
   newPassword: String!
+}
+
+"""A currency of the wallet. Amounts are integers in its minor units."""
+enum Currency {
+  EUR
+  PLN
+  UAH
+  USD
+  USDT
 }
 
 """
@@ -161,6 +186,17 @@ type Mutation {
   staffRefreshSession: StaffAuthPayload!
 
   """
+  Moves money from the platform funding account to the caller. Exists only on local and staging. `amount` is a positive integer string in minor units. Returns the new TOTAL balance of that currency. Errors: BAD_USER_INPUT (extensions.field), UNAUTHENTICATED, NOT_FOUND (kvitka-uat, wisla-uat).
+  """
+  testCredit(
+    """Positive integer in minor units, as a string."""
+    amount: String!
+
+    """The currency to credit."""
+    currency: Currency!
+  ): Balance!
+
+  """
   Sets an override. Requires bo:settings:modify. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.
   """
   updateSetting(key: String!, value: JSON!): Setting!
@@ -176,6 +212,11 @@ type PublicSetting {
 }
 
 type Query {
+  """
+  The balances of the caller: always five rows, in the order UAH, USD, EUR, PLN, USDT, zeros included. Errors: UNAUTHENTICATED.
+  """
+  balances: [Balance!]!
+
   """Service health. Does not require authentication."""
   health: Health!
 
@@ -339,6 +380,13 @@ enum StaffStatus {
   ACTIVE
   DEACTIVATED
   INVITED
+}
+
+type Subscription {
+  """
+  Live balance changes of the caller, one message per operation. A message lists every balance that operation changed, each with its full new amount (not a delta). Only the caller's own changes are delivered. Errors: UNAUTHENTICATED.
+  """
+  balanceChanged: [Balance!]!
 }
 
 """A registered wallet user."""

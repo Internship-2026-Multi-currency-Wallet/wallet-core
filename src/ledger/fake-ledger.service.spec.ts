@@ -1,6 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { GraphQLError } from 'graphql';
 import { CURRENCIES, type Currency } from '../common/currency.js';
+import { ConfigModule } from '../config/config.module.js';
 import { FakeLedgerService } from './fake-ledger.service.js';
 import { LedgerErrorCode } from './ledger-errors.js';
 import { LedgerService } from './ledger.service.js';
@@ -206,7 +207,9 @@ describeLedgerContract('FakeLedgerService', () => new FakeLedgerService());
 
 describe('LedgerModule', () => {
   it('binds FakeLedgerService as LedgerService', async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [LedgerModule] }).compile();
+    const moduleRef = await Test.createTestingModule({
+      imports: [ConfigModule, LedgerModule],
+    }).compile();
     expect(moduleRef.get(LedgerService)).toBeInstanceOf(FakeLedgerService);
   });
 });
