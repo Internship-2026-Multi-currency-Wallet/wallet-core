@@ -1,7 +1,4 @@
-/**
- * Child process for email-worker-shutdown.e2e-spec.ts: runs the real EmailWorker, shuts it down on
- * request and then lets the process exit on its own. Anything logged after shutdown goes to stdout.
- */
+/** Let the child exit naturally so leaked Redis connections cause the shutdown test to fail. */
 import 'reflect-metadata';
 import { writeSync } from 'node:fs';
 import type { Worker } from 'bullmq';
