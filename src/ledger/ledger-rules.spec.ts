@@ -1,4 +1,5 @@
 import { assertWellFormed, assertZeroSum } from './ledger-rules.js';
+import { MAX_AMOUNT } from './money.js';
 import {
   PLATFORM_FUNDING,
   platformAccount,
@@ -32,6 +33,25 @@ describe('assertWellFormed', () => {
       { account: userAccount('u1', 'UAH'), amount: 5n },
     ];
     expect(() => assertWellFormed(operation(entries))).toThrow('must not be zero');
+  });
+
+  it('accepts amounts at the BIGINT limits', () => {
+    const entries = [
+      { account: funding('UAH'), amount: -MAX_AMOUNT },
+      { account: userAccount('u1', 'UAH'), amount: MAX_AMOUNT },
+    ];
+    expect(() => assertWellFormed(operation(entries))).not.toThrow();
+  });
+
+  it.each([
+    ['above', MAX_AMOUNT + 1n],
+    ['below', -MAX_AMOUNT - 1n],
+  ])('rejects an amount %s the BIGINT range', (_side, amount) => {
+    const entries = [
+      { account: funding('UAH'), amount: -amount },
+      { account: userAccount('u1', 'UAH'), amount },
+    ];
+    expect(() => assertWellFormed(operation(entries))).toThrow('out of range');
   });
 });
 

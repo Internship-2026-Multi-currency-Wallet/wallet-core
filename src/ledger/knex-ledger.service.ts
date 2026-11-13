@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CURRENCIES } from '../common/currency.js';
 import { isDeadlock } from '../database/deadlock.js';
 import { LEDGER_ERROR_MESSAGES, LedgerErrorCode, ledgerError } from './ledger-errors.js';
@@ -8,8 +9,9 @@ import { InsertOperationResult, LedgerRepository } from './ledger.repository.js'
 import { LedgerService } from './ledger.service.js';
 import {
   accountKey,
-  userAccount,
   type AccountRef,
+  type EntryInput,
+  type OperationType,
   type PostOperation,
   type PostResult,
   type UserBalance,
@@ -19,13 +21,21 @@ import { operationFingerprint } from './operation-fingerprint.js';
 
 const MAX_ATTEMPTS = 3;
 
+interface ResolvedEntry {
+  accountId: string;
+  amount: bigint;
+}
+
 /**
- * `LedgerService` on MySQL. One posting is one transaction that locks the account rows in ascending id
- * order, so concurrent postings on the same accounts queue up instead of deadlocking.
+ * `LedgerService` on MySQL. A posting is one transaction that locks its account rows in ascending id
+ * order; `getBalances` only reads, and user accounts are created by the first posting that names them.
  */
 @Injectable()
 export class KnexLedgerService extends LedgerService {
-  constructor(private readonly repository: LedgerRepository) {
+  constructor(
+    private readonly repository: LedgerRepository,
+    @InjectPinoLogger(KnexLedgerService.name) private readonly logger: PinoLogger,
+  ) {
     super();
   }
 
@@ -33,38 +43,41 @@ export class KnexLedgerService extends LedgerService {
     assertWellFormed(operation);
     assertZeroSum(operation);
     const fingerprint = operationFingerprint(operation);
-    return this.withDeadlockRetry(() => this.postOnce(operation, fingerprint));
+    const result = await this.withDeadlockRetry(operation.type, () =>
+      this.postOnce(operation, fingerprint),
+    );
+    this.logger.info(
+      { operationId: result.operation.id, type: result.operation.type, replayed: result.replayed },
+      result.replayed ? 'ledger operation replayed' : 'ledger operation posted',
+    );
+    return result;
   }
 
   async getBalances(userId: string): Promise<UserBalance[]> {
-    return this.withDeadlockRetry(async () => {
-      await this.ensureUserAccounts(CURRENCIES.map((currency) => userAccount(userId, currency)));
-      const rows = await this.repository.readUserBalances(userId);
-      return CURRENCIES.map((currency) => ({
-        currency,
-        amount: rows.find((row) => row.currency === currency)?.balance ?? 0n,
-      }));
-    });
+    const rows = await this.repository.readUserBalances(userId);
+    return CURRENCIES.map((currency) => ({
+      currency,
+      amount: rows.find((row) => row.currency === currency)?.balance ?? 0n,
+    }));
   }
 
   private async postOnce(operation: PostOperation, fingerprint: string): Promise<PostResult> {
-    const entryAccountIds = await this.resolveAccounts(
-      operation.entries.map((entry) => entry.account),
-    );
+    const entries = await this.resolveEntries(operation.entries);
 
     const posted = await this.repository.transaction(async (tx) => {
       const id = randomUUID();
       const createdAt = new Date();
       const changes = new Map<string, bigint>();
-      operation.entries.forEach(({ amount }, index) => {
-        const accountId = entryAccountIds[index];
+      for (const { accountId, amount } of entries) {
         changes.set(accountId, (changes.get(accountId) ?? 0n) + amount);
-      });
+      }
 
-      // Locks before the operation row: parallel requests with one key then queue on the account rows, one
-      // at a time. Queued on the key's unique index instead, they all wake up together when the first one
-      // rolls back (e.g. INSUFFICIENT_FUNDS) and deadlock each other, more often than 3 attempts can absorb.
+      // Before the operation row: parallel posts with one key queue on the account rows. Queued on the
+      // key's unique index instead, they all wake up together when the first one rolls back and deadlock.
       const locked = await tx.lockAccounts([...changes.keys()]);
+      if (locked.length !== changes.size) {
+        throw new Error('A ledger account disappeared before it was locked');
+      }
       const inserted = await tx.insertOperation({
         id,
         type: operation.type,
@@ -92,12 +105,7 @@ export class KnexLedgerService extends LedgerService {
 
       for (const [accountId, balance] of balances) await tx.updateBalance(accountId, balance);
       await tx.insertEntries(
-        operation.entries.map((entry, index) => ({
-          id: randomUUID(),
-          operationId: id,
-          accountId: entryAccountIds[index],
-          amount: entry.amount,
-        })),
+        entries.map((entry) => ({ id: randomUUID(), operationId: id, ...entry })),
       );
       return { id, createdAt };
     });
@@ -112,10 +120,7 @@ export class KnexLedgerService extends LedgerService {
     return this.replay(operation, fingerprint);
   }
 
-  /**
-   * Read outside the posting transaction, in a fresh snapshot: the first writer has committed by now.
-   * Nothing is written.
-   */
+  // After the posting transaction has ended: a replay writes nothing, so it holds no locks while it reads.
   private async replay(operation: PostOperation, fingerprint: string): Promise<PostResult> {
     const stored = await this.repository.findOperationByKey(operation.idempotencyKey);
     if (!stored) throw new Error('Ledger idempotency key is taken but its operation is missing');
@@ -137,14 +142,19 @@ export class KnexLedgerService extends LedgerService {
     };
   }
 
-  /** Creates missing user accounts, then returns the account id of each ref, in order. Platform accounts are never created. */
-  private async resolveAccounts(refs: readonly AccountRef[]): Promise<string[]> {
-    await this.ensureUserAccounts(refs);
+  // Platform and external accounts exist before any posting (migration, feature setup): never created here.
+  private async resolveEntries(entries: readonly EntryInput[]): Promise<ResolvedEntry[]> {
+    const refs = entries.map((entry) => entry.account);
     const ids = await this.repository.findAccountIds(refs);
-    return refs.map((ref) => {
-      const id = ids.get(accountKey(ref));
-      if (id === undefined) throw new Error(`Unknown ledger account ${accountKey(ref)}`);
-      return id;
+    const missing = refs.filter((ref) => ref.type === 'user' && !ids.has(accountKey(ref)));
+    if (missing.length > 0) {
+      await this.ensureUserAccounts(missing);
+      for (const [key, id] of await this.repository.findAccountIds(missing)) ids.set(key, id);
+    }
+    return entries.map(({ account, amount }) => {
+      const accountId = ids.get(accountKey(account));
+      if (accountId === undefined) throw new Error(`Unknown ledger account ${accountKey(account)}`);
+      return { accountId, amount };
     });
   }
 
@@ -166,13 +176,14 @@ export class KnexLedgerService extends LedgerService {
     );
   }
 
-  /** Ordered locking makes deadlocks rare; InnoDB can still pick a victim, and running it again is safe. */
-  private async withDeadlockRetry<T>(work: () => Promise<T>): Promise<T> {
+  /** Locking in id order makes deadlocks rare, not impossible (two posts creating one account); a rerun is safe. */
+  private async withDeadlockRetry<T>(type: OperationType, work: () => Promise<T>): Promise<T> {
     for (let attempt = 1; ; attempt += 1) {
       try {
         return await work();
       } catch (error) {
         if (attempt >= MAX_ATTEMPTS || !isDeadlock(error)) throw error;
+        this.logger.warn({ err: error, attempt, type }, 'ledger deadlock, trying again');
       }
     }
   }

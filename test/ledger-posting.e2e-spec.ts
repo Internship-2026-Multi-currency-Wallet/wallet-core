@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { jest } from '@jest/globals';
 import { GraphQLError } from 'graphql';
 import type { Knex } from 'knex';
-import type { Currency } from '../src/common/currency.js';
+import type { PinoLogger } from 'nestjs-pino';
+import { CURRENCIES, type Currency } from '../src/common/currency.js';
 import { createKnex } from '../src/database/database.module.js';
 import { LedgerErrorCode } from '../src/ledger/ledger-errors.js';
 import { KnexLedgerService } from '../src/ledger/knex-ledger.service.js';
@@ -23,12 +25,13 @@ import {
 
 /**
  * `KnexLedgerService` against real MySQL (`npm run infra:up && npm run migrate`). Everything the test
- * creates is removed afterwards and the funding balances are put back, so `npm run ledger:verify`
- * stays green on the local database.
+ * creates is removed afterwards and the funding balances are put back, so the local database is left
+ * as it was.
  */
 describe('KnexLedgerService (e2e, real MySQL)', () => {
   let db: Knex;
   let service: KnexLedgerService;
+  const logger = { info: jest.fn(), warn: jest.fn() };
   const userIds: string[] = [];
   const platformCodes: string[] = [];
 
@@ -50,6 +53,19 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
       created_at: new Date(),
     });
     return code;
+  };
+
+  /**
+   * Every retry after a deadlock logs a warning, so a concurrency test that expects none cannot pass on a
+   * deadlock the retry silently absorbed.
+   */
+  const expectNoRetries = (): void => {
+    expect(logger.warn).not.toHaveBeenCalled();
+  };
+
+  /** Creates the user's account up front, so the race in a test does not include first-time account creation. */
+  const openAccount = async (userId: string, currency: Currency): Promise<void> => {
+    await service.post(credit(randomUUID(), userId, currency, 1n));
   };
 
   const fundingBalance = async (currency: Currency): Promise<bigint> => {
@@ -125,7 +141,12 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
 
   beforeAll(() => {
     db = createKnex(process.env.DATABASE_URL!);
-    service = new KnexLedgerService(new LedgerRepository(db));
+    service = new KnexLedgerService(new LedgerRepository(db), logger as unknown as PinoLogger);
+  });
+
+  beforeEach(() => {
+    logger.info.mockClear();
+    logger.warn.mockClear();
   });
 
   afterAll(async () => {
@@ -139,20 +160,44 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
   describeLedgerContract({ name: 'KnexLedgerService', createService: () => service, newUserId });
 
   describe('concurrency', () => {
-    it('keeps the exact balance after 50 parallel credits to one user', async () => {
+    it('keeps the exact balance after 50 parallel credits to one user, with no deadlock retry', async () => {
       const userId = newUserId();
+      await openAccount(userId, 'UAH');
       const keys = Array.from({ length: 50 }, () => randomUUID());
       const fundingBefore = await fundingBalance('UAH');
 
       await Promise.all(keys.map((key) => service.post(credit(key, userId, 'UAH', 1000n))));
 
-      expect(await balanceOf(service, userId, 'UAH')).toBe(50000n);
+      expect(await balanceOf(service, userId, 'UAH')).toBe(50001n);
       expect(await fundingBalance('UAH')).toBe(fundingBefore - 50000n);
       expect(await operationsWithKeys(keys)).toBe(50);
       expect(await entriesOfKeys(keys)).toBe(100);
+      expectNoRetries();
     });
 
-    it('does not deadlock on transfers in opposite directions', async () => {
+    it('reads exact balances while postings change the same accounts, with no deadlock retry', async () => {
+      const userId = newUserId();
+      for (const currency of CURRENCIES) await openAccount(userId, currency);
+      const credits = Array.from({ length: 40 }, (_, index) =>
+        service.post(credit(randomUUID(), userId, CURRENCIES[index % CURRENCIES.length], 100n)),
+      );
+      const reads = Array.from({ length: 40 }, () => service.getBalances(userId));
+
+      const [, observed] = await Promise.all([Promise.all(credits), Promise.all(reads)]);
+
+      // Each currency gets 8 credits of 100 on top of the opening 1; a read never sees half a credit.
+      for (const balance of observed.flat()) {
+        expect((balance.amount - 1n) % 100n).toBe(0n);
+        expect(balance.amount).toBeGreaterThanOrEqual(1n);
+        expect(balance.amount).toBeLessThanOrEqual(801n);
+      }
+      expect((await service.getBalances(userId)).map((balance) => balance.amount)).toEqual(
+        CURRENCIES.map(() => 801n),
+      );
+      expectNoRetries();
+    });
+
+    it('needs no deadlock retry for transfers in opposite directions', async () => {
       const [userA, userB] = [newUserId(), newUserId()];
       await service.post(credit(randomUUID(), userA, 'UAH', 10000n));
       await service.post(credit(randomUUID(), userB, 'UAH', 10000n));
@@ -172,10 +217,12 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
       expect(rejections(results)).toEqual([]);
       expect(await balanceOf(service, userA, 'UAH')).toBe(10000n - 2000n + 1000n);
       expect(await balanceOf(service, userB, 'UAH')).toBe(10000n + 2000n - 1000n);
+      expectNoRetries();
     });
 
     it('applies 10 parallel posts with the same key and content exactly once', async () => {
       const [key, userId] = [randomUUID(), newUserId()];
+      await openAccount(userId, 'UAH');
 
       const results = await Promise.all(
         Array.from({ length: 10 }, () => service.post(credit(key, userId, 'UAH', 300n))),
@@ -184,12 +231,14 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
       expect(results.filter((result) => !result.replayed)).toHaveLength(1);
       expect(results.filter((result) => result.replayed)).toHaveLength(9);
       expect(new Set(results.map((result) => result.operation.id)).size).toBe(1);
-      expect(await balanceOf(service, userId, 'UAH')).toBe(300n);
+      expect(await balanceOf(service, userId, 'UAH')).toBe(301n);
       expect(await entriesOfKeys([key])).toBe(2);
+      expectNoRetries();
     });
 
     it('lets one of several parallel posts with the same key win and rejects the other content as a conflict', async () => {
       const [key, userId] = [randomUUID(), newUserId()];
+      await openAccount(userId, 'UAH');
       const amounts = [500n, 600n, 500n, 600n, 500n, 600n];
 
       const results = await Promise.allSettled(
@@ -203,13 +252,16 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
         expect(ledgerCode(reason)).toBe(LedgerErrorCode.IdempotencyConflict);
       }
       const winner = applied[0].operation.entries.find((entry) => entry.amount > 0n)?.amount;
-      expect(await balanceOf(service, userId, 'UAH')).toBe(winner);
+      expect(await balanceOf(service, userId, 'UAH')).toBe(1n + (winner ?? 0n));
       expect(await operationsWithKeys([key])).toBe(1);
       expect(await entriesOfKeys([key])).toBe(2);
+      expectNoRetries();
     });
 
     it('leaks nothing but INSUFFICIENT_FUNDS when the same failing key is replayed in parallel', async () => {
       const [key, sender, receiver] = [randomUUID(), newUserId(), newUserId()];
+      await openAccount(sender, 'UAH');
+      await openAccount(receiver, 'UAH');
       const transfer = () =>
         service.post(
           operation(key, [
@@ -226,8 +278,9 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
       );
       expect(await operationsWithKeys([key])).toBe(0);
       expect(await entriesOfKeys([key])).toBe(0);
-      expect(await balanceOf(service, sender, 'UAH')).toBe(0n);
-      expect(await balanceOf(service, receiver, 'UAH')).toBe(0n);
+      expect(await balanceOf(service, sender, 'UAH')).toBe(1n);
+      expect(await balanceOf(service, receiver, 'UAH')).toBe(1n);
+      expectNoRetries();
     });
   });
 
@@ -289,6 +342,32 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
 
       expect(await balanceOf(service, userId, 'UAH')).toBe(MAX_AMOUNT);
       expect(await operationsWithKeys([key])).toBe(0);
+      expect(await entriesOfKeys([key])).toBe(0);
+    });
+
+    it('throws a plain Error and writes nothing when a balance would pass -MAX_AMOUNT', async () => {
+      const userId = newUserId();
+      const [first, second] = [await newPlatformAccount('UAH'), await newPlatformAccount('UAH')];
+      await service.post(
+        operation(randomUUID(), [
+          { account: platformAccount(first, 'UAH'), amount: -MAX_AMOUNT },
+          { account: userAccount(userId, 'UAH'), amount: MAX_AMOUNT },
+        ]),
+      );
+      const key = randomUUID();
+
+      await expectPlainError(
+        service.post(
+          operation(key, [
+            { account: platformAccount(first, 'UAH'), amount: -1n },
+            { account: platformAccount(second, 'UAH'), amount: 1n },
+          ]),
+        ),
+      );
+
+      expect(await balanceOf(service, userId, 'UAH')).toBe(MAX_AMOUNT);
+      expect(await operationsWithKeys([key])).toBe(0);
+      expect(await entriesOfKeys([key])).toBe(0);
     });
   });
 });

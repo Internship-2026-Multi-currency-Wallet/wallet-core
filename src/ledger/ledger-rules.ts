@@ -1,4 +1,5 @@
 import type { PostOperation } from './ledger.types.js';
+import { MAX_AMOUNT } from './money.js';
 
 /**
  * The checks that need no state, shared by the fake and the database service so the two cannot drift.
@@ -10,6 +11,10 @@ export function assertWellFormed(operation: PostOperation): void {
   }
   for (const { amount } of operation.entries) {
     if (amount === 0n) throw new Error('Ledger entry amount must not be zero');
+    // The database column is a signed BIGINT: better a clear error here than MySQL's 1264 later.
+    if (amount > MAX_AMOUNT || amount < -MAX_AMOUNT) {
+      throw new Error('Ledger entry amount is out of range');
+    }
   }
 }
 

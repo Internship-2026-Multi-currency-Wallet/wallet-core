@@ -100,9 +100,8 @@ export class LedgerRepository {
   constructor(@Inject(KNEX) private readonly db: Knex) {}
 
   /**
-   * Call it before the posting transaction: a failed posting must not roll the accounts back, and the
-   * insert locks on the unique indexes stay out of it. Pass the accounts in one stable order, so two
-   * callers creating the same rows cannot wait for each other.
+   * Only for accounts that were not found: for an existing row the statement still takes a write lock.
+   * Call it outside the posting transaction, so a failed posting does not roll the accounts back.
    */
   async ensureUserAccounts(accounts: readonly NewUserAccount[]): Promise<void> {
     if (accounts.length === 0) return;
@@ -131,16 +130,11 @@ export class LedgerRepository {
     return new Map(rows.map((row) => [accountKey(toAccountRef(row)), row.id]));
   }
 
-  /** Commits when `work` returns and rolls back when it throws; run the posting's queries on the `tx`. */
   async transaction<T>(work: (tx: LedgerRepository) => Promise<T>): Promise<T> {
     return this.db.transaction((trx) => work(new LedgerRepository(trx)));
   }
 
-  /**
-   * The unique index on the key is the idempotency guard: a second insert of the same key fails with a
-   * duplicate key once the first transaction has committed. Classifying the failed insert instead of
-   * checking first leaves no window between the check and the write.
-   */
+  /** The unique index on the key is the idempotency guard: a taken key is reported, not thrown. */
   async insertOperation(operation: NewOperation): Promise<InsertOperationResult> {
     try {
       await this.db(OPERATIONS).insert({
@@ -157,10 +151,7 @@ export class LedgerRepository {
     }
   }
 
-  /**
-   * Call inside `transaction`. Locks by primary key in ascending order: two operations that touch the
-   * same accounts take the locks in the same order, so they wait for each other instead of deadlocking.
-   */
+  /** Call inside `transaction`. Ascending id order: same accounts, same lock order. */
   async lockAccounts(ids: readonly string[]): Promise<LockedAccount[]> {
     const rows = (await this.db(ACCOUNTS)
       .select('id', 'type', this.db.raw('CAST(balance AS CHAR) AS balance'))

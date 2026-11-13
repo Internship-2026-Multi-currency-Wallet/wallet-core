@@ -132,6 +132,44 @@ describe('ledger schema (e2e, real MySQL)', () => {
     ).resolves.toBe(true);
   });
 
+  it('keeps idempotency keys that differ only in case apart', async () => {
+    const key = `Case:${randomUUID()}`;
+    const operation = (idempotencyKey: string) => {
+      const id = randomUUID();
+      operationIds.push(id);
+      return db('operations').insert({
+        id,
+        type: 'test_credit',
+        idempotency_key: idempotencyKey,
+        fingerprint: 'f'.repeat(64),
+        created_at: new Date(),
+      });
+    };
+
+    await operation(key);
+
+    await expect(operation(key.toLowerCase())).resolves.toBeDefined();
+    await expect(
+      operation(key).then(
+        () => false,
+        (error: unknown) => isUniqueViolation(error, 'operations_idempotency_key_unique'),
+      ),
+    ).resolves.toBe(true);
+  });
+
+  it('keeps user ids and platform codes that differ only in case apart', async () => {
+    const userId = randomUUID();
+    const code = `Test-${randomUUID().slice(0, 8)}`;
+
+    await insertAccount({ type: 'user', userId });
+    await insertAccount({ type: 'user', userId: userId.toUpperCase() });
+    await insertAccount({ type: 'platform', code });
+    await insertAccount({ type: 'platform', code: code.toLowerCase() });
+
+    const found = await db('accounts').where({ user_id: userId }).count({ total: '*' });
+    expect(Number(found[0].total)).toBe(1);
+  });
+
   it('refuses an entry with a zero amount', async () => {
     const accountId = await insertAccount({ type: 'user', userId: randomUUID() });
     const operationId = await insertOperation();

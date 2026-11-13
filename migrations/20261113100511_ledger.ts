@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Knex } from 'knex';
 
 /**
@@ -7,7 +6,7 @@ import type { Knex } from 'knex';
  */
 export async function up(knex: Knex): Promise<void> {
   // One row per (owner, currency). `balance` is the stored sum of the account's entries, updated in the
-  // same transaction as the entries; `npm run ledger:verify` checks it against them.
+  // same transaction as the entries.
   // No foreign key to users: the owner id comes from the token, and dev-auth ids are not in `users`.
   await knex.schema.createTable('accounts', (table) => {
     table.engine('InnoDB');
@@ -15,8 +14,10 @@ export async function up(knex: Knex): Promise<void> {
     table.uuid('id').primary();
     // 'user' | 'platform' | 'external': a plain string, so a new type needs no migration.
     table.string('type', 16).notNullable();
-    table.uuid('user_id').nullable();
-    table.string('code', 32).nullable();
+    // Binary collation on the text keys (here and on `idempotency_key`): the default one ignores case, but
+    // the app compares ids and keys exactly, so `pay_aB` and `pay_Ab` must stay two different values.
+    table.uuid('user_id').nullable().collate('utf8mb4_bin');
+    table.string('code', 32).nullable().collate('utf8mb4_bin');
     table.string('currency', 8).notNullable();
     table.bigInteger('balance').notNullable().defaultTo(0);
     table.datetime('created_at', { precision: 3 }).notNullable();
@@ -39,6 +40,7 @@ export async function up(knex: Knex): Promise<void> {
     table.string('type', 32).notNullable();
     table
       .string('idempotency_key', 191)
+      .collate('utf8mb4_bin')
       .notNullable()
       .unique({ indexName: 'operations_idempotency_key_unique' });
     // SHA-256 hex of the operation content (operation-fingerprint.ts): same key + other content = conflict.
@@ -61,7 +63,7 @@ export async function up(knex: Knex): Promise<void> {
   const createdAt = new Date();
   await knex('accounts').insert(
     ['UAH', 'USD', 'EUR', 'PLN', 'USDT'].map((currency) => ({
-      id: randomUUID(),
+      id: knex.raw('UUID()'),
       type: 'platform',
       code: 'funding',
       currency,

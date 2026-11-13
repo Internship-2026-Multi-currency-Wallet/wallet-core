@@ -12,6 +12,7 @@ import {
   type OperationType,
   type PostOperation,
 } from '../src/ledger/ledger.types.js';
+import { MAX_AMOUNT } from '../src/ledger/money.js';
 
 const TYPE: OperationType = 'test_credit';
 
@@ -288,6 +289,10 @@ export function describeLedgerContract({
         operation(randomUUID(), [
           { account: platformAccount('unknown', 'UAH'), amount: -100n },
           { account: userAccount(userId, 'UAH'), amount: 100n },
+        ]),
+        operation(randomUUID(), [
+          { account: platformAccount(PLATFORM_FUNDING, 'UAH'), amount: -(MAX_AMOUNT + 1n) },
+          { account: userAccount(userId, 'UAH'), amount: MAX_AMOUNT + 1n },
         ]),
       ];
       for (const mistake of mistakes) {
