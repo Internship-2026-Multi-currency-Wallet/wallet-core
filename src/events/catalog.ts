@@ -48,8 +48,8 @@ export interface ConversionCompletedEvent {
 }
 
 /**
- * A posting changed a user's balances. One event per user per operation (a transfer sends two).
- * A live UI hint only: a missed message is fixed by reloading the balances.
+ * One event per user per operation; pub/sub is enough because a missed message is fixed by
+ * reloading the balances.
  */
 export interface BalanceChangedEvent {
   v: 1;
@@ -57,12 +57,11 @@ export interface BalanceChangedEvent {
   operationId: string;
   userId: string;
   /**
-   * Every balance of this user that the operation changed, with the FULL new amount.
-   * `version` grows by 1 with every change of that balance, the same value as GraphQL `Balance.version`:
-   * keep the one with the larger version.
+   * Full new amounts, each applied only if its `version` (= GraphQL `Balance.version`) is larger
+   * than the one shown, because delivery order is not commit order.
    */
   balances: { currency: Currency; amount: string; version: number }[];
-  /** When the posting started (before it waited for the locks). Not an order: use `version`. */
+  /** Taken before the posting waited for its locks, so it is not an order: use `version`. */
   occurredAt: string;
 }
 
