@@ -42,6 +42,52 @@ enum DependencyStatus {
   UP
 }
 
+"""The Google account linked to the current user."""
+type GoogleAccount {
+  """
+  Verified email of the Google account, as Google reported it when it was linked.
+  """
+  email: String!
+  linkedAt: DateTime!
+}
+
+"""
+What client-web received from Google on its callback route. wallet-core exchanges the code with Google itself; nothing else about the Google user is sent or trusted.
+"""
+input GoogleAuthInput {
+  """The one-time `code` query parameter Google redirected back with."""
+  code: String!
+
+  """
+  PKCE code_verifier, when the sign-in was started with a code_challenge (recommended).
+  """
+  codeVerifier: String
+
+  """
+  The redirect_uri used to start the Google sign-in, exactly: an allowed client-web origin + "/auth/google/callback".
+  """
+  redirectUri: String!
+
+  """
+  The `state` query parameter Google redirected back with: the state from startGoogleLink / startGoogleLogin.
+  """
+  state: String!
+}
+
+"""
+Put `state` and `nonce` into the Google authorization URL. The matching httpOnly cookie is set with this answer.
+"""
+type GoogleAuthStart {
+  """Finish the sign-in before this time, or start again."""
+  expiresAt: DateTime!
+
+  """The `nonce` parameter of the Google authorization URL."""
+  nonce: String!
+
+  """The `state` parameter of the Google authorization URL."""
+  state: String!
+}
+
 """Service health and identity."""
 type Health {
   """Environment (APP_ENV): local, staging, kvitka-uat, wisla-uat."""
@@ -116,9 +162,19 @@ type Mutation {
   inviteStaff(input: InviteStaffInput!): StaffMember!
 
   """
+  Links a Google account to the current user. Client token only; needs the google_auth_state cookie of startGoogleLink. Linking the same Google account again returns it. Errors: GOOGLE_LOGIN_DISABLED, BAD_USER_INPUT (extensions.field), INVALID_GOOGLE_STATE (no, expired or foreign sign-in: start again), INVALID_GOOGLE_CODE, GOOGLE_EMAIL_NOT_VERIFIED, GOOGLE_ACCOUNT_LINKED_TO_ANOTHER_USER, GOOGLE_ACCOUNT_ALREADY_LINKED (the user has another Google account: unlink it first).
+  """
+  linkGoogleAccount(input: GoogleAuthInput!): GoogleAccount!
+
+  """
   Logs in with email and password (sets the refresh token cookie). Errors: INVALID_CREDENTIALS, ACCOUNT_LOCKED (extensions.lockedUntil).
   """
   login(input: LoginInput!): AuthPayload!
+
+  """
+  Logs in with a linked Google account (sets the refresh token cookie), the same session as login (JWT_REFRESH_TTL, 30 days by default). Needs the google_auth_state cookie of startGoogleLogin. Errors: GOOGLE_LOGIN_DISABLED, BAD_USER_INPUT (extensions.field), INVALID_GOOGLE_STATE, INVALID_GOOGLE_CODE, GOOGLE_EMAIL_NOT_VERIFIED, GOOGLE_ACCOUNT_NOT_LINKED ("No account is linked to this Google account"), ACCOUNT_LOCKED (extensions.lockedUntil).
+  """
+  loginWithGoogle(input: GoogleAuthInput!): AuthPayload!
 
   """
   Ends the session of the refresh token cookie and clears the cookie. Returns true even when there was no session.
@@ -161,6 +217,21 @@ type Mutation {
   staffRefreshSession: StaffAuthPayload!
 
   """
+  Starts linking a Google account to the current user. Client token only. Sets the httpOnly google_auth_state cookie that linkGoogleAccount checks; valid for 10 minutes, for this user only. Errors: GOOGLE_LOGIN_DISABLED.
+  """
+  startGoogleLink: GoogleAuthStart!
+
+  """
+  Starts logging in with Google. Sets the httpOnly google_auth_state cookie that loginWithGoogle checks; valid for 10 minutes. Errors: GOOGLE_LOGIN_DISABLED.
+  """
+  startGoogleLogin: GoogleAuthStart!
+
+  """
+  Unlinks the Google account of the current user and ends the user's other sessions (the session of the refresh token cookie sent with this request stays). Client token only. Works even when Google login is disabled. Returns true even when nothing was linked.
+  """
+  unlinkGoogleAccount: Boolean!
+
+  """
   Sets an override. Requires bo:settings:modify. Errors: UNAUTHENTICATED, FORBIDDEN, UNKNOWN_KEY, INVALID_VALUE.
   """
   updateSetting(key: String!, value: JSON!): Setting!
@@ -176,6 +247,11 @@ type PublicSetting {
 }
 
 type Query {
+  """
+  The Google account linked to the current user, or null. Client token only.
+  """
+  googleAccount: GoogleAccount
+
   """Service health. Does not require authentication."""
   health: Health!
 
