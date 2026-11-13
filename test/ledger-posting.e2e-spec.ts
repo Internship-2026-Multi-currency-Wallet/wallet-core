@@ -21,6 +21,7 @@ import {
   describeLedgerContract,
   expectPlainError,
   operation,
+  versionOf,
 } from './ledger-contract.js';
 
 /**
@@ -172,6 +173,21 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
       expect(await fundingBalance('UAH')).toBe(fundingBefore - 50000n);
       expect(await operationsWithKeys(keys)).toBe(50);
       expect(await entriesOfKeys(keys)).toBe(100);
+      expectNoRetries();
+    });
+
+    it('counts every one of 20 parallel credits in the version and the balance: no lost update', async () => {
+      const userId = newUserId();
+      await openAccount(userId, 'UAH');
+      const amounts = Array.from({ length: 20 }, (_, index) => BigInt(index + 1));
+
+      await Promise.all(
+        amounts.map((amount) => service.post(credit(randomUUID(), userId, 'UAH', amount))),
+      );
+
+      // 1 for the opening credit, then one bump per parallel credit.
+      expect(await versionOf(service, userId, 'UAH')).toBe(21);
+      expect(await balanceOf(service, userId, 'UAH')).toBe(1n + 210n);
       expectNoRetries();
     });
 

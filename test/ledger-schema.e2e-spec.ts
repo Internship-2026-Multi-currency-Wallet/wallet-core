@@ -79,6 +79,19 @@ describe('ledger schema (e2e, real MySQL)', () => {
     expect(rows).toEqual(['EUR', 'PLN', 'UAH', 'USD', 'USDT']);
   });
 
+  it('has an unsigned, non-null version column that starts at 0', async () => {
+    const [rows] = (await db.raw(
+      `SELECT COLUMN_TYPE AS columnType, IS_NULLABLE AS isNullable, COLUMN_DEFAULT AS columnDefault
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts' AND COLUMN_NAME = 'version'`,
+    )) as [{ columnType: string; isNullable: string; columnDefault: string }[]];
+    expect(rows).toEqual([{ columnType: 'bigint unsigned', isNullable: 'NO', columnDefault: '0' }]);
+
+    const id = await insertAccount({ type: 'user', userId: randomUUID() });
+    const row = await db('accounts').where({ id }).first<{ version: number }>('version');
+    expect(row.version).toBe(0);
+  });
+
   it('refuses a negative balance on a user account, but not on a platform account', async () => {
     await expect(
       errnoOf(insertAccount({ type: 'user', userId: randomUUID(), balance: -1 })),
