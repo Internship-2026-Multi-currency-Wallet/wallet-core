@@ -36,8 +36,8 @@ function deadlock(): Error {
 
 function lockedAccounts() {
   return [
-    { id: FUNDING_ID, type: 'platform' as const, balance: 0n },
-    { id: ACCOUNT_ID, type: 'user' as const, balance: 0n },
+    { id: FUNDING_ID, type: 'platform' as const, balance: 0n, version: 0 },
+    { id: ACCOUNT_ID, type: 'user' as const, balance: 0n, version: 0 },
   ];
 }
 
@@ -181,7 +181,7 @@ describe('KnexLedgerService account resolution', () => {
     const { service, repository } = await setup();
     jest
       .spyOn(repository, 'lockAccounts')
-      .mockResolvedValue([{ id: FUNDING_ID, type: 'platform', balance: 0n }]);
+      .mockResolvedValue([{ id: FUNDING_ID, type: 'platform', balance: 0n, version: 0 }]);
 
     await expect(service.post(posting)).rejects.toThrow('disappeared before it was locked');
 
@@ -196,16 +196,16 @@ describe('KnexLedgerService getBalances', () => {
     const { service, repository } = await setup();
     jest
       .spyOn(repository, 'readUserBalances')
-      .mockResolvedValue([{ currency: 'USD', balance: 7n }]);
+      .mockResolvedValue([{ currency: 'USD', balance: 7n, version: 3 }]);
 
     const balances = await service.getBalances(USER_ID);
 
     expect(balances).toEqual([
-      { currency: 'UAH', amount: 0n },
-      { currency: 'USD', amount: 7n },
-      { currency: 'EUR', amount: 0n },
-      { currency: 'PLN', amount: 0n },
-      { currency: 'USDT', amount: 0n },
+      { currency: 'UAH', amount: 0n, version: 0 },
+      { currency: 'USD', amount: 7n, version: 3 },
+      { currency: 'EUR', amount: 0n, version: 0 },
+      { currency: 'PLN', amount: 0n, version: 0 },
+      { currency: 'USDT', amount: 0n, version: 0 },
     ]);
     expect(repository.ensureUserAccounts).not.toHaveBeenCalled();
     expect(repository.transaction).not.toHaveBeenCalled();

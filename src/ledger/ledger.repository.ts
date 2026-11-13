@@ -46,6 +46,7 @@ export interface LockedAccount {
   id: string;
   type: AccountRef['type'];
   balance: bigint;
+  version: number;
 }
 
 export interface StoredEntry {
@@ -64,6 +65,7 @@ export interface StoredOperation {
 export interface UserBalanceRecord {
   currency: Currency;
   balance: bigint;
+  version: number;
 }
 
 interface AccountRow {
@@ -79,6 +81,8 @@ interface LockedAccountRow {
   type: AccountRef['type'];
   /** Text: mysql2 returns BIGINT as a JS number, which loses precision above 2^53. */
   balance: string;
+  /** A number: a version stays far below 2^53, so mysql2's default BIGINT-as-number is exact. */
+  version: number;
 }
 
 interface OperationRow {
@@ -91,6 +95,7 @@ interface OperationRow {
 interface UserBalanceRow {
   currency: Currency;
   balance: string;
+  version: number;
 }
 
 type StoredEntryRow = AccountRow & { amount: string };
@@ -154,15 +159,23 @@ export class LedgerRepository {
   /** Call inside `transaction`. Ascending id order: same accounts, same lock order. */
   async lockAccounts(ids: readonly string[]): Promise<LockedAccount[]> {
     const rows = (await this.db(ACCOUNTS)
-      .select('id', 'type', this.db.raw('CAST(balance AS CHAR) AS balance'))
+      .select('id', 'type', 'version', this.db.raw('CAST(balance AS CHAR) AS balance'))
       .whereIn('id', ids)
       .orderBy('id')
       .forUpdate()) as LockedAccountRow[];
-    return rows.map((row) => ({ id: row.id, type: row.type, balance: BigInt(row.balance) }));
+    return rows.map((row) => ({
+      id: row.id,
+      type: row.type,
+      balance: BigInt(row.balance),
+      version: row.version,
+    }));
   }
 
+  /** Call inside `transaction`, after `lockAccounts`: the version moves with the balance, under the same lock. */
   async updateBalance(accountId: string, balance: bigint): Promise<void> {
-    await this.db(ACCOUNTS).where({ id: accountId }).update({ balance: balance.toString() });
+    await this.db(ACCOUNTS)
+      .where({ id: accountId })
+      .update({ balance: balance.toString(), version: this.db.raw('version + 1') });
   }
 
   async insertEntries(entries: readonly NewEntry[]): Promise<void> {
@@ -208,8 +221,16 @@ export class LedgerRepository {
   async readUserBalances(userId: string): Promise<UserBalanceRecord[]> {
     const rows = await this.db(ACCOUNTS)
       .where({ user_id: userId })
-      .select<UserBalanceRow[]>('currency', this.db.raw('CAST(balance AS CHAR) AS balance'));
-    return rows.map((row) => ({ currency: row.currency, balance: BigInt(row.balance) }));
+      .select<UserBalanceRow[]>(
+        'currency',
+        'version',
+        this.db.raw('CAST(balance AS CHAR) AS balance'),
+      );
+    return rows.map((row) => ({
+      currency: row.currency,
+      balance: BigInt(row.balance),
+      version: row.version,
+    }));
   }
 }
 

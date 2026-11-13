@@ -78,10 +78,10 @@ export class KnexLedgerService extends LedgerService {
 
   async getBalances(userId: string): Promise<UserBalance[]> {
     const rows = await this.repository.readUserBalances(userId);
-    return CURRENCIES.map((currency) => ({
-      currency,
-      amount: rows.find((row) => row.currency === currency)?.balance ?? 0n,
-    }));
+    return CURRENCIES.map((currency) => {
+      const row = rows.find((r) => r.currency === currency);
+      return { currency, amount: row?.balance ?? 0n, version: row?.version ?? 0 };
+    });
   }
 
   private async postOnce(operation: PostOperation, fingerprint: string): Promise<PostOutcome> {

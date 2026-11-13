@@ -41,6 +41,15 @@ export async function balanceOf(
   return balances.find((balance) => balance.currency === currency)?.amount ?? -1n;
 }
 
+export async function versionOf(
+  service: LedgerService,
+  userId: string,
+  currency: Currency,
+): Promise<number> {
+  const balances = await service.getBalances(userId);
+  return balances.find((balance) => balance.currency === currency)?.version ?? -1;
+}
+
 export async function expectLedgerError(
   promise: Promise<unknown>,
   code: LedgerErrorCode,
@@ -96,7 +105,9 @@ export function describeLedgerContract({
 
     it('gives a new user zero balances in all currencies, in CURRENCIES order', async () => {
       const balances = await service.getBalances(newUserId());
-      expect(balances).toEqual(CURRENCIES.map((currency) => ({ currency, amount: 0n })));
+      expect(balances).toEqual(
+        CURRENCIES.map((currency) => ({ currency, amount: 0n, version: 0 })),
+      );
     });
 
     it('credits a user from the platform funding account, which may go negative', async () => {
@@ -290,6 +301,66 @@ export function describeLedgerContract({
         sortedEntries(credit(posting.idempotencyKey, userId, 'UAH', 500n).entries),
       );
       await expect(balanceOf(service, userId, 'UAH')).resolves.toBe(500n);
+    });
+
+    it('bumps the version of a credited currency by 1 per posting and leaves the others at 0', async () => {
+      const userId = newUserId();
+      await service.post(credit(randomUUID(), userId, 'UAH', 100n));
+      expect(await versionOf(service, userId, 'UAH')).toBe(1);
+      expect(await versionOf(service, userId, 'USD')).toBe(0);
+
+      await service.post(credit(randomUUID(), userId, 'UAH', 100n));
+      expect(await versionOf(service, userId, 'UAH')).toBe(2);
+      expect(await versionOf(service, userId, 'USD')).toBe(0);
+    });
+
+    it('bumps the version once for a user account named twice in one operation', async () => {
+      const userId = newUserId();
+      await service.post(credit(randomUUID(), userId, 'UAH', 100n));
+      await service.post(
+        operation(randomUUID(), [
+          { account: userAccount(userId, 'UAH'), amount: -150n },
+          { account: userAccount(userId, 'UAH'), amount: 100n },
+          { account: platformAccount(PLATFORM_FUNDING, 'UAH'), amount: 50n },
+        ]),
+      );
+      expect(await versionOf(service, userId, 'UAH')).toBe(2);
+    });
+
+    it('bumps the versions of both users in a transfer', async () => {
+      const [userA, userB] = [newUserId(), newUserId()];
+      await service.post(credit(randomUUID(), userA, 'UAH', 500n));
+      await service.post(
+        operation(randomUUID(), [
+          { account: userAccount(userA, 'UAH'), amount: -200n },
+          { account: userAccount(userB, 'UAH'), amount: 200n },
+        ]),
+      );
+      expect(await versionOf(service, userA, 'UAH')).toBe(2);
+      expect(await versionOf(service, userB, 'UAH')).toBe(1);
+    });
+
+    it('does not bump the version on a replay', async () => {
+      const [key, userId] = [randomUUID(), newUserId()];
+      await service.post(credit(key, userId, 'UAH', 500n));
+      await service.post(credit(key, userId, 'UAH', 500n));
+      expect(await versionOf(service, userId, 'UAH')).toBe(1);
+    });
+
+    it('does not bump the version of any account of a rejected operation', async () => {
+      const [sender, receiver] = [newUserId(), newUserId()];
+      await service.post(credit(randomUUID(), sender, 'UAH', 1000n));
+      await expectLedgerError(
+        service.post(
+          operation(randomUUID(), [
+            { account: userAccount(sender, 'UAH'), amount: -1001n },
+            { account: userAccount(receiver, 'UAH'), amount: 1001n },
+          ]),
+        ),
+        LedgerErrorCode.InsufficientFunds,
+      );
+      expect(await versionOf(service, sender, 'UAH')).toBe(1);
+      expect(await versionOf(service, receiver, 'UAH')).toBe(0);
     });
 
     it('throws a plain Error for caller mistakes', async () => {

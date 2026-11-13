@@ -16,6 +16,8 @@ export async function up(knex: Knex): Promise<void> {
     table.string('code', 32).nullable().collate('utf8mb4_0900_bin');
     table.string('currency', 8).notNullable();
     table.bigInteger('balance').notNullable().defaultTo(0);
+    // Orders the values of one balance for clients: +1 in the same locked UPDATE as `balance`, so versions follow commits.
+    table.bigInteger('version').unsigned().notNullable().defaultTo(0);
     table.datetime('created_at', { precision: 3 }).notNullable();
     // NULLs never clash in a unique index, so platform rows do not collide on user_id and user rows not on code.
     table.unique(['user_id', 'currency'], { indexName: 'accounts_user_currency_unique' });
