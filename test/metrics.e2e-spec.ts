@@ -7,19 +7,25 @@ import WebSocket from 'ws';
 import { MetricsServer } from '../src/metrics/metrics-server.js';
 import { createApp } from './create-app.js';
 
+/** The sample value of a line, ignoring an exemplar (`... 1 # {trace_id="..."} 0.01 1700000000`). */
+function sampleValue(line: string): number {
+  const sample = line.split(' # ')[0];
+  return Number(sample.slice(sample.lastIndexOf(' ') + 1));
+}
+
 function valueOf(text: string, name: string, labels: Record<string, string>): number {
   const wanted = Object.entries(labels).map(([key, value]) => `${key}="${value}"`);
   const line = text
     .split('\n')
     .find((l) => l.startsWith(`${name}{`) && wanted.every((pair) => l.includes(pair)));
-  return line ? Number(line.slice(line.lastIndexOf(' ') + 1)) : 0;
+  return line ? sampleValue(line) : 0;
 }
 
 function total(text: string, name: string): number {
   return text
     .split('\n')
     .filter((l) => l.startsWith(`${name}{`))
-    .reduce((sum, l) => sum + Number(l.slice(l.lastIndexOf(' ') + 1)), 0);
+    .reduce((sum, l) => sum + sampleValue(l), 0);
 }
 
 describe('metrics (e2e)', () => {
@@ -47,13 +53,35 @@ describe('metrics (e2e)', () => {
     await app.close();
   });
 
-  it('serves the Prometheus text format with service and env labels on the metrics port', async () => {
+  it('serves the OpenMetrics format with service and env labels on the metrics port', async () => {
     const res = await fetch(metricsUrl);
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toMatch(/^text\/plain; version=0\.0\.4/);
+    expect(res.headers.get('content-type')).toMatch(
+      /^application\/openmetrics-text; version=1\.0\.0/,
+    );
     const text = await res.text();
     expect(text).toMatch(/nodejs_eventloop_lag_seconds\{service="wallet-core",env="local"\}/);
     expect(text).toContain('# TYPE http_request_duration_seconds histogram');
+    expect(text.trimEnd()).toMatch(/# EOF$/);
+  });
+
+  it('links the duration and the errors of a request to its requestId (exemplars)', async () => {
+    await me().set('x-request-id', 'exemplar-e2e-1');
+    const text = await scrape();
+    expect(text).toMatch(
+      /http_request_duration_seconds_bucket\{[^}]*operation="query me"[^}]*\} \d+ # \{trace_id="exemplar-e2e-1"\}/,
+    );
+    expect(text).toMatch(
+      /graphql_errors_total\{[^}]*code="UNAUTHENTICATED"[^}]*\} \d+ # \{trace_id="exemplar-e2e-1"\}/,
+    );
+  });
+
+  it('keeps serving a request id too long for an exemplar, without the exemplar', async () => {
+    const longId = 'x'.repeat(128);
+    const res = await me('Dev 1:wallet').set('x-request-id', longId).expect(200);
+    expect(res.headers['x-request-id']).toBe(longId);
+    await me('Dev 1:wallet').expect(200);
+    expect(await scrape()).not.toContain(longId);
   });
 
   it('does not serve /metrics on the main port', async () => {
