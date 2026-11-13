@@ -110,8 +110,15 @@ The schema is **code-first**: resolvers and `@ObjectType`s are the source of tru
 - `npm run start:dev` and the e2e tests regenerate it; `npm run schema:generate` does it without a database.
 - A PR that changes the API must include the regenerated `schema.graphql`. That diff is what consumers review.
 
-Current API: `health { service version appEnv client db redis }` (public) and `me { id kind permissions strategy }`.
-Ledger: query `balances`, subscription `balanceChanged` (live changes of the caller) and mutation `testCredit` (local and staging only).
+Current API (`schema.graphql` has the full contract):
+
+- Service: `health` (public), `me` (the caller, client or staff).
+- Client auth: `register`, `login`, `logout`, `refreshSession`.
+- Settings: `publicSettings`; back-office `staffSettings`, `settingHistory`, `updateSetting`, `resetSetting`.
+- Staff: `staffLogin`, `staffLogout`, `staffRefreshSession`, `staffMe`, `staffMembers`, `inviteStaff`,
+  `resendStaffInvitation`, `acceptStaffInvitation`, `changeStaffRole`, `deactivateStaff`, `changeOwnStaffPassword`.
+- Ledger: `balances`, subscription `balanceChanged` (live changes of the caller), `testCredit` (`NOT_FOUND` on
+  `kvitka-uat` / `wisla-uat`).
 
 ## Ledger
 
