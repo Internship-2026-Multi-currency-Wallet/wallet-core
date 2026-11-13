@@ -14,7 +14,7 @@ export interface BalanceChangedSource {
 
 const FINISHED: IteratorResult<ChangedBalances> = { value: undefined, done: true };
 
-// The queue only grows while the socket takes no data; a client that far behind reloads its balances anyway.
+// Generous: the queue only grows while the socket takes no data, and keep-alive ends such a client within ~24 s.
 export const MAX_PENDING = 100;
 
 /**
