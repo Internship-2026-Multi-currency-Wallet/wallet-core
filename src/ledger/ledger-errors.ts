@@ -1,6 +1,7 @@
 import { GraphQLError } from 'graphql';
 
 export const LedgerErrorCode = {
+  BadUserInput: 'BAD_USER_INPUT',
   InsufficientFunds: 'INSUFFICIENT_FUNDS',
   IdempotencyConflict: 'IDEMPOTENCY_CONFLICT',
 } as const;
@@ -9,6 +10,8 @@ export type LedgerErrorCode = (typeof LedgerErrorCode)[keyof typeof LedgerErrorC
 
 /** These messages reach the client: no ids or amounts of other users. */
 export const LEDGER_ERROR_MESSAGES = {
+  invalidTestCreditAmount:
+    'Amount must be a positive integer in minor units, at most 1000000 units of the currency',
   insufficientFunds: 'Insufficient funds',
   idempotencyConflict: 'Idempotency key was already used for a different operation',
 } as const;

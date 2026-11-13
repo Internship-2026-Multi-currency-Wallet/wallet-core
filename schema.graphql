@@ -186,10 +186,12 @@ type Mutation {
   staffRefreshSession: StaffAuthPayload!
 
   """
-  Moves money from the platform funding account to the caller. Exists only on local and staging. `amount` is a positive integer string in minor units. Returns the new TOTAL balance of that currency. Errors: BAD_USER_INPUT (extensions.field), UNAUTHENTICATED, FORBIDDEN (staff tokens have no `wallet` permission), NOT_FOUND (on kvitka-uat and wisla-uat, for authenticated callers: an anonymous caller gets UNAUTHENTICATED first).
+  Moves money from the platform funding account to the caller. Exists only on local and staging. `amount` is a positive integer string in minor units, at most 1,000,000 units of the currency per call. Returns the new TOTAL balance of that currency. Errors: BAD_USER_INPUT (extensions.field), UNAUTHENTICATED, FORBIDDEN (staff tokens have no `wallet` permission), NOT_FOUND (on kvitka-uat and wisla-uat, for authenticated callers: an anonymous caller gets UNAUTHENTICATED first).
   """
   testCredit(
-    """Positive integer in minor units, as a string."""
+    """
+    Positive integer in minor units, as a string; at most 1,000,000 units of the currency (e.g. "100000000" for UAH, "1000000000000" for USDT).
+    """
     amount: String!
 
     """The currency to credit."""

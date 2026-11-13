@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import { LoggerModule } from 'nestjs-pino';
 import { ConfigModule } from '../config/config.module.js';
 import { KNEX } from '../database/database.module.js';
-import { EventPublisher } from '../events/event-bus.js';
+import { EventPublisher, EventSubscriber } from '../events/event-bus.js';
 import { KnexLedgerService } from './knex-ledger.service.js';
 import { LedgerModule } from './ledger.module.js';
 import { LedgerService } from './ledger.service.js';
@@ -15,7 +15,13 @@ class StubDatabaseModule {}
 
 // The real EventsModule connects to Redis.
 @Global()
-@Module({ providers: [{ provide: EventPublisher, useValue: {} }], exports: [EventPublisher] })
+@Module({
+  providers: [
+    { provide: EventPublisher, useValue: {} },
+    { provide: EventSubscriber, useValue: {} },
+  ],
+  exports: [EventPublisher, EventSubscriber],
+})
 class StubEventsModule {}
 
 describe('LedgerModule', () => {

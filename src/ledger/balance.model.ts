@@ -1,5 +1,5 @@
 import { Field, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
-import { CURRENCIES, type Currency } from '../common/currency.js';
+import { CURRENCIES, CURRENCY_DECIMALS, type Currency } from '../common/currency.js';
 
 // registerEnumType wants an object; the keys are the GraphQL values, so they follow CURRENCIES.
 export const CurrencyEnum = Object.fromEntries(
@@ -27,4 +27,8 @@ export class Balance {
       'Number of fractional digits of the currency (2 for fiat, 6 for USDT): the amount divided by 10^decimals is the human value.',
   })
   decimals: number;
+}
+
+export function toBalance(currency: Currency, amount: bigint): Balance {
+  return { currency, amount: amount.toString(), decimals: CURRENCY_DECIMALS[currency] };
 }
