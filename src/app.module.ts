@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module.js';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module.js';
 import { EmailModule } from './email/email.module.js';
 import { EventsModule } from './events/events.module.js';
+import { GoogleAuthModule } from './google-auth/google-auth.module.js';
 import { graphqlOptions } from './graphql/graphql.config.js';
 import { HealthModule } from './health/health.module.js';
 import { LoggingModule } from './logging/logging.module.js';
@@ -53,6 +54,7 @@ import { ThrottlingModule } from './throttling/throttling.module.js';
     HealthModule,
     DiagnosticsModule,
     StaffModule,
+    GoogleAuthModule,
   ],
 })
 export class AppModule {}

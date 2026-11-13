@@ -339,6 +339,52 @@ the user's `refresh_token`. Lockout works as for users: 5 wrong passwords in a r
 
 A role change or a deactivation ends all of the member's sessions; a password change ends all sessions except the one of the `staff_refresh_token` cookie sent with the request (without that cookie all sessions end). An access token that was already issued is not checked against sessions and stays valid until it expires (`JWT_ACCESS_TTL`, 15 minutes by default); the permission cache planned in E1-12 will shorten this.
 
+#### Sign in with Google — `src/google-auth`
+
+> **Contract only.** All six operations answer `501 Not Implemented` today; this section describes the behaviour
+> they are being built to. Frontends can generate types and mocks from it, but no call succeeds yet.
+
+A logged-in user links a Google account first; there is no sign-up via Google. The flow is the OAuth 2.0
+authorization-code flow with a redirect (see "Google login setup" in the `ops` README):
+
+1. client-web calls `startGoogleLink` (logged in) or `startGoogleLogin` and gets `state` and `nonce`. The answer also
+   sets the httpOnly `google_auth_state` cookie (path `/graphql`, 10 minutes).
+2. client-web sends the user to Google with `state`, `nonce` and, recommended, a PKCE `code_challenge`.
+3. Google redirects back to `<client-web origin>/auth/google/callback?code=...&state=...`.
+4. client-web passes `code`, `state`, the same `redirectUri` and the PKCE `codeVerifier` to `linkGoogleAccount` or
+   `loginWithGoogle`.
+
+wallet-core accepts the code only for the sign-in this browser started (the cookie), for the same purpose and, when
+linking, the same user. It exchanges the code with Google using the client secret, and the `nonce` in Google's ID
+token must be the one it issued. So a code from somebody else's sign-in cannot be linked to or logged in with, even
+if a page is tricked into sending it. Nothing the browser says about the Google user is trusted.
+
+| Operation             | Who                | Result                                                                       |
+| --------------------- | ------------------ | ---------------------------------------------------------------------------- |
+| `googleAccount`       | client token       | The linked `GoogleAccount { email linkedAt }`, or `null`                     |
+| `startGoogleLink`     | client token       | `GoogleAuthStart { state nonce expiresAt }` + the `google_auth_state` cookie |
+| `linkGoogleAccount`   | client token       | Links it; the same Google account again returns it unchanged                 |
+| `unlinkGoogleAccount` | client token       | `true`, also when nothing was linked or Google login is off                  |
+| `startGoogleLogin`    | anyone (`@Public`) | `GoogleAuthStart` + the `google_auth_state` cookie                           |
+| `loginWithGoogle`     | anyone (`@Public`) | `AuthPayload` + the `refresh_token` cookie, a session as `login`             |
+
+One Google account belongs to at most one user, and a user has at most one Google account. Unlinking also ends the
+user's other sessions (the one of the `refresh_token` cookie sent with the request stays), so whoever got in through
+the Google account is logged out; their access token stays valid until it expires (`JWT_ACCESS_TTL`). When the client
+setting `auth.googleLogin` is `false`, starting, linking and logging in answer `GOOGLE_LOGIN_DISABLED`.
+
+| Code                                    | When                                                                                      |
+| --------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `GOOGLE_LOGIN_DISABLED`                 | `auth.googleLogin` is off for this client                                                 |
+| `BAD_USER_INPUT`                        | Empty `code` or `state`, or `redirectUri` is not an allowed callback (`extensions.field`) |
+| `INVALID_GOOGLE_STATE`                  | No, expired or foreign `google_auth_state` cookie, or another `state`: start again        |
+| `INVALID_GOOGLE_CODE`                   | Google refused the code (wrong, used, expired, other redirect URI or verifier)            |
+| `GOOGLE_EMAIL_NOT_VERIFIED`             | Google says the account's email is not verified                                           |
+| `GOOGLE_ACCOUNT_LINKED_TO_ANOTHER_USER` | `linkGoogleAccount`: the Google account is linked to another user                         |
+| `GOOGLE_ACCOUNT_ALREADY_LINKED`         | `linkGoogleAccount`: this user has another Google account; unlink it first                |
+| `GOOGLE_ACCOUNT_NOT_LINKED`             | `loginWithGoogle`: "No account is linked to this Google account"                          |
+| `ACCOUNT_LOCKED`                        | `loginWithGoogle`: the account is locked after wrong passwords (`lockedUntil`)            |
+
 ### Client settings — `src/settings`
 
 ```ts
