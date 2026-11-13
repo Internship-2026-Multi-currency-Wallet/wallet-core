@@ -191,6 +191,66 @@ describe('formatExecutionResult', () => {
   it('leaves a result without errors unchanged', () => {
     expect(formatExecutionResult({ data: { ok: true } })).toBeUndefined();
   });
+
+  const schema = buildSchema('type Query { ok(flag: Boolean): Boolean }');
+  it.each([
+    ['a missing required variable', undefined, 'of required type "Boolean!" was not provided'],
+    ['a variable of the wrong type', { b: 'yes' }, 'got invalid value "yes"; Boolean cannot'],
+  ])('keeps %s as GRAPHQL_VALIDATION_FAILED', (_case, variableValues, explanation) => {
+    const result = graphqlSync({
+      schema,
+      source: 'query V($b: Boolean!) { ok(flag: $b) }',
+      variableValues,
+    });
+    const [error] = result.errors ?? [];
+    expect(error.path).toBeUndefined();
+    const extensions = { ...error.extensions };
+
+    expect(formatExecutionResult(result)).toEqual({
+      errors: [
+        {
+          message: expect.stringContaining(explanation),
+          locations: [{ line: 1, column: 9 }],
+          extensions: { code: 'GRAPHQL_VALIDATION_FAILED' },
+        },
+      ],
+    });
+    expect(error.extensions).toEqual(extensions);
+  });
+
+  it('keeps the string code, other extensions and result fields of a coercion error', () => {
+    const error = new GraphQLError('Variable "$b" got invalid value', {
+      extensions: { code: 'SCALAR_REJECTED', hint: 'use a boolean' },
+    });
+
+    expect(formatExecutionResult({ data: null, errors: [error], extensions: { cost: 1 } })).toEqual(
+      {
+        data: null,
+        errors: [
+          {
+            message: 'Variable "$b" got invalid value',
+            extensions: { code: 'SCALAR_REJECTED', hint: 'use a boolean' },
+          },
+        ],
+        extensions: { cost: 1 },
+      },
+    );
+    expect(error.extensions).toEqual({ code: 'SCALAR_REJECTED', hint: 'use a boolean' });
+  });
+
+  it('replaces a code that is not a string, keeping other extensions', () => {
+    const error = new GraphQLError('Variable "$b" got invalid value', {
+      extensions: { code: 42, hint: 'use a boolean' },
+    });
+
+    expect(formatExecutionResult({ errors: [error] })?.errors).toEqual([
+      {
+        message: 'Variable "$b" got invalid value',
+        extensions: { code: 'GRAPHQL_VALIDATION_FAILED', hint: 'use a boolean' },
+      },
+    ]);
+    expect(error.extensions).toEqual({ code: 42, hint: 'use a boolean' });
+  });
 });
 
 describe('formatProtocolErrors: a running subscription that threw', () => {

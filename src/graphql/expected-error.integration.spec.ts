@@ -12,9 +12,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { ApolloDriverConfig } from '@nestjs/apollo';
-import { GraphQLModule, Query, Resolver, Subscription } from '@nestjs/graphql';
+import { Args, GraphQLModule, Query, Resolver, Subscription } from '@nestjs/graphql';
 import { Test } from '@nestjs/testing';
-import { GraphQLError } from 'graphql';
+import { GraphQLError, GraphQLScalarType } from 'graphql';
 import { createClient, type FormattedExecutionResult } from 'graphql-ws';
 import { LoggerModule, type PinoLogger } from 'nestjs-pino';
 import request from 'supertest';
@@ -43,6 +43,15 @@ class ThrottledGuard implements CanActivate {
     throw tooManyRequestsError(7);
   }
 }
+
+/** Rejects a variable value with its own code, which graphql-js copies to the coercion error. */
+const Ticker = new GraphQLScalarType({
+  name: 'Ticker',
+  parseValue: (value) => {
+    if (value === 'UAH') return value;
+    throw new GraphQLError('Unknown ticker', { extensions: { code: 'UNKNOWN_TICKER' } });
+  },
+});
 
 @Resolver()
 class ProbeResolver {
@@ -143,6 +152,11 @@ class ProbeResolver {
   @Query(() => Boolean)
   codeless(): boolean {
     throw new GraphQLError(LEAK);
+  }
+
+  @Query(() => Boolean)
+  quote(@Args('ticker', { type: () => Ticker }) _ticker: string): boolean {
+    return true;
   }
 }
 
@@ -676,6 +690,84 @@ describe('GraphQL error logging in Nest + Apollo', () => {
       ]).not.toHaveLength(0);
       expect(warns).toEqual([]);
       expect(wsErrors).toEqual([]);
+    });
+
+    it.each([
+      ['MissingVariable', undefined, 'Variable "$b" of required type "Boolean!" was not provided.'],
+      ['WrongVariable', { b: 'yes' }, 'Variable "$b" got invalid value "yes"; Boolean cannot'],
+    ])(
+      '%s: the explanation reaches the client as GRAPHQL_VALIDATION_FAILED, counted once, unlogged',
+      async (name, variables, explanation) => {
+        const requestId = `e1-17-ws-${name}`;
+        // The label is the first field, shared with other tests: snapshot the counts (prom-client
+        // returns live objects) and compare.
+        const counted = async () => {
+          const { values } = await metrics.graphqlErrors.get();
+          return new Map(
+            values
+              .filter((v) => v.labels.operation === 'query __typename')
+              .map((v) => [v.labels.code, v.value]),
+          );
+        };
+        const before = await counted();
+        const { results, failure, warns, wsErrors, nestErrors } = await runWs(
+          `query ${name}($b: Boolean!) { __typename @include(if: $b) }`,
+          requestId,
+          variables,
+        );
+
+        expect(results).toEqual([
+          {
+            errors: [
+              {
+                message: expect.stringContaining(explanation),
+                locations: [{ line: 1, column: expect.any(Number) }],
+                extensions: { code: 'GRAPHQL_VALIDATION_FAILED' },
+              },
+            ],
+          },
+        ]);
+        expect(failure).toBeUndefined();
+        const added = [...(await counted())]
+          .map(([code, value]) => [code, value - (before.get(code) ?? 0)])
+          .filter(([, delta]) => delta !== 0);
+        expect(added).toEqual([['GRAPHQL_VALIDATION_FAILED', 1]]);
+        expect(warns).toEqual([]);
+        expect(wsErrors).toEqual([]);
+        expect(nestErrors).toEqual([]);
+      },
+    );
+
+    it('keeps the code of a rejected variable: response, warn and metric agree', async () => {
+      const requestId = 'e1-17-ws-custom-coercion';
+      const { results, failure, warns, wsErrors, nestErrors } = await runWs(
+        'query Quote($t: Ticker!) { quote(ticker: $t) }',
+        requestId,
+        { t: 'XYZ' },
+      );
+
+      expect(results).toEqual([
+        {
+          errors: [
+            {
+              message: 'Variable "$t" got invalid value "XYZ"; Unknown ticker',
+              locations: [{ line: 1, column: 13 }],
+              extensions: { code: 'UNKNOWN_TICKER' },
+            },
+          ],
+        },
+      ]);
+      expect(failure).toBeUndefined();
+      expect(warns).toEqual([
+        {
+          level: 'warn',
+          fields: { requestId, code: 'UNKNOWN_TICKER', path: undefined },
+          msg: expect.stringMatching(/^GraphQL error: /),
+        },
+      ]);
+      expect(wsErrors).toEqual([]);
+      expect(nestErrors).toEqual([]);
+      expect(await countedCodes('query quote')).toEqual(['UNKNOWN_TICKER']);
     });
   });
 });

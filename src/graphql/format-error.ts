@@ -51,13 +51,31 @@ function formatOriginal(
 /**
  * graphql-ws `onNext`: the same `formatError` (404 mapping and masking) for results sent over the
  * websocket (any operation can go there, not only subscriptions), which Apollo's `formatError`
- * does not see. Returning nothing sends the result unchanged.
+ * does not see. Returning nothing sends the result unchanged. Pathless errors are variable
+ * coercion failures, caused by the client: their explanation is kept.
  */
 export function formatExecutionResult(
   result: ExecutionResult,
 ): FormattedExecutionResult | undefined {
   if (!result.errors) return undefined;
-  return { ...result, errors: result.errors.map((error) => formatError(error.toJSON(), error)) };
+  return {
+    ...result,
+    errors: result.errors.map((error) =>
+      error.path !== undefined ? formatError(error.toJSON(), error) : validationFailed(error),
+    ),
+  };
+}
+
+/** Keeps a string code, e.g. from a custom scalar that rejects the value with its own code. */
+function validationFailed(error: GraphQLError): GraphQLFormattedError {
+  const { code } = error.extensions;
+  return {
+    ...error.toJSON(),
+    extensions: {
+      ...error.extensions,
+      code: typeof code === 'string' ? code : 'GRAPHQL_VALIDATION_FAILED',
+    },
+  };
 }
 
 /**
