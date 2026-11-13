@@ -90,7 +90,7 @@ export const envSchema = z
     JWT_ACCESS_TTL: durationInSeconds('15m'),
     // Lifetime of a session (refresh token), counted from login.
     JWT_REFRESH_TTL: durationInSeconds('30d'),
-    // Google OAuth client (type "Web application") for "Sign in with Google". Optional until the login is built.
+    // Keep these optional until Google login is implemented.
     GOOGLE_CLIENT_ID: z.string().trim().min(1).optional(),
     GOOGLE_CLIENT_SECRET: z.string().trim().min(1).optional(),
     THROTTLE_TTL_SECONDS: z.coerce.number().int().positive().default(60),

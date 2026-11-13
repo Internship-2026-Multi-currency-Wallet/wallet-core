@@ -59,7 +59,6 @@ export class AppConfig {
     accessTtlSeconds: number;
     sessionTtlSeconds: number;
   };
-  /** Google OAuth client; both are undefined until configured. The secret never leaves the backend. */
   readonly google: { clientId?: string; clientSecret?: string };
   readonly throttle: { ttlSeconds: number; limitAnonymous: number; limitUser: number };
 
