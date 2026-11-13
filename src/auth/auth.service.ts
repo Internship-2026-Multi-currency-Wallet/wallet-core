@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import type { Knex } from 'knex';
 import { hash, verify } from '@node-rs/argon2';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
@@ -106,25 +107,39 @@ export class AuthService {
       throw accountLocked(lockedMeanwhile);
     }
 
+    const result = await this.startSession(
+      { id: user.id, email: user.email, phone: user.phone },
+      previousRefreshToken,
+      now,
+    );
+    this.logger.info({ userId: user.id }, 'user logged in');
+    return result;
+  }
+
+  /** The caller must already have checked the user's identity and lock. */
+  async startSession(
+    user: User,
+    previousRefreshToken: string | undefined,
+    now: Date,
+    trx?: Knex,
+  ): Promise<LoginResult> {
     const refreshToken = newRefreshToken();
     const sessionExpiresAt = new Date(now.getTime() + this.config.jwt.sessionTtlSeconds * 1000);
-    await this.sessions.create({
-      id: randomUUID(),
-      userId: user.id,
-      refreshTokenHash: refreshToken.hash,
-      expiresAt: sessionExpiresAt,
-      createdAt: now,
-    });
+    await this.sessions.create(
+      {
+        id: randomUUID(),
+        userId: user.id,
+        refreshTokenHash: refreshToken.hash,
+        expiresAt: sessionExpiresAt,
+        createdAt: now,
+      },
+      trx,
+    );
     // Revoke the previous browser session because login replaces its refresh cookie.
     if (previousRefreshToken) {
-      await this.sessions.revoke(hashRefreshToken(previousRefreshToken), now);
+      await this.sessions.revoke(hashRefreshToken(previousRefreshToken), now, trx);
     }
-
-    this.logger.info({ userId: user.id }, 'user logged in');
-    return this.result({ id: user.id, email: user.email, phone: user.phone }, refreshToken.token, {
-      sessionExpiresAt,
-      now,
-    });
+    return this.result(user, refreshToken.token, { sessionExpiresAt, now });
   }
 
   async refreshSession(
@@ -141,6 +156,22 @@ export class AuthService {
 
     this.logger.info({ userId: session.user.id }, 'session refreshed');
     return this.result(session.user, next.token, { sessionExpiresAt: session.expiresAt, now });
+  }
+
+  async endOtherSessions(
+    userId: string,
+    keepRefreshToken: string | undefined,
+    now: Date = new Date(),
+    trx?: Knex,
+  ): Promise<number> {
+    const ended = await this.sessions.revokeAllOfUser(
+      userId,
+      now,
+      keepRefreshToken === undefined ? undefined : hashRefreshToken(keepRefreshToken),
+      trx,
+    );
+    this.logger.info({ userId, ended }, 'other sessions ended');
+    return ended;
   }
 
   async logout(refreshToken: string | undefined, now: Date = new Date()): Promise<void> {
@@ -176,7 +207,7 @@ function invalidCredentials() {
   return authError(AuthErrorCode.InvalidCredentials, AUTH_ERROR_MESSAGES.invalidCredentials);
 }
 
-function accountLocked(lockedUntil: Date) {
+export function accountLocked(lockedUntil: Date) {
   return authError(AuthErrorCode.AccountLocked, AUTH_ERROR_MESSAGES.accountLocked(lockedUntil), {
     lockedUntil: lockedUntil.toISOString(),
   });

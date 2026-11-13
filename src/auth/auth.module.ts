@@ -50,6 +50,6 @@ import { PermissionGuard } from '../permissions/permission.guard.js';
     SessionsRepository,
     TokenService,
   ],
-  exports: [AUTH_STRATEGIES, TokenService],
+  exports: [AUTH_STRATEGIES, TokenService, AuthService],
 })
 export class AuthModule {}

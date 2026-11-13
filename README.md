@@ -71,34 +71,36 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
 Validated at startup (`src/config/env.schema.ts`); an invalid value stops the service with a clear message.
 See `.env.example`.
 
-| Variable                   | Default                                            | Meaning                                                                                                  |
-| -------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `PORT`                     | `3000`                                             | HTTP port                                                                                                |
-| `METRICS_PORT`             | `9464`                                             | Internal port of `GET /metrics` (see [Metrics](#metrics)). Must differ from `PORT`                       |
-| `METRICS_HOST`             | `127.0.0.1` (Docker image: `0.0.0.0`)              | Address `GET /metrics` listens on                                                                        |
-| `NODE_ENV`                 | `development`                                      | `production` disables writing `schema.graphql`                                                           |
-| `APP_ENV`                  | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                     |
-| `DATABASE_URL`             | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                           |
-| `REDIS_URL`                | `redis://localhost:6379`                           | Redis for events and the email queue                                                                     |
-| `CLIENT`                   | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                                 |
-| `DEV_AUTH`                 | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT     |
-| `EMAIL_PREVIEW_ENABLED`    | `false`                                            | Serve email template previews at `/dev/email-preview`. Refused at startup when `APP_ENV` is a client UAT |
-| `EMAIL_TRANSPORT`          | `smtp`                                             | `resend`, `smtp` or `fake`. Production outside `local` requires `resend`                                 |
-| `EMAIL_FROM`               | `no-reply@wallet.shatori.com`                      | Sender address of all emails                                                                             |
-| `RESEND_API_KEY`           | unset                                              | Resend API key. Required with `EMAIL_TRANSPORT=resend`                                                   |
-| `SMTP_URL`                 | `smtp://localhost:1025`                            | SMTP server for `EMAIL_TRANSPORT=smtp` (`smtp:` or `smtps:`), Mailpit locally                            |
-| `CORS_ORIGINS`             | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                                  |
-| `BACKOFFICE_URL`           | `http://localhost:5174`                            | Back office URL for staff email links; required in production, not a local host                          |
-| `BOOTSTRAP_ADMIN_EMAIL`    | empty                                              | Invite this admin on start when no admin exists in any status (ignored otherwise)                        |
-| `APP_VERSION`              | from `package.json`                                | Version reported by `health`                                                                             |
-| `LOG_LEVEL`                | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                                  |
-| `JWT_SECRET`               | local-only value (`.env.example`)                  | HS256 secret shared with rates-service and treasury-service. Required with `NODE_ENV=production`         |
-| `JWT_ISSUER`               | `wallet-core`                                      | `iss` claim of the issued tokens                                                                         |
-| `JWT_ACCESS_TTL`           | `15m`                                              | Access token lifetime: `<number><s\|m\|h\|d>`                                                            |
-| `JWT_REFRESH_TTL`          | `30d`                                              | Session (refresh token) lifetime, counted from login                                                     |
-| `THROTTLE_TTL_SECONDS`     | `60`                                               | Length of the rate-limit window, in seconds                                                              |
-| `THROTTLE_LIMIT_ANONYMOUS` | `120`                                              | Requests per window without a token (counted per client IP)                                              |
-| `THROTTLE_LIMIT_USER`      | `600`                                              | Requests per window for a logged-in user or staff member (counted per id)                                |
+| Variable                   | Default                                            | Meaning                                                                                                               |
+| -------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                     | `3000`                                             | HTTP port                                                                                                             |
+| `METRICS_PORT`             | `9464`                                             | Internal port of `GET /metrics` (see [Metrics](#metrics)). Must differ from `PORT`                                    |
+| `METRICS_HOST`             | `127.0.0.1` (Docker image: `0.0.0.0`)              | Address `GET /metrics` listens on                                                                                     |
+| `NODE_ENV`                 | `development`                                      | `production` disables writing `schema.graphql`                                                                        |
+| `APP_ENV`                  | `local`                                            | Environment: `local`, `staging`, `kvitka-uat`, `wisla-uat`. Prefix of all Redis keys                                  |
+| `DATABASE_URL`             | `mysql://wallet:wallet@localhost:3306/wallet_core` | MySQL database of this service                                                                                        |
+| `REDIS_URL`                | `redis://localhost:6379`                           | Redis for events and the email queue                                                                                  |
+| `CLIENT`                   | `demo`                                             | Client this deployment serves: `demo`, `kvitka`, `wisla`                                                              |
+| `DEV_AUTH`                 | `false`                                            | Accept `Authorization: Dev …` headers (see below). Refused at startup when `APP_ENV` is a client UAT                  |
+| `EMAIL_PREVIEW_ENABLED`    | `false`                                            | Serve email template previews at `/dev/email-preview`. Refused at startup when `APP_ENV` is a client UAT              |
+| `EMAIL_TRANSPORT`          | `smtp`                                             | `resend`, `smtp` or `fake`. Production outside `local` requires `resend`                                              |
+| `EMAIL_FROM`               | `no-reply@wallet.shatori.com`                      | Sender address of all emails                                                                                          |
+| `RESEND_API_KEY`           | unset                                              | Resend API key. Required with `EMAIL_TRANSPORT=resend`                                                                |
+| `SMTP_URL`                 | `smtp://localhost:1025`                            | SMTP server for `EMAIL_TRANSPORT=smtp` (`smtp:` or `smtps:`), Mailpit locally                                         |
+| `CORS_ORIGINS`             | `http://localhost:5173,http://localhost:5174`      | Allowed browser origins                                                                                               |
+| `BACKOFFICE_URL`           | `http://localhost:5174`                            | Back office URL for staff email links; required in production, not a local host                                       |
+| `BOOTSTRAP_ADMIN_EMAIL`    | empty                                              | Invite this admin on start when no admin exists in any status (ignored otherwise)                                     |
+| `APP_VERSION`              | from `package.json`                                | Version reported by `health`                                                                                          |
+| `LOG_LEVEL`                | `info`                                             | Log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`                                               |
+| `JWT_SECRET`               | local-only value (`.env.example`)                  | HS256 secret shared with rates-service and treasury-service. Required with `NODE_ENV=production`                      |
+| `JWT_ISSUER`               | `wallet-core`                                      | `iss` claim of the issued tokens                                                                                      |
+| `JWT_ACCESS_TTL`           | `15m`                                              | Access token lifetime: `<number><s\|m\|h\|d>`                                                                         |
+| `JWT_REFRESH_TTL`          | `30d`                                              | Session (refresh token) lifetime, counted from login                                                                  |
+| `GOOGLE_CLIENT_ID`         | unset                                              | OAuth client of Sign in with Google (public). Without it and the secret, Google login answers `GOOGLE_LOGIN_DISABLED` |
+| `GOOGLE_CLIENT_SECRET`     | unset                                              | Its secret, for the code exchange. Each of the two requires the other                                                 |
+| `THROTTLE_TTL_SECONDS`     | `60`                                               | Length of the rate-limit window, in seconds                                                                           |
+| `THROTTLE_LIMIT_ANONYMOUS` | `120`                                              | Requests per window without a token (counted per client IP)                                                           |
+| `THROTTLE_LIMIT_USER`      | `600`                                              | Requests per window for a logged-in user or staff member (counted per id)                                             |
 
 ## GraphQL contract
 
@@ -341,9 +343,6 @@ A role change or a deactivation ends all of the member's sessions; a password ch
 
 #### Sign in with Google — `src/google-auth`
 
-> **Contract only.** All six operations answer `501 Not Implemented` today; this section describes the behaviour
-> they are being built to. Frontends can generate types and mocks from it, but no call succeeds yet.
-
 A logged-in user links a Google account first; there is no sign-up via Google. The flow is the OAuth 2.0
 authorization-code flow with a redirect (see "Google login setup" in the `ops` README):
 
@@ -367,6 +366,14 @@ if a page is tricked into sending it. Nothing the browser says about the Google 
 | `unlinkGoogleAccount` | client token       | `true`, also when nothing was linked or Google login is off                  |
 | `startGoogleLogin`    | anyone (`@Public`) | `GoogleAuthStart` + the `google_auth_state` cookie                           |
 | `loginWithGoogle`     | anyone (`@Public`) | `AuthPayload` + the `refresh_token` cookie, a session as `login`             |
+
+How the code is checked (`GoogleOAuthVerifier`, with `google-auth-library`): wallet-core exchanges it at Google's
+token endpoint with the client secret, verifies the returned ID token (Google's signature, issuer, audience =
+`GOOGLE_CLIENT_ID`, expiry), and takes the Google account id (`sub`) from it; the email is only shown, never used to
+find a user, and must be verified by Google. The `google_auth_state` cookie is a JWT signed with a key derived from
+`JWT_SECRET`, so it is never valid as an access token; nothing about a sign-in is stored on the server. Links live in
+`user_google_accounts`. `redirectUri` must be `<one of CORS_ORIGINS>/auth/google/callback`. Starting and finishing a
+sign-in use cookies, so they work over HTTP only, not the websocket.
 
 One Google account belongs to at most one user, and a user has at most one Google account. Unlinking also ends the
 user's other sessions (the one of the `refresh_token` cookie sent with the request stays), so whoever got in through

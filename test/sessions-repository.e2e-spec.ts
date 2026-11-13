@@ -125,4 +125,64 @@ describe('SessionsRepository (e2e, real MySQL)', () => {
       await expect(db('sessions').first('revoked_at')).resolves.toEqual({ revoked_at: NOW });
     });
   });
+
+  describe('revokeAllOfUser', () => {
+    const NOW = new Date('2026-11-10T10:00:00.000Z');
+    const EARLIER = new Date('2026-11-05T10:00:00.000Z');
+    const OTHER_USER_ID = '7f3a4b5c-6d7e-4f8a-8b9c-1d2e3f4a5b6c';
+    const revokedAt = () =>
+      db('sessions')
+        .select('refresh_token_hash', 'revoked_at')
+        .orderBy('refresh_token_hash')
+        .then((rows: { refresh_token_hash: string; revoked_at: Date | null }[]) =>
+          rows.map((r) => [r.refresh_token_hash.slice(0, 1), r.revoked_at]),
+        );
+
+    beforeEach(async () => {
+      await new UsersRepository(db).insert({
+        id: OTHER_USER_ID,
+        email: 'other@test.com',
+        passwordHash: '$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA',
+        phone: null,
+        createdAt: new Date('2026-11-03T10:00:00.000Z'),
+      });
+      await repo.create(session());
+      await repo.create(
+        session({ id: '6e2f3a4b-5c6d-4e7f-9a8b-0c1d2e3f4a5b', refreshTokenHash: 'b'.repeat(64) }),
+      );
+      await repo.create(
+        session({ id: '8a4b5c6d-7e8f-4a9b-8c0d-2e3f4a5b6c7d', refreshTokenHash: 'c'.repeat(64) }),
+      );
+      await repo.create(
+        session({
+          id: '9b5c6d7e-8f9a-4b0c-9d1e-3f4a5b6c7d8e',
+          userId: OTHER_USER_ID,
+          refreshTokenHash: 'd'.repeat(64),
+        }),
+      );
+      await db('sessions')
+        .where({ refresh_token_hash: 'c'.repeat(64) })
+        .update({ revoked_at: EARLIER });
+    });
+
+    it("ends the user's active sessions except the given one, and nobody else's", async () => {
+      await expect(repo.revokeAllOfUser(USER_ID, NOW, 'a'.repeat(64))).resolves.toBe(1);
+      await expect(revokedAt()).resolves.toEqual([
+        ['a', null],
+        ['b', NOW],
+        ['c', EARLIER],
+        ['d', null],
+      ]);
+    });
+
+    it('ends all of them without an exception', async () => {
+      await expect(repo.revokeAllOfUser(USER_ID, NOW)).resolves.toBe(2);
+      await expect(revokedAt()).resolves.toEqual([
+        ['a', NOW],
+        ['b', NOW],
+        ['c', EARLIER],
+        ['d', null],
+      ]);
+    });
+  });
 });

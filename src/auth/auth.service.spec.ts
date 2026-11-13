@@ -60,6 +60,7 @@ function setup(options: SetupOptions = {}) {
       Promise.resolve(options.rotated ?? null),
     ),
     revoke: jest.fn((_hash: string, _now: Date) => Promise.resolve()),
+    revokeAllOfUser: jest.fn((_userId: string, _now: Date, _except?: string) => Promise.resolve(3)),
   };
   const settings = {
     get: jest.fn((_key: string) => Promise.resolve(options.phoneRequiredAt ?? 'never')),
@@ -221,13 +222,16 @@ describe('AuthService.login', () => {
     expect(result.payload.user).toEqual({ id: USER_ID, email: 'artem@test.com', phone: null });
     expect(result.payload.accessTokenExpiresAt).toEqual(new Date('2026-11-04T10:15:00.000Z'));
     expect(result.sessionExpiresAt).toEqual(new Date('2026-12-04T10:00:00.000Z'));
-    expect(sessions.create).toHaveBeenCalledWith({
-      id: expect.stringMatching(UUID),
-      userId: USER_ID,
-      refreshTokenHash: hashRefreshToken(result.refreshToken),
-      expiresAt: result.sessionExpiresAt,
-      createdAt: NOW,
-    });
+    expect(sessions.create).toHaveBeenCalledWith(
+      {
+        id: expect.stringMatching(UUID),
+        userId: USER_ID,
+        refreshTokenHash: hashRefreshToken(result.refreshToken),
+        expiresAt: result.sessionExpiresAt,
+        createdAt: NOW,
+      },
+      undefined,
+    );
 
     const claims: unknown = new JwtService().verify(result.payload.accessToken, {
       secret: config.jwt.secret,
@@ -244,7 +248,7 @@ describe('AuthService.login', () => {
   it('closes the session of the cookie the browser still sent', async () => {
     const { service, sessions } = setup({ credentials });
     await service.login({ email: 'artem@test.com', password: PASSWORD }, 'old-token', NOW);
-    expect(sessions.revoke).toHaveBeenCalledWith(hashRefreshToken('old-token'), NOW);
+    expect(sessions.revoke).toHaveBeenCalledWith(hashRefreshToken('old-token'), NOW, undefined);
   });
 
   it('closes no session without a previous cookie or when the login fails', async () => {
@@ -396,5 +400,26 @@ describe('AuthService.logout', () => {
     const { service, sessions } = setup();
     await service.logout(undefined, NOW);
     expect(sessions.revoke).not.toHaveBeenCalled();
+  });
+
+  describe('endOtherSessions', () => {
+    const NOW = new Date('2026-11-13T10:00:00.000Z');
+
+    it('ends every session of the user except the one of the given refresh token', async () => {
+      const { service, sessions } = setup();
+      await expect(service.endOtherSessions('u1', 'keep-me', NOW)).resolves.toBe(3);
+      expect(sessions.revokeAllOfUser).toHaveBeenCalledWith(
+        'u1',
+        NOW,
+        hashRefreshToken('keep-me'),
+        undefined,
+      );
+    });
+
+    it('ends all of them without a refresh token', async () => {
+      const { service, sessions } = setup();
+      await service.endOtherSessions('u1', undefined, NOW);
+      expect(sessions.revokeAllOfUser).toHaveBeenCalledWith('u1', NOW, undefined, undefined);
+    });
   });
 });
