@@ -1,7 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
-import { createApp } from './create-app.js';
+import { createApp, waitForRedis } from './create-app.js';
 
 const gql = (app: INestApplication, query: string, authorization?: string) => {
   const req = request(app.getHttpServer() as App).post('/graphql');
@@ -14,6 +14,7 @@ describe('wallet-core (e2e, DEV_AUTH=true)', () => {
 
   beforeAll(async () => {
     app = await createApp({ DEV_AUTH: 'true', CLIENT: 'demo' });
+    await waitForRedis(app);
   });
 
   afterAll(async () => {
