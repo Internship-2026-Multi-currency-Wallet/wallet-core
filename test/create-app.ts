@@ -33,7 +33,6 @@ class SeamsTestController {
 @Module({ controllers: [SeamsTestController] })
 class SeamsTestModule {}
 
-/** Boots the real AppModule (+ test endpoints) with optional env and provider overrides. */
 export async function createApp(
   env: Record<string, string> = {},
   providers: ReadonlyMap<unknown, unknown> = new Map(),
