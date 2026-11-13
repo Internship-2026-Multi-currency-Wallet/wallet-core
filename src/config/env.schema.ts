@@ -90,7 +90,6 @@ export const envSchema = z
     JWT_ACCESS_TTL: durationInSeconds('15m'),
     // Lifetime of a session (refresh token), counted from login.
     JWT_REFRESH_TTL: durationInSeconds('30d'),
-    // Keep these optional until Google login is implemented.
     GOOGLE_CLIENT_ID: z.string().trim().min(1).optional(),
     GOOGLE_CLIENT_SECRET: z.string().trim().min(1).optional(),
     THROTTLE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
@@ -136,6 +135,13 @@ export const envSchema = z
         code: 'custom',
         path: ['GOOGLE_CLIENT_ID'],
         message: 'is required when GOOGLE_CLIENT_SECRET is set',
+      });
+    }
+    if (env.GOOGLE_CLIENT_ID !== undefined && env.GOOGLE_CLIENT_SECRET === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['GOOGLE_CLIENT_SECRET'],
+        message: 'is required when GOOGLE_CLIENT_ID is set',
       });
     }
     // 0 is a random port that Alloy cannot scrape; only the e2e tests use it.

@@ -33,12 +33,16 @@ class SeamsTestController {
 @Module({ controllers: [SeamsTestController] })
 class SeamsTestModule {}
 
-/** Boots the real AppModule (+ test endpoints) with optional env overrides. */
-export async function createApp(env: Record<string, string> = {}): Promise<INestApplication> {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule, SeamsTestModule] })
+/** Boots the real AppModule (+ test endpoints) with optional env and provider overrides. */
+export async function createApp(
+  env: Record<string, string> = {},
+  providers: ReadonlyMap<unknown, unknown> = new Map(),
+): Promise<INestApplication> {
+  let builder = Test.createTestingModule({ imports: [AppModule, SeamsTestModule] })
     .overrideProvider(AppConfig)
-    .useValue(AppConfig.fromEnv({ ...process.env, ...env }))
-    .compile();
+    .useValue(AppConfig.fromEnv({ ...process.env, ...env }));
+  for (const [token, value] of providers) builder = builder.overrideProvider(token).useValue(value);
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>({
     logger: ['error', 'warn'],
   });

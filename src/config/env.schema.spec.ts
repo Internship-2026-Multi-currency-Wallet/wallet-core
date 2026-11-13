@@ -443,4 +443,10 @@ describe('Google OAuth client', () => {
     expect(message).toMatch(/GOOGLE_CLIENT_ID/);
     expect(message).not.toContain('GOCSPX-test');
   });
+
+  it('refuses a client id without a secret: the code exchange needs both', () => {
+    expect(() => validateEnv({ GOOGLE_CLIENT_ID: '123-abc.apps.googleusercontent.com' })).toThrow(
+      /GOOGLE_CLIENT_SECRET/,
+    );
+  });
 });

@@ -60,6 +60,7 @@ function setup(options: SetupOptions = {}) {
       Promise.resolve(options.rotated ?? null),
     ),
     revoke: jest.fn((_hash: string, _now: Date) => Promise.resolve()),
+    revokeAllOfUser: jest.fn((_userId: string, _now: Date, _except?: string) => Promise.resolve(3)),
   };
   const settings = {
     get: jest.fn((_key: string) => Promise.resolve(options.phoneRequiredAt ?? 'never')),
@@ -396,5 +397,21 @@ describe('AuthService.logout', () => {
     const { service, sessions } = setup();
     await service.logout(undefined, NOW);
     expect(sessions.revoke).not.toHaveBeenCalled();
+  });
+
+  describe('endOtherSessions', () => {
+    const NOW = new Date('2026-11-13T10:00:00.000Z');
+
+    it('ends every session of the user except the one of the given refresh token', async () => {
+      const { service, sessions } = setup();
+      await expect(service.endOtherSessions('u1', 'keep-me', NOW)).resolves.toBe(3);
+      expect(sessions.revokeAllOfUser).toHaveBeenCalledWith('u1', NOW, hashRefreshToken('keep-me'));
+    });
+
+    it('ends all of them without a refresh token', async () => {
+      const { service, sessions } = setup();
+      await service.endOtherSessions('u1', undefined, NOW);
+      expect(sessions.revokeAllOfUser).toHaveBeenCalledWith('u1', NOW, undefined);
+    });
   });
 });

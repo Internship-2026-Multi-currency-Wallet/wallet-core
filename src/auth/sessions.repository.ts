@@ -66,6 +66,18 @@ export class SessionsRepository {
     });
   }
 
+  async revokeAllOfUser(
+    userId: string,
+    now: Date,
+    exceptRefreshTokenHash?: string,
+  ): Promise<number> {
+    const query = this.db(SESSIONS).where({ user_id: userId }).whereNull('revoked_at');
+    if (exceptRefreshTokenHash !== undefined) {
+      void query.whereNot({ refresh_token_hash: exceptRefreshTokenHash });
+    }
+    return query.update({ revoked_at: now });
+  }
+
   async revoke(refreshTokenHash: string, now: Date): Promise<void> {
     await this.db(SESSIONS)
       .where({ refresh_token_hash: refreshTokenHash })

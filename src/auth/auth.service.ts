@@ -106,6 +106,21 @@ export class AuthService {
       throw accountLocked(lockedMeanwhile);
     }
 
+    const result = await this.startSession(
+      { id: user.id, email: user.email, phone: user.phone },
+      previousRefreshToken,
+      now,
+    );
+    this.logger.info({ userId: user.id }, 'user logged in');
+    return result;
+  }
+
+  /** The caller must already have checked the user's identity and lock. */
+  async startSession(
+    user: User,
+    previousRefreshToken: string | undefined,
+    now: Date,
+  ): Promise<LoginResult> {
     const refreshToken = newRefreshToken();
     const sessionExpiresAt = new Date(now.getTime() + this.config.jwt.sessionTtlSeconds * 1000);
     await this.sessions.create({
@@ -119,12 +134,7 @@ export class AuthService {
     if (previousRefreshToken) {
       await this.sessions.revoke(hashRefreshToken(previousRefreshToken), now);
     }
-
-    this.logger.info({ userId: user.id }, 'user logged in');
-    return this.result({ id: user.id, email: user.email, phone: user.phone }, refreshToken.token, {
-      sessionExpiresAt,
-      now,
-    });
+    return this.result(user, refreshToken.token, { sessionExpiresAt, now });
   }
 
   async refreshSession(
@@ -141,6 +151,20 @@ export class AuthService {
 
     this.logger.info({ userId: session.user.id }, 'session refreshed');
     return this.result(session.user, next.token, { sessionExpiresAt: session.expiresAt, now });
+  }
+
+  async endOtherSessions(
+    userId: string,
+    keepRefreshToken: string | undefined,
+    now: Date = new Date(),
+  ): Promise<number> {
+    const ended = await this.sessions.revokeAllOfUser(
+      userId,
+      now,
+      keepRefreshToken === undefined ? undefined : hashRefreshToken(keepRefreshToken),
+    );
+    this.logger.info({ userId, ended }, 'other sessions ended');
+    return ended;
   }
 
   async logout(refreshToken: string | undefined, now: Date = new Date()): Promise<void> {
@@ -176,7 +200,7 @@ function invalidCredentials() {
   return authError(AuthErrorCode.InvalidCredentials, AUTH_ERROR_MESSAGES.invalidCredentials);
 }
 
-function accountLocked(lockedUntil: Date) {
+export function accountLocked(lockedUntil: Date) {
   return authError(AuthErrorCode.AccountLocked, AUTH_ERROR_MESSAGES.accountLocked(lockedUntil), {
     lockedUntil: lockedUntil.toISOString(),
   });
