@@ -5,7 +5,6 @@ import { redisErrorReason } from '../redis/redis-connection.js';
 
 type ChangedBalances = BalanceChangedEvent['balances'];
 
-/** What `balanceChanges` needs from `EventSubscriber`; a fake in unit tests. */
 export interface BalanceChangedSource {
   subscribe(
     name: 'balance.changed',
@@ -15,11 +14,12 @@ export interface BalanceChangedSource {
 
 const FINISHED: IteratorResult<ChangedBalances> = { value: undefined, done: true };
 
+// The queue only grows while the socket takes no data; a client that far behind reloads its balances anyway.
+export const MAX_PENDING = 100;
+
 /**
- * The balances changed by each operation of one user, in order, as an async iterator.
- * It resolves once the Redis SUBSCRIBE is done, so every event published after that is kept.
- * The queue needs no bound: the graphql-ws keep-alive ends a client that stops reading (which calls
- * `return()`), and one user gets few events.
+ * Resolves once the Redis SUBSCRIBE is done, so every event published after that is kept.
+ * Above MAX_PENDING undelivered events the subscription completes: the client resubscribes and reloads.
  *
  * Hand-written instead of `async function*`: graphql-ws calls `return()` when the client goes away, and on
  * a generator that is waiting for an event `return()` would only run after the next event arrives.
@@ -27,7 +27,7 @@ const FINISHED: IteratorResult<ChangedBalances> = { value: undefined, done: true
 export async function balanceChanges(
   source: BalanceChangedSource,
   userId: string,
-  logger: Pick<PinoLogger, 'debug'>,
+  logger: Pick<PinoLogger, 'debug' | 'warn'>,
 ): Promise<AsyncIterableIterator<ChangedBalances>> {
   const queue: ChangedBalances[] = [];
   const waiting: ((result: IteratorResult<ChangedBalances>) => void)[] = [];
@@ -37,7 +37,11 @@ export async function balanceChanges(
     if (stopping || event.userId !== userId) return;
     const resolve = waiting.shift();
     if (resolve) resolve({ value: event.balances, done: false });
-    else queue.push(event.balances);
+    else if (queue.length < MAX_PENDING) queue.push(event.balances);
+    else {
+      logger.warn({ userId }, 'balance.changed subscription ended: too many undelivered events');
+      stopping = stop();
+    }
   });
 
   const stop = async (): Promise<void> => {

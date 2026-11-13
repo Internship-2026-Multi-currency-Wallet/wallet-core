@@ -36,7 +36,6 @@ export class LedgerResolver {
   @Subscription(() => [Balance], {
     description:
       "Live balance changes of the caller, one message per operation. A message lists every balance that operation changed, each with its full new amount (not a delta). Only the caller's own changes are delivered. Errors: UNAUTHENTICATED, FORBIDDEN (staff tokens have no `wallet` permission).",
-    // The iterator yields the event's balances (amounts as strings); the decimals are added here.
     resolve: (changed: BalanceChangedEvent['balances']): Balance[] =>
       changed.map(({ currency, amount, version }) => toBalance(currency, BigInt(amount), version)),
   })

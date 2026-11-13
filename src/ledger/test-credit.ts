@@ -15,10 +15,9 @@ export function isTestCreditAllowed(appEnv: AppEnv): boolean {
   return !appEnv.endsWith('-uat');
 }
 
-/** Whole units of a currency one call may credit; keeps every balance far below the BIGINT limit. */
+/** Whole units of a currency one call may credit, so a single call cannot push a balance near the BIGINT limit. */
 const MAX_UNITS_PER_CALL = 1_000_000n;
 
-/** The amount in minor units, or BAD_USER_INPUT on `amount` if it is not a positive integer or above the cap. */
 export function parseTestCreditAmount(currency: Currency, text: string): bigint {
   const amount = parsePositiveAmount(text);
   const cap = MAX_UNITS_PER_CALL * 10n ** BigInt(CURRENCY_DECIMALS[currency]);

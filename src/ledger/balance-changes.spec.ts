@@ -1,9 +1,9 @@
 import { jest } from '@jest/globals';
 import type { BalanceChangedEvent } from '../events/catalog.js';
-import { balanceChanges, type BalanceChangedSource } from './balance-changes.js';
+import { MAX_PENDING, balanceChanges, type BalanceChangedSource } from './balance-changes.js';
 
 const ME = 'user-me';
-const logger = { debug: jest.fn() };
+const logger = { debug: jest.fn(), warn: jest.fn() };
 
 function event(userId: string, uah: string): BalanceChangedEvent {
   return {
@@ -139,7 +139,7 @@ describe('balanceChanges', () => {
       code: 'ECONNREFUSED',
     });
     source.unsubscribe.mockRejectedValue(failure);
-    const failureLogger = { debug: jest.fn() };
+    const failureLogger = { debug: jest.fn(), warn: jest.fn() };
     const iterator = await balanceChanges(source, ME, failureLogger);
     const pending = iterator.next();
 
@@ -150,6 +150,34 @@ describe('balanceChanges', () => {
       { reason: 'ECONNREFUSED', userId: ME },
       'balance.changed unsubscribe failed',
     );
+  });
+
+  it('completes and unsubscribes when more than MAX_PENDING events wait undelivered', async () => {
+    const source = new FakeSource();
+    const overflowLogger = { debug: jest.fn(), warn: jest.fn() };
+    const iterator = await balanceChanges(source, ME, overflowLogger);
+
+    for (let index = 0; index <= MAX_PENDING; index += 1) source.publish(event(ME, String(index)));
+
+    await expect(iterator.next()).resolves.toEqual({ value: undefined, done: true });
+    expect(source.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(overflowLogger.warn).toHaveBeenCalledWith(
+      { userId: ME },
+      'balance.changed subscription ended: too many undelivered events',
+    );
+  });
+
+  it('keeps MAX_PENDING undelivered events', async () => {
+    const source = new FakeSource();
+    const iterator = await balanceChanges(source, ME, logger);
+
+    for (let index = 0; index < MAX_PENDING; index += 1) source.publish(event(ME, String(index)));
+
+    await expect(iterator.next()).resolves.toEqual({
+      value: [{ currency: 'UAH', amount: '0', version: 1 }],
+      done: false,
+    });
+    expect(source.unsubscribe).not.toHaveBeenCalled();
   });
 
   it('ignores events that arrive after return()', async () => {
