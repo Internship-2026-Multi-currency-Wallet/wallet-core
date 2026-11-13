@@ -23,7 +23,7 @@ const operationMismatch = (index: number): OperationMismatch => ({
 const versionMismatch = (index: number): VersionMismatch => ({
   accountId: `account-${index}`,
   currency: 'EUR',
-  version: 3,
+  version: 3n,
   operations: 2,
 });
 
@@ -78,6 +78,14 @@ describe('formatLedgerVerifyReport', () => {
     expect(consistent).toBe(false);
     expect(text).toContain('  account account-1 EUR: version 3, operations 2\n');
     expect(failedBlocks(text)).toHaveLength(1);
+  });
+
+  it('prints a corrupted version above 2^53 exactly', () => {
+    const { text } = formatLedgerVerifyReport({
+      ...healthy,
+      versions: [{ ...versionMismatch(1), version: 9_007_199_254_740_993n }],
+    });
+    expect(text).toContain('version 9007199254740993, operations 2');
   });
 
   it('prints a block for each failing check and passes the others', () => {

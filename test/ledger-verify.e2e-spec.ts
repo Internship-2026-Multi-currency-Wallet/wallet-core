@@ -166,7 +166,7 @@ describe('verifyLedger (e2e, real MySQL)', () => {
 
     // The credit, the transfer and the conversion each wrote user A's UAH account once.
     expect(report.versions).toEqual([
-      { accountId: broken, currency: 'UAH', version: 4, operations: 3 },
+      { accountId: broken, currency: 'UAH', version: 4n, operations: 3 },
     ]);
     expect(report.balances).toEqual([]);
     expect(report.operations).toEqual([]);

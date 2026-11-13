@@ -22,11 +22,10 @@ export interface OperationMismatch {
 export interface VersionMismatch {
   accountId: string;
   currency: string;
-  version: number;
+  version: bigint;
   operations: number;
 }
 
-/** Every mismatch of every check, in a fixed order; an empty list means the check passed. */
 export interface LedgerVerifyReport {
   balances: BalanceMismatch[];
   currencies: CurrencyMismatch[];
@@ -65,7 +64,7 @@ const OPERATIONS_SQL = `
 
 // A posting bumps the version of an account once, and leaves at least one entry on it.
 const VERSIONS_SQL = `
-  SELECT a.id AS account_id, a.currency, a.version,
+  SELECT a.id AS account_id, a.currency, CAST(a.version AS CHAR) AS version,
          COUNT(DISTINCT e.operation_id) AS operations
   FROM accounts a
   LEFT JOIN entries e ON e.account_id = a.id
@@ -92,14 +91,13 @@ interface OperationRow {
 interface VersionRow {
   account_id: string;
   currency: string;
-  version: number | string;
+  version: string;
   operations: number | string;
 }
 
 /**
- * Read-only. Each check is one statement and so sees one consistent state; the shared transaction (InnoDB's
- * default REPEATABLE READ, snapshot at the first read) makes all four describe the same moment.
- * Knex cannot also ask for the isolation level: it sends `ISOLATION LEVEL x READ ONLY` without the comma MySQL needs.
+ * Relies on InnoDB's default REPEATABLE READ for one snapshot across the four checks, because knex writes invalid
+ * MySQL (`ISOLATION LEVEL x READ ONLY`, no comma) when an isolation level is combined with read-only.
  */
 export async function verifyLedger(db: Knex): Promise<LedgerVerifyReport> {
   return db.transaction(
@@ -129,7 +127,7 @@ export async function verifyLedger(db: Knex): Promise<LedgerVerifyReport> {
         versions: versions.map((row) => ({
           accountId: row.account_id,
           currency: row.currency,
-          version: Number(row.version),
+          version: BigInt(row.version),
           operations: Number(row.operations),
         })),
       };
