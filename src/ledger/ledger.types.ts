@@ -41,6 +41,8 @@ export interface PostResult {
 export interface UserBalance {
   currency: Currency;
   amount: bigint;
+  /** 0 for an account that was never written; +1 each time a posting writes the account. */
+  version: number;
 }
 
 export function userAccount(userId: string, currency: Currency): AccountRef {
