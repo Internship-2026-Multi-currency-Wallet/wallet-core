@@ -120,16 +120,22 @@ describe('email enqueue with Redis unreachable (e2e)', () => {
       }),
       logger as never,
     );
-    const started = Date.now();
-    await expect(service.send('passwordChanged', to, {})).rejects.toBeInstanceOf(EmailEnqueueError);
-    expect(Date.now() - started).toBeLessThan(6000);
-    await waitFor(() => logger.warn.mock.calls.length > 0, 3000);
-    expect(logger.warn).toHaveBeenCalledWith(
-      { connection: 'command', reason: 'ECONNREFUSED' },
-      expect.any(String),
-    );
-    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('localhost');
-    await service.onApplicationShutdown();
+    try {
+      const started = Date.now();
+      await expect(service.send('passwordChanged', to, {})).rejects.toBeInstanceOf(
+        EmailEnqueueError,
+      );
+      expect(Date.now() - started).toBeLessThan(6000);
+      await waitFor(() => logger.warn.mock.calls.length > 0, 3000);
+      expect(logger.warn).toHaveBeenCalledWith(
+        { connection: 'command', reason: 'ECONNREFUSED' },
+        expect.any(String),
+      );
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('localhost');
+    } finally {
+      // Otherwise a failed assertion leaves the queue reconnecting and Jest cannot exit.
+      await service.onApplicationShutdown();
+    }
   }, 10000);
 });
 

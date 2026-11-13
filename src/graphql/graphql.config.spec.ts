@@ -60,7 +60,7 @@ describe('graphqlOptions websocket connections gauge', () => {
 });
 
 describe('graphqlOptions websocket protocol errors', () => {
-  const wsLogger = { setContext: jest.fn(), debug: jest.fn() } as unknown as PinoLogger;
+  const wsLogger = { setContext: jest.fn(), debug: jest.fn(), error: jest.fn() };
   type OnError = (
     ctx: object,
     id: string,
@@ -70,15 +70,14 @@ describe('graphqlOptions websocket protocol errors', () => {
 
   function setup() {
     const metrics = new Metrics({ service: 'wallet-core', env: 'local' });
-    const ws = graphqlOptions(AppConfig.fromEnv({}), wsLogger, metrics).subscriptions?.[
-      'graphql-ws'
-    ] as unknown as { onError: OnError };
+    const ws = graphqlOptions(AppConfig.fromEnv({}), wsLogger as unknown as PinoLogger, metrics)
+      .subscriptions?.['graphql-ws'] as unknown as { onError: OnError };
     return { metrics, onError: ws.onError };
   }
 
   it('counts a validation error as a client error and keeps its message', async () => {
     const { metrics, onError } = setup();
-    const result = onError({}, '1', { query: 'query Q { nope }' }, [
+    const result = onError({ extra: {} }, '1', { query: 'query Q { nope }' }, [
       new GraphQLError('Cannot query field "nope"'),
     ]);
     expect(result).toMatchObject([
@@ -92,7 +91,7 @@ describe('graphqlOptions websocket protocol errors', () => {
   it('masks a failure of a running subscription and counts it as a server error', async () => {
     const { metrics, onError } = setup();
     const leak = new Error("Duplicate entry 'artem@test.com'");
-    const result = onError({}, '1', { query: 'subscription S { ticks }' }, [
+    const result = onError({ extra: {} }, '1', { query: 'subscription S { ticks }' }, [
       new GraphQLError(leak.message, { originalError: leak }),
     ]);
     expect(result).toMatchObject([
@@ -102,13 +101,17 @@ describe('graphqlOptions websocket protocol errors', () => {
     expect(await metrics.registry.metrics()).toContain(
       'graphql_errors_total{operation="subscription ticks",code="INTERNAL_SERVER_ERROR"',
     );
+    expect(wsLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'INTERNAL_SERVER_ERROR', err: leak }),
+      `GraphQL error: ${leak.message}`,
+    );
   });
 
   it('masks a subscription failure wrapped the graphql 17 way (cause, no originalError)', () => {
     const { onError } = setup();
     const leak = new Error("Duplicate entry 'artem@test.com'");
     const wrapped = Object.assign(new GraphQLError(leak.message), { cause: leak });
-    const result = onError({}, '1', { query: 'subscription S { ticks }' }, [wrapped]);
+    const result = onError({ extra: {} }, '1', { query: 'subscription S { ticks }' }, [wrapped]);
     expect(result).toMatchObject([{ extensions: { code: 'INTERNAL_SERVER_ERROR' } }]);
     expect(JSON.stringify(result)).not.toContain('artem@test.com');
   });

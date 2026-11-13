@@ -1,11 +1,12 @@
 import { unwrapResolverError } from '@apollo/server/errors';
 import { HttpException } from '@nestjs/common';
-import {
-  type ExecutionResult,
-  type FormattedExecutionResult,
+import type {
+  ExecutionResult,
+  FormattedExecutionResult,
   GraphQLError,
-  type GraphQLFormattedError,
+  GraphQLFormattedError,
 } from 'graphql';
+import { isExpectedGraphqlError } from './expected-error.filter.js';
 
 export const INTERNAL_ERROR_MESSAGE = 'Internal server error';
 
@@ -23,7 +24,14 @@ export function formatError(
   formatted: GraphQLFormattedError,
   error: unknown,
 ): GraphQLFormattedError {
-  const original = unwrapResolverError(error);
+  return formatOriginal(formatted, unwrapResolverError(error));
+}
+
+/** Not unwrapped again: an intentionally thrown GraphQLError can itself have a path and cause. */
+function formatOriginal(
+  formatted: GraphQLFormattedError,
+  original: unknown,
+): GraphQLFormattedError {
   if (original instanceof HttpException) {
     if (original.getStatus() !== 404) return formatted;
     // @nestjs/apollo maps only 400/401/403/422: a NotFoundException leaves it as
@@ -31,9 +39,7 @@ export function formatError(
     // default code, and graphql-ws results never go through it.
     return { ...formatted, extensions: { ...formatted.extensions, code: 'NOT_FOUND' } };
   }
-  if (original instanceof GraphQLError && typeof original.extensions.code === 'string') {
-    return formatted;
-  }
+  if (isExpectedGraphqlError(original)) return formatted;
   return {
     message: INTERNAL_ERROR_MESSAGE,
     locations: formatted.locations,
@@ -45,31 +51,57 @@ export function formatError(
 /**
  * graphql-ws `onNext`: the same `formatError` (404 mapping and masking) for results sent over the
  * websocket (any operation can go there, not only subscriptions), which Apollo's `formatError`
- * does not see. Returning nothing sends the result unchanged.
+ * does not see. Returning nothing sends the result unchanged. Pathless errors are variable
+ * coercion failures, caused by the client: their explanation is kept.
  */
 export function formatExecutionResult(
   result: ExecutionResult,
 ): FormattedExecutionResult | undefined {
   if (!result.errors) return undefined;
-  return { ...result, errors: result.errors.map((error) => formatError(error.toJSON(), error)) };
+  return {
+    ...result,
+    errors: result.errors.map((error) =>
+      error.path !== undefined ? formatError(error.toJSON(), error) : validationFailed(error),
+    ),
+  };
+}
+
+/** Keeps a string code, e.g. from a custom scalar that rejects the value with its own code. */
+function validationFailed(error: GraphQLError): GraphQLFormattedError {
+  const { code } = error.extensions;
+  return {
+    ...error.toJSON(),
+    extensions: {
+      ...error.extensions,
+      code: typeof code === 'string' ? code : 'GRAPHQL_VALIDATION_FAILED',
+    },
+  };
 }
 
 /**
- * graphql-ws `onError` bypasses Apollo's formatError, so failures of a running subscription
- * (marked by `originalError`, or `cause` with graphql 17) must be masked here.
+ * What a running subscription threw. graphql-ws wraps it in a pathless GraphQLError
+ * (`originalError`, or `cause` with graphql 17) that copies its `extensions`, and
+ * `unwrapResolverError` keeps that wrapper.
+ * `undefined`: a client validation error.
  */
+export function serverProtocolOriginal(error: GraphQLError): unknown {
+  return error.originalError ?? (error as { cause?: unknown }).cause ?? undefined;
+}
+
+/** graphql-ws `onError` bypasses Apollo's formatError, so server failures must be masked here. */
 export function formatProtocolErrors(
   errors: readonly GraphQLError[],
 ): { error: GraphQLFormattedError; fromClient: boolean }[] {
-  return errors.map((error) =>
-    error.originalError || (error as { cause?: unknown }).cause
-      ? { error: formatError(error.toJSON(), error), fromClient: false }
+  return errors.map((error) => {
+    const thrown = serverProtocolOriginal(error);
+    return thrown !== undefined
+      ? { error: formatOriginal(error.toJSON(), thrown), fromClient: false }
       : {
           error: {
             ...error.toJSON(),
             extensions: { ...error.extensions, code: 'GRAPHQL_VALIDATION_FAILED' },
           },
           fromClient: true,
-        },
-  );
+        };
+  });
 }

@@ -8,7 +8,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { GraphQLError, buildSchema, graphqlSync } from 'graphql';
-import { formatError, formatExecutionResult } from './format-error.js';
+import { formatError, formatExecutionResult, formatProtocolErrors } from './format-error.js';
 
 /** What Apollo does with an error thrown in a resolver: wraps it with the path. */
 function thrownInResolver(error: Error): GraphQLError {
@@ -190,5 +190,104 @@ describe('formatExecutionResult', () => {
 
   it('leaves a result without errors unchanged', () => {
     expect(formatExecutionResult({ data: { ok: true } })).toBeUndefined();
+  });
+
+  const schema = buildSchema('type Query { ok(flag: Boolean): Boolean }');
+  it.each([
+    ['a missing required variable', undefined, 'of required type "Boolean!" was not provided'],
+    ['a variable of the wrong type', { b: 'yes' }, 'got invalid value "yes"; Boolean cannot'],
+  ])('keeps %s as GRAPHQL_VALIDATION_FAILED', (_case, variableValues, explanation) => {
+    const result = graphqlSync({
+      schema,
+      source: 'query V($b: Boolean!) { ok(flag: $b) }',
+      variableValues,
+    });
+    const [error] = result.errors ?? [];
+    expect(error.path).toBeUndefined();
+    const extensions = { ...error.extensions };
+
+    expect(formatExecutionResult(result)).toEqual({
+      errors: [
+        {
+          message: expect.stringContaining(explanation),
+          locations: [{ line: 1, column: 9 }],
+          extensions: { code: 'GRAPHQL_VALIDATION_FAILED' },
+        },
+      ],
+    });
+    expect(error.extensions).toEqual(extensions);
+  });
+
+  it('keeps the string code, other extensions and result fields of a coercion error', () => {
+    const error = new GraphQLError('Variable "$b" got invalid value', {
+      extensions: { code: 'SCALAR_REJECTED', hint: 'use a boolean' },
+    });
+
+    expect(formatExecutionResult({ data: null, errors: [error], extensions: { cost: 1 } })).toEqual(
+      {
+        data: null,
+        errors: [
+          {
+            message: 'Variable "$b" got invalid value',
+            extensions: { code: 'SCALAR_REJECTED', hint: 'use a boolean' },
+          },
+        ],
+        extensions: { cost: 1 },
+      },
+    );
+    expect(error.extensions).toEqual({ code: 'SCALAR_REJECTED', hint: 'use a boolean' });
+  });
+
+  it('replaces a code that is not a string, keeping other extensions', () => {
+    const error = new GraphQLError('Variable "$b" got invalid value', {
+      extensions: { code: 42, hint: 'use a boolean' },
+    });
+
+    expect(formatExecutionResult({ errors: [error] })?.errors).toEqual([
+      {
+        message: 'Variable "$b" got invalid value',
+        extensions: { code: 'GRAPHQL_VALIDATION_FAILED', hint: 'use a boolean' },
+      },
+    ]);
+    expect(error.extensions).toEqual({ code: 42, hint: 'use a boolean' });
+  });
+});
+
+describe('formatProtocolErrors: a running subscription that threw', () => {
+  /** How graphql-ws reports it: a pathless wrapper of the thrown error. */
+  const fromStream = (thrown: Error) => new GraphQLError(thrown.message, { originalError: thrown });
+
+  it('keeps a thrown coded GraphQLError with its own path and cause, without unwrapping it', () => {
+    const coded = new GraphQLError('Business refused', {
+      path: ['upstream'],
+      originalError: new Error('private cause'),
+      extensions: { code: 'BUSINESS_REFUSAL' },
+    });
+
+    const [item] = formatProtocolErrors([fromStream(coded)]);
+
+    expect(item).toEqual({
+      error: { message: 'Business refused', extensions: { code: 'BUSINESS_REFUSAL' } },
+      fromClient: false,
+    });
+    expect(JSON.stringify(item)).not.toContain('private cause');
+  });
+
+  it('masks a plain Error tagged with a code', () => {
+    const tagged = Object.assign(new Error('private cause'), {
+      extensions: { code: 'BUSINESS_REFUSAL' },
+    });
+
+    expect(formatProtocolErrors([fromStream(tagged)])).toEqual([
+      {
+        error: { message: 'Internal server error', extensions: { code: 'INTERNAL_SERVER_ERROR' } },
+        fromClient: false,
+      },
+    ]);
+  });
+
+  it('maps a thrown 404 HttpException to NOT_FOUND', () => {
+    const [item] = formatProtocolErrors([fromStream(new NotFoundException())]);
+    expect(item.error.extensions?.code).toBe('NOT_FOUND');
   });
 });
