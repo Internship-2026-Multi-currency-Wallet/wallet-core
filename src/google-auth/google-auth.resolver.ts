@@ -11,7 +11,7 @@ export class GoogleAuthResolver {
   @RequirePermission('wallet')
   @Query(() => GoogleAccount, {
     nullable: true,
-    description: 'The Google account linked to the current user, or null. Client token only.',
+    description: 'Requires a client token.',
   })
   googleAccount(): GoogleAccount | null {
     throw new NotImplementedException('googleAccount is not implemented yet');

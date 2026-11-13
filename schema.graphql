@@ -236,9 +236,7 @@ type PublicSetting {
 }
 
 type Query {
-  """
-  The Google account linked to the current user, or null. Client token only.
-  """
+  """Requires a client token."""
   googleAccount: GoogleAccount
 
   """Service health. Does not require authentication."""
