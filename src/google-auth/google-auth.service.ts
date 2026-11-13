@@ -97,11 +97,13 @@ export class GoogleAuthService {
     currentRefreshToken: string | undefined,
     now: Date = new Date(),
   ): Promise<boolean> {
-    if (await this.accounts.deleteByUser(userId)) {
-      this.logger.info({ userId }, 'google account unlinked');
-    }
-    // Also when nothing was unlinked: a retry after a failed revoke must still end the sessions.
-    await this.auth.endOtherSessions(userId, currentRefreshToken, now);
+    const unlinked = await this.accounts.transaction(async (accounts, trx) => {
+      const removed = await accounts.deleteByUser(userId);
+      // Same transaction: the link can never be gone while its sessions stay usable.
+      await this.auth.endOtherSessions(userId, currentRefreshToken, now, trx);
+      return removed;
+    });
+    if (unlinked) this.logger.info({ userId }, 'google account unlinked');
     return true;
   }
 
@@ -111,27 +113,30 @@ export class GoogleAuthService {
     now: Date = new Date(),
   ): Promise<LoginResult> {
     const identity = await this.verify(input, cookies, { purpose: 'login', userId: null }, now);
-    const user = await this.accounts.findUserBySub(identity.sub);
-    if (!user) {
-      this.logger.warn('google login rejected: google account not linked');
-      throw authError(
-        AuthErrorCode.GoogleAccountNotLinked,
-        AUTH_ERROR_MESSAGES.googleAccountNotLinked,
-      );
-    }
-    // A lock from wrong passwords blocks every login method.
-    if (user.lockedUntil && user.lockedUntil > now) {
-      this.logger.warn({ userId: user.id }, 'google login rejected: account locked');
-      throw accountLocked(user.lockedUntil);
-    }
+    // Google is called outside the transaction: it is a network call, the lock is not held for it.
+    return this.accounts.transaction(async (accounts, trx) => {
+      const user = await accounts.lockUserBySub(identity.sub);
+      if (!user) {
+        this.logger.warn('google login rejected: google account not linked');
+        throw authError(
+          AuthErrorCode.GoogleAccountNotLinked,
+          AUTH_ERROR_MESSAGES.googleAccountNotLinked,
+        );
+      }
+      if (user.lockedUntil && user.lockedUntil > now) {
+        this.logger.warn({ userId: user.id }, 'google login rejected: account locked');
+        throw accountLocked(user.lockedUntil);
+      }
 
-    const result = await this.auth.startSession(
-      { id: user.id, email: user.email, phone: user.phone },
-      cookies.refreshToken,
-      now,
-    );
-    this.logger.info({ userId: user.id }, 'user logged in with google');
-    return result;
+      const result = await this.auth.startSession(
+        { id: user.id, email: user.email, phone: user.phone },
+        cookies.refreshToken,
+        now,
+        trx,
+      );
+      this.logger.info({ userId: user.id }, 'user logged in with google');
+      return result;
+    });
   }
 
   private async ensureEnabled(): Promise<GoogleIdentityVerifier> {

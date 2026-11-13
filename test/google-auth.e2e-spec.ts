@@ -384,6 +384,26 @@ describe('google auth (e2e)', () => {
       expect((await refresh(user.refreshToken)).body.errors).toBeUndefined();
       expect((await refresh(bystander.refreshToken)).body.errors).toBeUndefined();
     });
+
+    it('leaves no usable session behind when a Google login runs at the same time', async () => {
+      const user = await registered('a@test.com');
+      await link(user, 'a');
+      // Started first, so only the mutation itself races with the unlink.
+      const start = await startLogin();
+
+      const [viaGoogle] = await Promise.all([
+        gql(LOGIN, callback(start, 'a'), { cookie: start.cookie }),
+        gql(UNLINK, {}, { auth: user.auth, cookie: `refresh_token=${user.refreshToken}` }),
+      ]);
+
+      // Either the unlink won and the login found no link, or the login won and lost its session.
+      expect([undefined, 'GOOGLE_ACCOUNT_NOT_LINKED']).toContain(codeOf(viaGoogle.body));
+      const googleRefreshToken = cookieValue(viaGoogle.cookies, 'refresh_token');
+      if (googleRefreshToken) {
+        expect(codeOf((await refresh(googleRefreshToken)).body)).toBe('INVALID_REFRESH_TOKEN');
+      }
+      expect(await db('user_google_accounts').count({ n: '*' })).toEqual([{ n: 0 }]);
+    });
   });
 
   describe('loginWithGoogle', () => {

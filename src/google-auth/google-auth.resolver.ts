@@ -129,7 +129,6 @@ export class GoogleAuthResolver {
     return { state: issued.state, nonce: issued.nonce, expiresAt: issued.expiresAt };
   }
 
-  // One attempt per sign-in, whatever its result.
   private clearStateCookie(res: Response): void {
     clearRefreshTokenCookie(res, this.config.isProduction, GOOGLE_AUTH_STATE_COOKIE);
   }

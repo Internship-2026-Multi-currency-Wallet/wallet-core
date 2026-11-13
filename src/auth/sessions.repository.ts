@@ -31,8 +31,8 @@ interface SessionRow {
 export class SessionsRepository {
   constructor(@Inject(KNEX) private readonly db: Knex) {}
 
-  async create(session: NewSession): Promise<void> {
-    await this.db(SESSIONS).insert({
+  async create(session: NewSession, trx?: Knex): Promise<void> {
+    await (trx ?? this.db)(SESSIONS).insert({
       id: session.id,
       user_id: session.userId,
       refresh_token_hash: session.refreshTokenHash,
@@ -70,16 +70,17 @@ export class SessionsRepository {
     userId: string,
     now: Date,
     exceptRefreshTokenHash?: string,
+    trx?: Knex,
   ): Promise<number> {
-    const query = this.db(SESSIONS).where({ user_id: userId }).whereNull('revoked_at');
+    const query = (trx ?? this.db)(SESSIONS).where({ user_id: userId }).whereNull('revoked_at');
     if (exceptRefreshTokenHash !== undefined) {
       void query.whereNot({ refresh_token_hash: exceptRefreshTokenHash });
     }
     return query.update({ revoked_at: now });
   }
 
-  async revoke(refreshTokenHash: string, now: Date): Promise<void> {
-    await this.db(SESSIONS)
+  async revoke(refreshTokenHash: string, now: Date, trx?: Knex): Promise<void> {
+    await (trx ?? this.db)(SESSIONS)
       .where({ refresh_token_hash: refreshTokenHash })
       .whereNull('revoked_at')
       .update({ revoked_at: now });

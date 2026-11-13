@@ -53,6 +53,8 @@ const LOGIN_RESULT: LoginResult = {
 const config = AppConfig.fromEnv({
   CORS_ORIGINS: 'http://localhost:5173, https://wallet.example/',
 });
+/** Stands for the Knex transaction the repository hands to the work it runs. */
+const TRX = Symbol('trx');
 
 interface SetupOptions {
   googleLogin?: boolean;
@@ -77,22 +79,29 @@ function setup(options: SetupOptions = {}) {
     }),
   );
   const verifier = options.verifier === undefined ? { verify } : options.verifier;
+  const transaction = jest.fn((_work: (tx: unknown, trx: unknown) => Promise<unknown>) =>
+    Promise.resolve<unknown>(undefined),
+  );
   const accounts = {
     insert: jest.fn((_account: LinkedGoogleAccount) =>
       Promise.resolve(options.insert ?? LinkGoogleResult.Linked),
     ),
     findByUser: jest.fn((_userId: string) => Promise.resolve(options.linked ?? null)),
-    findUserBySub: jest.fn((_sub: string) =>
+    lockUserBySub: jest.fn((_sub: string) =>
       Promise.resolve(options.loginUser === undefined ? LOGIN_USER : options.loginUser),
     ),
+    transaction,
     deleteByUser: jest.fn((_userId: string) => Promise.resolve(options.deleted ?? true)),
   };
+  transaction.mockImplementation((work) => work(accounts, TRX));
   const auth = {
-    startSession: jest.fn((_user: User, _previous: string | undefined, _now: Date) =>
-      Promise.resolve(LOGIN_RESULT),
+    startSession: jest.fn(
+      (_user: User, _previous: string | undefined, _now: Date, _trx?: unknown) =>
+        Promise.resolve(LOGIN_RESULT),
     ),
-    endOtherSessions: jest.fn((_userId: string, _keep: string | undefined, _now: Date) =>
-      Promise.resolve(2),
+    endOtherSessions: jest.fn(
+      (_userId: string, _keep: string | undefined, _now: Date, _trx?: unknown) =>
+        Promise.resolve(2),
     ),
   };
   const settings = {
@@ -284,7 +293,7 @@ describe('GoogleAuthService', () => {
       const error = await errorOf(flow.finish(s, input, cookies));
       expect(error.extensions.code).toBe('INVALID_GOOGLE_STATE');
       expect(s.accounts.insert).not.toHaveBeenCalled();
-      expect(s.accounts.findUserBySub).not.toHaveBeenCalled();
+      expect(s.accounts.lockUserBySub).not.toHaveBeenCalled();
     });
 
     it('answers INVALID_GOOGLE_STATE when the ID token has no nonce', async () => {
@@ -301,7 +310,7 @@ describe('GoogleAuthService', () => {
       const error = await errorOf(flow.finish(s, input, cookies));
       expect(error.extensions.code).toBe('GOOGLE_EMAIL_NOT_VERIFIED');
       expect(s.accounts.insert).not.toHaveBeenCalled();
-      expect(s.accounts.findUserBySub).not.toHaveBeenCalled();
+      expect(s.accounts.lockUserBySub).not.toHaveBeenCalled();
     });
 
     it('answers INVALID_GOOGLE_CODE when Google refuses the code', async () => {
@@ -312,7 +321,7 @@ describe('GoogleAuthService', () => {
       expect(error.extensions.code).toBe('INVALID_GOOGLE_CODE');
       expect(error.message).toBe('Google sign-in failed, please try again');
       expect(s.accounts.insert).not.toHaveBeenCalled();
-      expect(s.accounts.findUserBySub).not.toHaveBeenCalled();
+      expect(s.accounts.lockUserBySub).not.toHaveBeenCalled();
     });
 
     it('lets other failures through, so they are masked as internal errors', async () => {
@@ -423,13 +432,21 @@ describe('GoogleAuthService', () => {
       const { service, accounts, auth } = setup();
       await expect(service.unlink(USER_ID, 'current', NOW)).resolves.toBe(true);
       expect(accounts.deleteByUser).toHaveBeenCalledWith(USER_ID);
-      expect(auth.endOtherSessions).toHaveBeenCalledWith(USER_ID, 'current', NOW);
+      expect(auth.endOtherSessions).toHaveBeenCalledWith(USER_ID, 'current', NOW, TRX);
+    });
+
+    it('deletes the link and ends the sessions in one transaction', async () => {
+      const { service, accounts, auth } = setup();
+      await service.unlink(USER_ID, 'current', NOW);
+      expect(accounts.transaction).toHaveBeenCalledTimes(1);
+      expect(accounts.deleteByUser.mock.calls).toHaveLength(1);
+      expect(auth.endOtherSessions.mock.calls[0]).toContain(TRX);
     });
 
     it('still ends the other sessions when nothing was linked, so a retry after a failure works', async () => {
       const { service, auth } = setup({ deleted: false });
       await expect(service.unlink(USER_ID, undefined, NOW)).resolves.toBe(true);
-      expect(auth.endOtherSessions).toHaveBeenCalledWith(USER_ID, undefined, NOW);
+      expect(auth.endOtherSessions).toHaveBeenCalledWith(USER_ID, undefined, NOW, TRX);
     });
 
     it('works while Google login is disabled', async () => {
@@ -457,12 +474,25 @@ describe('GoogleAuthService', () => {
       const s = setup();
       const { input, cookies } = s.started(null);
       await expect(s.service.login(input, cookies, NOW)).resolves.toBe(LOGIN_RESULT);
-      expect(s.accounts.findUserBySub).toHaveBeenCalledWith(SUB);
+      expect(s.accounts.lockUserBySub).toHaveBeenCalledWith(SUB);
       expect(s.auth.startSession).toHaveBeenCalledWith(
         { id: USER_ID, email: 'user@example.com', phone: null },
         'previous',
         NOW,
+        TRX,
       );
+    });
+
+    it('reads the link under a lock and creates the session in the same transaction', async () => {
+      const s = setup();
+      const { input, cookies } = s.started(null);
+      await s.service.login(input, cookies, NOW);
+      expect(s.accounts.transaction).toHaveBeenCalledTimes(1);
+      // Google answered before the transaction opened: no lock is held across the network call.
+      expect(s.verify.mock.invocationCallOrder[0]).toBeLessThan(
+        s.accounts.transaction.mock.invocationCallOrder[0],
+      );
+      expect(s.auth.startSession.mock.calls[0]).toContain(TRX);
     });
 
     it('answers GOOGLE_ACCOUNT_NOT_LINKED for an unlinked Google account', async () => {

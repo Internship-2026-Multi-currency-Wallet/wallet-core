@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import type { Knex } from 'knex';
 import { hash, verify } from '@node-rs/argon2';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
@@ -120,19 +121,23 @@ export class AuthService {
     user: User,
     previousRefreshToken: string | undefined,
     now: Date,
+    trx?: Knex,
   ): Promise<LoginResult> {
     const refreshToken = newRefreshToken();
     const sessionExpiresAt = new Date(now.getTime() + this.config.jwt.sessionTtlSeconds * 1000);
-    await this.sessions.create({
-      id: randomUUID(),
-      userId: user.id,
-      refreshTokenHash: refreshToken.hash,
-      expiresAt: sessionExpiresAt,
-      createdAt: now,
-    });
+    await this.sessions.create(
+      {
+        id: randomUUID(),
+        userId: user.id,
+        refreshTokenHash: refreshToken.hash,
+        expiresAt: sessionExpiresAt,
+        createdAt: now,
+      },
+      trx,
+    );
     // Revoke the previous browser session because login replaces its refresh cookie.
     if (previousRefreshToken) {
-      await this.sessions.revoke(hashRefreshToken(previousRefreshToken), now);
+      await this.sessions.revoke(hashRefreshToken(previousRefreshToken), now, trx);
     }
     return this.result(user, refreshToken.token, { sessionExpiresAt, now });
   }
@@ -157,11 +162,13 @@ export class AuthService {
     userId: string,
     keepRefreshToken: string | undefined,
     now: Date = new Date(),
+    trx?: Knex,
   ): Promise<number> {
     const ended = await this.sessions.revokeAllOfUser(
       userId,
       now,
       keepRefreshToken === undefined ? undefined : hashRefreshToken(keepRefreshToken),
+      trx,
     );
     this.logger.info({ userId, ended }, 'other sessions ended');
     return ended;
