@@ -1,5 +1,5 @@
 import { Field, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
-import { CURRENCIES, type Currency } from '../common/currency.js';
+import { CURRENCIES, CURRENCY_DECIMALS, type Currency } from '../common/currency.js';
 
 // registerEnumType wants an object; the keys are the GraphQL values, so they follow CURRENCIES.
 export const CurrencyEnum = Object.fromEntries(
@@ -33,4 +33,8 @@ export class Balance {
       'Grows by 1 with every change of this balance. Show the value with the larger version: a reply or an event with a version lower than or equal to the one shown is older.',
   })
   version: number;
+}
+
+export function toBalance(currency: Currency, amount: bigint, version: number): Balance {
+  return { currency, amount: amount.toString(), decimals: CURRENCY_DECIMALS[currency], version };
 }

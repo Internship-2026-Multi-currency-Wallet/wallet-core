@@ -110,7 +110,7 @@ The schema is **code-first**: resolvers and `@ObjectType`s are the source of tru
 - A PR that changes the API must include the regenerated `schema.graphql`. That diff is what consumers review.
 
 Current API: `health { service version appEnv client db redis }` (public) and `me { id kind permissions strategy }`.
-Ledger (contract only, not implemented yet): query `balances`, subscription `balanceChanged` and mutation `testCredit` (local and staging only).
+Ledger: query `balances`, subscription `balanceChanged` (live changes of the caller) and mutation `testCredit` (local and staging only).
 
 ## Rate limits
 
@@ -419,6 +419,7 @@ sample data). No authentication; with the flag off both answer 404.
 | ---------------------- | ------------------------------- | ----------------------------- |
 | `rate.tick`            | Redis pub/sub (fire-and-forget) | channel `rate.tick`           |
 | `conversion.completed` | Redis Stream (must not be lost) | stream `conversion.completed` |
+| `balance.changed`      | Redis pub/sub (live UI hint)    | channel `balance.changed`     |
 | `system.ping`          | Redis pub/sub (diagnostics)     | channel `system.ping`         |
 
 ```ts
