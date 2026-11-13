@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { CURRENCIES } from '../common/currency.js';
 import { LEDGER_ERROR_MESSAGES, LedgerErrorCode, ledgerError } from './ledger-errors.js';
+import { assertWellFormed, assertZeroSum } from './ledger-rules.js';
 import { LedgerService } from './ledger.service.js';
 import {
   PLATFORM_FUNDING,
@@ -42,7 +43,9 @@ export class FakeLedgerService extends LedgerService {
   // checks and the writes run in one go, which is what makes the fake atomic.
   // eslint-disable-next-line @typescript-eslint/require-await
   async post(operation: PostOperation): Promise<PostResult> {
-    this.assertWellFormed(operation);
+    assertWellFormed(operation);
+    this.assertKnownAccounts(operation);
+    assertZeroSum(operation);
 
     const fingerprint = operationFingerprint(operation);
     const known = this.operations.get(operation.idempotencyKey);
@@ -56,16 +59,10 @@ export class FakeLedgerService extends LedgerService {
       return { operation: structuredClone(known.operation), replayed: true };
     }
 
-    const sums = new Map<string, bigint>();
     const updated = new Map<string, bigint>();
     for (const { account, amount } of operation.entries) {
-      sums.set(account.currency, (sums.get(account.currency) ?? 0n) + amount);
       const key = accountKey(account);
       updated.set(key, (updated.get(key) ?? this.balances.get(key) ?? 0n) + amount);
-    }
-    // A caller bug, not a client error: the message names only the currency, never ids or amounts.
-    for (const [currency, sum] of sums) {
-      if (sum !== 0n) throw new Error(`Ledger operation does not sum to zero in ${currency}`);
     }
     for (const { account } of operation.entries) {
       if (account.type === 'user' && (updated.get(accountKey(account)) ?? 0n) < 0n) {
@@ -102,13 +99,9 @@ export class FakeLedgerService extends LedgerService {
     );
   }
 
-  /** Caller mistakes are programming errors, not client errors: a plain `Error`, no ledger code. */
-  private assertWellFormed(operation: PostOperation): void {
-    if (operation.entries.length === 0) {
-      throw new Error('Ledger operation has no entries');
-    }
-    for (const { account, amount } of operation.entries) {
-      if (amount === 0n) throw new Error('Ledger entry amount must not be zero');
+  /** Only the platform and external accounts need to exist up front; user accounts appear on first use. */
+  private assertKnownAccounts(operation: PostOperation): void {
+    for (const { account } of operation.entries) {
       if (account.type !== 'user' && !this.balances.has(accountKey(account))) {
         throw new Error(`Unknown ledger account ${accountKey(account)}`);
       }
