@@ -8,6 +8,7 @@ import { type Job, UnrecoverableError, Worker } from 'bullmq';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { brand } from '../brand/brand.js';
 import { AppConfig } from '../config/app-config.js';
+import { redisErrorReason } from '../redis/redis-connection.js';
 import { EMAIL_QUEUE, type EmailJobData } from './queued-email.service.js';
 import { queuePrefix } from './redis-connection.js';
 import { renderEmail, sampleData } from './templates/index.js';
@@ -17,9 +18,16 @@ import {
   type EmailTransport,
 } from './transports/email-transport.js';
 
+// Grace for active sends to finish and be recorded; close() without force can wait indefinitely
+// while Redis does not answer.
+const SHUTDOWN_GRACE_MS = 3000;
+
 @Injectable()
 export class EmailWorker implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly worker?: Worker<EmailJobData>;
+  // Track acquisition before processor entry so shutdown cannot miss an acquired job.
+  private readonly unsettled = new Set<string>();
+  private onSettled?: () => void;
 
   constructor(
     private readonly config: AppConfig,
@@ -36,18 +44,57 @@ export class EmailWorker implements OnApplicationBootstrap, OnApplicationShutdow
       concurrency: 5,
       autorun: false,
     });
-    this.worker.on('error', (err) => logger.warn({ err }, 'email queue connection error'));
+    // BullMQ emits an error per reconnect attempt and its messages carry the Redis host.
+    let lastReason: string | undefined;
+    const worker = this.worker;
+    this.worker.on('error', (err) => {
+      // Commands still pending at a forced close are rejected with "Connection is closed".
+      if (worker.closing) return;
+      const reason = redisErrorReason(err);
+      if (reason === lastReason) return;
+      lastReason = reason;
+      logger.warn({ reason }, 'email worker Redis error, BullMQ reconnects with backoff');
+    });
+    const settle = (job?: Job<EmailJobData>) => {
+      this.unsettled.delete(String(job?.id));
+      if (this.unsettled.size === 0) this.onSettled?.();
+    };
+    // 'active' is emitted when a job is acquired, a few awaits before the processor starts.
+    this.worker.on('active', (job) => this.unsettled.add(String(job.id)));
+    // Redis finalization errors may leave an ID unsettled until the bounded shutdown grace expires.
+    this.worker.on('completed', settle);
+    this.worker.on('failed', settle);
+    this.worker.getBackend().on('ready', () => {
+      if (lastReason === undefined) return;
+      lastReason = undefined;
+      logger.info('email worker Redis connection restored');
+    });
   }
 
   onApplicationBootstrap(): void {
     // run() resolves only when the worker closes, so it must not be awaited.
     void this.worker
       ?.run()
-      .catch((err: unknown) => this.logger.error({ err }, 'email worker stopped'));
+      .catch((err: unknown) =>
+        this.logger.error({ reason: redisErrorReason(err) }, 'email worker stopped'),
+      );
   }
 
   async onApplicationShutdown(): Promise<void> {
-    await this.worker?.close();
+    if (!this.worker) return;
+    // Only stops fetching: plain pause() reconnects the blocking client once active jobs end, even
+    // after close().
+    await this.worker.pause(true);
+    if (this.unsettled.size > 0) {
+      let timer: NodeJS.Timeout | undefined;
+      await new Promise<void>((resolve) => {
+        this.onSettled = resolve;
+        timer = setTimeout(resolve, SHUTDOWN_GRACE_MS);
+      });
+      clearTimeout(timer);
+    }
+    // Force-close because graceful closure may wait indefinitely when Redis stops answering.
+    await this.worker.close(true);
   }
 
   async process(

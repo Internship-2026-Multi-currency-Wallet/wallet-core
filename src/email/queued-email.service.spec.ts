@@ -6,7 +6,7 @@ import { EmailEnqueueError, QueuedEmailService } from './queued-email.service.js
 type AddCall = [string, unknown, Record<string, unknown>];
 
 const setup = (add: () => Promise<unknown>) => {
-  const logger = { warn: jest.fn() } as unknown as PinoLogger;
+  const logger = { warn: jest.fn(), debug: jest.fn(), info: jest.fn() } as unknown as PinoLogger;
   const config = AppConfig.fromEnv({
     ...process.env,
     REDIS_URL: 'redis://localhost:1',

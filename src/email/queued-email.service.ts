@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, type OnApplicationShutdown } from '@nestjs/common';
 import { Queue } from 'bullmq';
+import { Redis } from 'ioredis';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
+import { closeRedis, redisErrorReason, watchRedisConnection } from '../redis/redis-connection.js';
 import { EmailService, type EmailTemplate, type EmailTemplates } from './email.service.js';
 import { queuePrefix } from './redis-connection.js';
 
@@ -25,14 +27,21 @@ export class EmailEnqueueError extends Error {
 @Injectable()
 export class QueuedEmailService extends EmailService implements OnApplicationShutdown {
   private readonly queue: Queue<EmailJobData>;
+  // Owned here, not by BullMQ: after a failed QUIT BullMQ leaves its own client reconnecting forever.
+  private readonly connection: Redis;
 
   constructor(config: AppConfig, @InjectPinoLogger(QueuedEmailService.name) logger: PinoLogger) {
     super();
+    this.connection = new Redis(config.redisUrl, { enableOfflineQueue: false });
+    watchRedisConnection(this.connection, logger, 'command');
     this.queue = new Queue<EmailJobData>(EMAIL_QUEUE, {
       prefix: queuePrefix(config.appEnv),
-      connection: { url: config.redisUrl, enableOfflineQueue: false },
+      connection: this.connection,
     });
-    this.queue.on('error', (err) => logger.warn({ err }, 'email queue connection error'));
+    // Keep queue errors at debug level because the connection watcher already warns about outages.
+    this.queue.on('error', (err) =>
+      logger.debug({ reason: redisErrorReason(err) }, 'email queue error'),
+    );
   }
 
   async send<T extends EmailTemplate>(
@@ -72,5 +81,6 @@ export class QueuedEmailService extends EmailService implements OnApplicationShu
 
   async onApplicationShutdown(): Promise<void> {
     await this.queue.close();
+    await closeRedis(this.connection);
   }
 }
