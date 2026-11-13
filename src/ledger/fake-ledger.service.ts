@@ -28,6 +28,7 @@ interface StoredOperation {
 @Injectable()
 export class FakeLedgerService extends LedgerService {
   private readonly balances = new Map<string, bigint>();
+  private readonly versions = new Map<string, number>();
   private readonly operations = new Map<string, StoredOperation>();
 
   constructor() {
@@ -75,7 +76,11 @@ export class FakeLedgerService extends LedgerService {
       }
     }
 
-    for (const [key, balance] of updated) this.balances.set(key, balance);
+    // `updated` holds each account once, so an account named in several entries still gets +1.
+    for (const [key, balance] of updated) {
+      this.balances.set(key, balance);
+      this.versions.set(key, (this.versions.get(key) ?? 0) + 1);
+    }
     // Cloned on the way in and out: the caller's objects must never alias what a replay returns.
     const posted: PostedOperation = structuredClone({
       ...operation,
@@ -92,7 +97,7 @@ export class FakeLedgerService extends LedgerService {
         const key = accountKey(userAccount(userId, currency));
         const amount = this.balances.get(key) ?? 0n;
         this.balances.set(key, amount);
-        return { currency, amount };
+        return { currency, amount, version: this.versions.get(key) ?? 0 };
       }),
     );
   }

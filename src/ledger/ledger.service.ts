@@ -12,6 +12,9 @@ export abstract class LedgerService {
    */
   abstract post(operation: PostOperation): Promise<PostResult>;
 
-  /** The user's balances in all five currencies, in `CURRENCIES` order (zeros included). */
+  /**
+   * The user's balances in all five currencies, in `CURRENCIES` order (zeros included). A currency
+   * the user never used is `amount 0n, version 0`.
+   */
   abstract getBalances(userId: string): Promise<UserBalance[]>;
 }

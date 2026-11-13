@@ -27,4 +27,10 @@ export class Balance {
       'Number of fractional digits of the currency (2 for fiat, 6 for USDT): the amount divided by 10^decimals is the human value.',
   })
   decimals: number;
+
+  @Field(() => Int, {
+    description:
+      'Grows by 1 with every change of this balance. Show the value with the larger version: a reply or an event with a version lower than or equal to the one shown is older.',
+  })
+  version: number;
 }
