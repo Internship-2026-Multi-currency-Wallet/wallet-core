@@ -343,6 +343,9 @@ A role change or a deactivation ends all of the member's sessions; a password ch
 
 #### Sign in with Google — `src/google-auth`
 
+> **Contract only.** All six operations answer `501 Not Implemented` today; this section describes the behaviour
+> they are being built to. Frontends can generate types and mocks from it, but no call succeeds yet.
+
 A logged-in user links a Google account first; there is no sign-up via Google. The flow is the OAuth 2.0
 authorization-code flow with a redirect (see "Google login setup" in the `ops` README):
 
