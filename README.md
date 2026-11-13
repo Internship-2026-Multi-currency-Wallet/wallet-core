@@ -419,6 +419,7 @@ sample data). No authentication; with the flag off both answer 404.
 | ---------------------- | ------------------------------- | ----------------------------- |
 | `rate.tick`            | Redis pub/sub (fire-and-forget) | channel `rate.tick`           |
 | `conversion.completed` | Redis Stream (must not be lost) | stream `conversion.completed` |
+| `balance.changed`      | Redis pub/sub (live UI hint)    | channel `balance.changed`     |
 | `system.ping`          | Redis pub/sub (diagnostics)     | channel `system.ping`         |
 
 ```ts

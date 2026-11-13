@@ -8,6 +8,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import WebSocket from 'ws';
 import { TokenService } from '../src/auth/tokens.js';
+import { AppConfig } from '../src/config/app-config.js';
 import { createKnex } from '../src/database/database.module.js';
 import { eventChannel } from '../src/events/event-bus.js';
 import { createApp } from './create-app.js';
@@ -19,14 +20,12 @@ import { createApp } from './create-app.js';
  * the funding balances are put back.
  */
 describe('ledger contract (e2e)', () => {
-  const USER_ID = '00000000-0000-4000-8000-000000000001';
   // A staff token carries no `wallet` permission; `bo` is how dev auth makes a staff caller.
   const STAFF = 'Dev 1:bo';
   const TEST_CREDIT = 'mutation { testCredit(currency: UAH, amount: "10050") { currency amount } }';
-  const BALANCE_CHANGED = 'subscription { balanceChanged { currency amount decimals } }';
-  const BALANCES = '{ balances { currency amount decimals } }';
+  const BALANCE_CHANGED = 'subscription { balanceChanged { currency amount decimals version } }';
+  const BALANCES = '{ balances { currency amount decimals version } }';
   const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
-  const channel = eventChannel('local', 'balance.changed');
   const userIds: string[] = [];
   let db: Knex;
   let redis: Redis;
@@ -50,6 +49,7 @@ describe('ledger contract (e2e)', () => {
     currency: string;
     amount: string;
     decimals: number;
+    version: number;
   }
 
   /** A user nobody has used yet, as the dev-auth header: `Dev <uuid>:wallet`. */
@@ -70,10 +70,10 @@ describe('ledger contract (e2e)', () => {
   };
 
   const creditQuery = (currency: string, amount: string): string =>
-    `mutation { testCredit(currency: ${currency}, amount: "${amount}") { currency amount decimals } }`;
+    `mutation { testCredit(currency: ${currency}, amount: "${amount}") { currency amount decimals version } }`;
 
-  const jwt = (app: INestApplication): string => {
-    const subject = { userId: USER_ID, aud: 'wallet' as const, permissions: ['wallet'] };
+  const jwt = (app: INestApplication, userId: string): string => {
+    const subject = { userId, aud: 'wallet' as const, permissions: ['wallet'] };
     return `Bearer ${app.get(TokenService).signAccessToken(subject, new Date()).token}`;
   };
 
@@ -88,13 +88,6 @@ describe('ledger contract (e2e)', () => {
     }
   };
 
-  /** How many handlers the app has on the `balance.changed` channel (one Redis SUBSCRIBE for all of them). */
-  const subscriberCount = async (): Promise<number> => {
-    const [, count] = (await redis.pubsub('NUMSUB', channel)) as [string, number];
-    return Number(count);
-  };
-
-  /** Undoes everything the tests wrote: entries, operations, user accounts, and the funding balances. */
   const cleanUp = async (): Promise<void> => {
     await db.transaction(async (trx) => {
       const ownIds = (await trx('accounts').whereIn('user_id', userIds).pluck('id')) as string[];
@@ -141,6 +134,8 @@ describe('ledger contract (e2e)', () => {
   describe('on APP_ENV=local with dev auth', () => {
     let app: INestApplication | undefined;
     let wsUrl: string;
+    // Subscribers of the channel before any test: a dev server on the same Redis may be one of them.
+    let baseline = 0;
     const clients: Client[] = [];
 
     // If `createApp` fails, the tests fail here with a clear message instead of a TypeError on `undefined`.
@@ -149,17 +144,26 @@ describe('ledger contract (e2e)', () => {
       return app;
     };
 
+    const channel = (): string => eventChannel(server().get(AppConfig).appEnv, 'balance.changed');
+
+    /** How many handlers the app has on the `balance.changed` channel (one Redis SUBSCRIBE for all of them). */
+    const subscriberCount = async (): Promise<number> => {
+      const [, count] = (await redis.pubsub('NUMSUB', channel())) as [string, number];
+      return Number(count);
+    };
+
     beforeAll(async () => {
       app = await createApp({ APP_ENV: 'local', DEV_AUTH: 'true' });
       await app.listen(0, '127.0.0.1');
       const { port } = (app.getHttpServer() as { address(): AddressInfo }).address();
       wsUrl = `ws://127.0.0.1:${port}/graphql`;
+      baseline = await subscriberCount();
     });
 
     afterEach(async () => {
       for (const client of clients.splice(0)) await client.dispose();
       // A leaked handler would keep the channel subscribed: every test leaves the app as it found it.
-      await waitFor(async () => (await subscriberCount()) === 0, 2000);
+      await waitFor(async () => (await subscriberCount()) === baseline, 2000);
     });
 
     afterAll(async () => {
@@ -194,7 +198,6 @@ describe('ledger contract (e2e)', () => {
       });
 
     interface Listener {
-      /** One entry per message, each the list of balances it carried. */
       received: BalanceRow[][];
       unsubscribe: () => void;
       dispose: () => void | Promise<void>;
@@ -228,12 +231,12 @@ describe('ledger contract (e2e)', () => {
           v: 1,
           operationId: 'probe',
           userId: user.id,
-          balances: [{ currency: 'UAH', amount: PROBE_AMOUNT }],
+          balances: [{ currency: 'UAH', amount: PROBE_AMOUNT, version: 0 }],
           occurredAt: new Date().toISOString(),
         },
       });
       await waitFor(async () => {
-        await redis.publish(channel, probe);
+        await redis.publish(channel(), probe);
         return ready;
       }, 2000);
       return { received, unsubscribe, dispose: () => client.dispose() };
@@ -262,11 +265,11 @@ describe('ledger contract (e2e)', () => {
       expect(body.errors).toBeUndefined();
       expect(body.data).toEqual({
         balances: [
-          { currency: 'UAH', amount: '0', decimals: 2 },
-          { currency: 'USD', amount: '0', decimals: 2 },
-          { currency: 'EUR', amount: '0', decimals: 2 },
-          { currency: 'PLN', amount: '0', decimals: 2 },
-          { currency: 'USDT', amount: '0', decimals: 6 },
+          { currency: 'UAH', amount: '0', decimals: 2, version: 0 },
+          { currency: 'USD', amount: '0', decimals: 2, version: 0 },
+          { currency: 'EUR', amount: '0', decimals: 2, version: 0 },
+          { currency: 'PLN', amount: '0', decimals: 2, version: 0 },
+          { currency: 'USDT', amount: '0', decimals: 6, version: 0 },
         ],
       });
     });
@@ -306,26 +309,29 @@ describe('ledger contract (e2e)', () => {
         currency: 'UAH',
         amount: '10050',
         decimals: 2,
+        version: 1,
       });
       await expect(credit(authorization, 'UAH', '50')).resolves.toEqual({
         currency: 'UAH',
         amount: '10100',
         decimals: 2,
+        version: 2,
       });
       await expect(credit(authorization, 'USDT', '2500000')).resolves.toEqual({
         currency: 'USDT',
         amount: '2500000',
         decimals: 6,
+        version: 1,
       });
 
       const body = await gql(server(), BALANCES, authorization);
       expect(body.data).toEqual({
         balances: [
-          { currency: 'UAH', amount: '10100', decimals: 2 },
-          { currency: 'USD', amount: '0', decimals: 2 },
-          { currency: 'EUR', amount: '0', decimals: 2 },
-          { currency: 'PLN', amount: '0', decimals: 2 },
-          { currency: 'USDT', amount: '2500000', decimals: 6 },
+          { currency: 'UAH', amount: '10100', decimals: 2, version: 2 },
+          { currency: 'USD', amount: '0', decimals: 2, version: 0 },
+          { currency: 'EUR', amount: '0', decimals: 2, version: 0 },
+          { currency: 'PLN', amount: '0', decimals: 2, version: 0 },
+          { currency: 'USDT', amount: '2500000', decimals: 6, version: 1 },
         ],
       });
     });
@@ -378,15 +384,17 @@ describe('ledger contract (e2e)', () => {
       const user = newUser();
       const listener = await listen(user);
 
-      await credit(user.authorization, 'UAH', '10050');
+      const first = await credit(user.authorization, 'UAH', '10050');
       await waitFor(() => listener.received.length === 1, 1000);
-      await credit(user.authorization, 'UAH', '50');
+      const second = await credit(user.authorization, 'UAH', '50');
       await waitFor(() => listener.received.length === 2, 1000);
 
       expect(listener.received).toEqual([
-        [{ currency: 'UAH', amount: '10050', decimals: 2 }],
-        [{ currency: 'UAH', amount: '10100', decimals: 2 }],
+        [{ currency: 'UAH', amount: '10050', decimals: 2, version: 1 }],
+        [{ currency: 'UAH', amount: '10100', decimals: 2, version: 2 }],
       ]);
+      // The mutation reply and the event of one change carry the same version: that is how the client matches them.
+      expect(listener.received).toEqual([[first], [second]]);
     });
 
     it('does not deliver the changes of another user', async () => {
@@ -399,8 +407,12 @@ describe('ledger contract (e2e)', () => {
       await credit(userA.authorization, 'UAH', '100');
       await waitFor(() => listenerA.received.length >= 1, 1000);
 
-      expect(listenerB.received).toEqual([[{ currency: 'USDT', amount: '3000000', decimals: 6 }]]);
-      expect(listenerA.received).toEqual([[{ currency: 'UAH', amount: '100', decimals: 2 }]]);
+      expect(listenerB.received).toEqual([
+        [{ currency: 'USDT', amount: '3000000', decimals: 6, version: 1 }],
+      ]);
+      expect(listenerA.received).toEqual([
+        [{ currency: 'UAH', amount: '100', decimals: 2, version: 1 }],
+      ]);
     });
 
     it('removes the Redis handler when the client unsubscribes', async () => {
@@ -470,13 +482,24 @@ describe('ledger contract (e2e)', () => {
     });
 
     // Dev auth is refused on client environments, so a real token is the only way in.
-    it.each(['kvitka-uat', 'wisla-uat'])('answers NOT_FOUND on %s', async (appEnv) => {
-      app = await createApp({ APP_ENV: appEnv, DEV_AUTH: 'false' });
-      const body = await gql(app, TEST_CREDIT, jwt(app));
-      expect(body.errors?.[0]).toMatchObject({
-        message: 'Not Found',
-        extensions: { code: 'NOT_FOUND' },
-      });
-    });
+    // A zero amount is BAD_USER_INPUT wherever it is parsed, so NOT_FOUND shows the environment check runs first.
+    it.each(['kvitka-uat', 'wisla-uat'])(
+      'answers NOT_FOUND on %s before it reads the amount, and moves no money',
+      async (appEnv) => {
+        app = await createApp({ APP_ENV: appEnv, DEV_AUTH: 'false' });
+        const user = newUser();
+
+        for (const amount of ['0', '10050']) {
+          const body = await gql(app, creditQuery('UAH', amount), jwt(app, user.id));
+
+          expect(body.errors).toHaveLength(1);
+          expect(body.errors?.[0]).toMatchObject({
+            message: 'Not Found',
+            extensions: { code: 'NOT_FOUND' },
+          });
+        }
+        await expect(db('accounts').where({ user_id: user.id })).resolves.toEqual([]);
+      },
+    );
   });
 });

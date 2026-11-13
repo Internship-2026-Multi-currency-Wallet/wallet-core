@@ -123,14 +123,14 @@ describe('balance.changed (e2e, real MySQL and Redis)', () => {
         v: 1,
         operationId: first.operation.id,
         userId,
-        balances: [{ currency: 'UAH', amount: '1000' }],
+        balances: [{ currency: 'UAH', amount: '1000', version: 1 }],
         occurredAt: first.operation.createdAt.toISOString(),
       },
       {
         v: 1,
         operationId: second.operation.id,
         userId,
-        balances: [{ currency: 'UAH', amount: '1500' }],
+        balances: [{ currency: 'UAH', amount: '1500', version: 2 }],
         occurredAt: second.operation.createdAt.toISOString(),
       },
     ]);
@@ -153,15 +153,18 @@ describe('balance.changed (e2e, real MySQL and Redis)', () => {
     expect(eventsOf(sender)).toHaveLength(2);
     expect(eventsOf(sender)[1]).toMatchObject({
       operationId: transfer.operation.id,
-      balances: [{ currency: 'UAH', amount: '700' }],
+      balances: [{ currency: 'UAH', amount: '700', version: 2 }],
     });
     expect(eventsOf(receiver)).toEqual([
       expect.objectContaining({
         operationId: transfer.operation.id,
-        balances: [{ currency: 'UAH', amount: '300' }],
+        balances: [{ currency: 'UAH', amount: '300', version: 1 }],
       }),
     ]);
-    expect(received.every((event) => userIds.includes(event.userId))).toBe(true);
+    // Only this operation's events: another process on the same Redis may publish its own.
+    expect(
+      received.filter((event) => event.operationId === transfer.operation.id).map((e) => e.userId),
+    ).toEqual([sender, receiver]);
   });
 
   it('delivers one event listing both currencies of a user changed by one operation', async () => {
@@ -180,8 +183,8 @@ describe('balance.changed (e2e, real MySQL and Redis)', () => {
     expect(eventsOf(userId)).toEqual([
       expect.objectContaining({
         balances: [
-          { currency: 'UAH', amount: '10' },
-          { currency: 'USD', amount: '20' },
+          { currency: 'UAH', amount: '10', version: 1 },
+          { currency: 'USD', amount: '20', version: 1 },
         ],
       }),
     ]);

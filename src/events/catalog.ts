@@ -56,9 +56,13 @@ export interface BalanceChangedEvent {
   /** The ledger operation, for tracing and deduplication. */
   operationId: string;
   userId: string;
-  /** Every balance of this user that the operation changed, with the FULL new amount. */
-  balances: { currency: Currency; amount: string }[];
-  /** When the operation was posted. */
+  /**
+   * Every balance of this user that the operation changed, with the FULL new amount.
+   * `version` grows by 1 with every change of that balance, the same value as GraphQL `Balance.version`:
+   * keep the one with the larger version.
+   */
+  balances: { currency: Currency; amount: string; version: number }[];
+  /** When the posting started (before it waited for the locks). Not an order: use `version`. */
   occurredAt: string;
 }
 

@@ -5,6 +5,7 @@ import { CURRENCIES, type Currency } from '../common/currency.js';
 import { isDeadlock } from '../database/deadlock.js';
 import type { BalanceChangedEvent } from '../events/catalog.js';
 import { EventPublisher } from '../events/event-bus.js';
+import { redisErrorReason } from '../redis/redis-connection.js';
 import { LEDGER_ERROR_MESSAGES, LedgerErrorCode, ledgerError } from './ledger-errors.js';
 import { assertWellFormed, assertZeroSum } from './ledger-rules.js';
 import { InsertOperationResult, LedgerRepository } from './ledger.repository.js';
@@ -30,11 +31,12 @@ interface ResolvedEntry {
   amount: bigint;
 }
 
-/** The new amount of a user account, as written under the row lock. */
+/** The new amount and version of a user account, as written under the row lock. */
 interface ChangedBalance {
   userId: string;
   currency: Currency;
   amount: bigint;
+  version: number;
 }
 
 interface PostOutcome {
@@ -112,6 +114,8 @@ export class KnexLedgerService extends LedgerService {
       if (inserted === InsertOperationResult.KeyTaken) return undefined;
 
       const balances = new Map<string, bigint>();
+      // What the UPDATE below writes: the version was read under the same row lock, so no one else can bump it.
+      const versions = new Map<string, number>();
       for (const account of locked) {
         const balance = account.balance + (changes.get(account.id) ?? 0n);
         // The column is a signed BIGINT: a server-side guard, the API caps amounts long before this.
@@ -125,6 +129,7 @@ export class KnexLedgerService extends LedgerService {
           );
         }
         balances.set(account.id, balance);
+        versions.set(account.id, account.version + 1);
       }
 
       for (const [accountId, balance] of balances) await tx.updateBalance(accountId, balance);
@@ -139,8 +144,11 @@ export class KnexLedgerService extends LedgerService {
       // In entry order, not lock order, so the event lists currencies as the caller named them.
       const changedBalances = [...owners].flatMap(([accountId, owner]) => {
         const amount = balances.get(accountId);
+        const version = versions.get(accountId);
         // Entries of one account that cancel each other leave its balance as it was.
-        return amount !== undefined && changes.get(accountId) !== 0n ? [{ ...owner, amount }] : [];
+        return amount !== undefined && version !== undefined && changes.get(accountId) !== 0n
+          ? [{ ...owner, amount, version }]
+          : [];
       });
       return { id, createdAt, changedBalances };
     });
@@ -167,8 +175,9 @@ export class KnexLedgerService extends LedgerService {
       try {
         await this.events.publish('balance.changed', event);
       } catch (error) {
+        // Not the raw error: ioredis puts the host and the published body (user id, amounts) in it.
         this.logger.warn(
-          { err: error, operationId: operation.id, userId: event.userId },
+          { reason: redisErrorReason(error), operationId: operation.id, userId: event.userId },
           'balance.changed was not published',
         );
       }
@@ -262,7 +271,7 @@ function balanceChangedEvents(
   changedBalances: readonly ChangedBalance[],
 ): BalanceChangedEvent[] {
   const byUser = new Map<string, BalanceChangedEvent>();
-  for (const { userId, currency, amount } of changedBalances) {
+  for (const { userId, currency, amount, version } of changedBalances) {
     let event = byUser.get(userId);
     if (!event) {
       event = {
@@ -274,7 +283,7 @@ function balanceChangedEvents(
       };
       byUser.set(userId, event);
     }
-    event.balances.push({ currency, amount: amount.toString() });
+    event.balances.push({ currency, amount: amount.toString(), version });
   }
   return [...byUser.values()];
 }

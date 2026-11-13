@@ -1,5 +1,7 @@
+import type { PinoLogger } from 'nestjs-pino';
 import type { BalanceChangedEvent } from '../events/catalog.js';
 import type { Unsubscribe } from '../events/event-bus.js';
+import { redisErrorReason } from '../redis/redis-connection.js';
 
 type ChangedBalances = BalanceChangedEvent['balances'];
 
@@ -16,7 +18,8 @@ const FINISHED: IteratorResult<ChangedBalances> = { value: undefined, done: true
 /**
  * The balances changed by each operation of one user, in order, as an async iterator.
  * It resolves once the Redis SUBSCRIBE is done, so every event published after that is kept.
- * The queue is unbounded: events come from the user's own operations, which the throttler limits.
+ * The queue needs no bound: the graphql-ws keep-alive ends a client that stops reading (which calls
+ * `return()`), and one user gets few events.
  *
  * Hand-written instead of `async function*`: graphql-ws calls `return()` when the client goes away, and on
  * a generator that is waiting for an event `return()` would only run after the next event arrives.
@@ -24,9 +27,9 @@ const FINISHED: IteratorResult<ChangedBalances> = { value: undefined, done: true
 export async function balanceChanges(
   source: BalanceChangedSource,
   userId: string,
+  logger: Pick<PinoLogger, 'debug'>,
 ): Promise<AsyncIterableIterator<ChangedBalances>> {
   const queue: ChangedBalances[] = [];
-  // `next()` calls that found the queue empty; each is resolved by the next event.
   const waiting: ((result: IteratorResult<ChangedBalances>) => void)[] = [];
   let stopping: Promise<void> | undefined;
 
@@ -40,7 +43,13 @@ export async function balanceChanges(
   const stop = async (): Promise<void> => {
     queue.length = 0;
     for (const resolve of waiting.splice(0)) resolve(FINISHED);
-    await unsubscribe();
+    // graphql-ws calls return() without a catch: a failed UNSUBSCRIBE (Redis down) must not crash the process.
+    await unsubscribe().catch((error: unknown) =>
+      logger.debug(
+        { reason: redisErrorReason(error), userId },
+        'balance.changed unsubscribe failed',
+      ),
+    );
   };
 
   const iterator: AsyncIterableIterator<ChangedBalances> = {

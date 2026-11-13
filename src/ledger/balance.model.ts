@@ -35,6 +35,6 @@ export class Balance {
   version: number;
 }
 
-export function toBalance(currency: Currency, amount: bigint): Balance {
-  return { currency, amount: amount.toString(), decimals: CURRENCY_DECIMALS[currency] };
+export function toBalance(currency: Currency, amount: bigint, version: number): Balance {
+  return { currency, amount: amount.toString(), decimals: CURRENCY_DECIMALS[currency], version };
 }

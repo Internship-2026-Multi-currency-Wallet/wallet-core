@@ -1,3 +1,4 @@
+import type { Currency } from '../common/currency.js';
 import { APP_ENVS, type AppEnv } from '../config/env.schema.js';
 import { LedgerErrorCode } from './ledger-errors.js';
 import { PLATFORM_FUNDING } from './ledger.types.js';
@@ -10,6 +11,16 @@ const EXPECTED: Record<AppEnv, boolean> = {
   'kvitka-uat': false,
   'wisla-uat': false,
 };
+
+/** The extensions of the error `parseTestCreditAmount` throws; fails if the text is accepted. */
+function rejection(currency: Currency, text: string): Record<string, unknown> {
+  try {
+    parseTestCreditAmount(currency, text);
+  } catch (error) {
+    return (error as { extensions: Record<string, unknown> }).extensions;
+  }
+  throw new Error(`"${text}" was accepted`);
+}
 
 describe('isTestCreditAllowed', () => {
   it.each(APP_ENVS)('%s', (appEnv) => {
@@ -31,20 +42,19 @@ describe('parseTestCreditAmount', () => {
     ['USDT', 1_000_000_000_000n],
   ] as const)('accepts exactly the cap for %s and rejects one more', (currency, cap) => {
     expect(parseTestCreditAmount(currency, cap.toString())).toBe(cap);
-    expect(() => parseTestCreditAmount(currency, (cap + 1n).toString())).toThrow();
+    expect(rejection(currency, (cap + 1n).toString())).toMatchObject({
+      code: LedgerErrorCode.BadUserInput,
+      field: 'amount',
+    });
   });
 
   it.each(['0', '-1', '+1', '1.5', 'abc', '', ' 5', '007', '0x10', '1e3'])(
     'rejects "%s" with BAD_USER_INPUT on the amount field',
     (text) => {
-      expect.assertions(2);
-      try {
-        parseTestCreditAmount('UAH', text);
-      } catch (error) {
-        const { extensions } = error as { extensions: Record<string, unknown> };
-        expect(extensions['code']).toBe(LedgerErrorCode.BadUserInput);
-        expect(extensions['field']).toBe('amount');
-      }
+      expect(rejection('UAH', text)).toMatchObject({
+        code: LedgerErrorCode.BadUserInput,
+        field: 'amount',
+      });
     },
   );
 });

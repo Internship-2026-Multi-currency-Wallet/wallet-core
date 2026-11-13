@@ -3,13 +3,14 @@ import type { BalanceChangedEvent } from '../events/catalog.js';
 import { balanceChanges, type BalanceChangedSource } from './balance-changes.js';
 
 const ME = 'user-me';
+const logger = { debug: jest.fn() };
 
 function event(userId: string, uah: string): BalanceChangedEvent {
   return {
     v: 1,
     operationId: `op-${uah}`,
     userId,
-    balances: [{ currency: 'UAH', amount: uah }],
+    balances: [{ currency: 'UAH', amount: uah, version: 1 }],
     occurredAt: '2026-11-13T10:00:00.000Z',
   };
 }
@@ -38,25 +39,25 @@ class FakeSource implements BalanceChangedSource {
 describe('balanceChanges', () => {
   it('yields only the events of the user, in order', async () => {
     const source = new FakeSource();
-    const iterator = await balanceChanges(source, ME);
+    const iterator = await balanceChanges(source, ME, logger);
 
     source.publish(event(ME, '100'));
     source.publish(event('someone-else', '999'));
     source.publish(event(ME, '250'));
 
     await expect(iterator.next()).resolves.toEqual({
-      value: [{ currency: 'UAH', amount: '100' }],
+      value: [{ currency: 'UAH', amount: '100', version: 1 }],
       done: false,
     });
     await expect(iterator.next()).resolves.toEqual({
-      value: [{ currency: 'UAH', amount: '250' }],
+      value: [{ currency: 'UAH', amount: '250', version: 1 }],
       done: false,
     });
   });
 
   it('waits for the next event instead of finishing', async () => {
     const source = new FakeSource();
-    const iterator = await balanceChanges(source, ME);
+    const iterator = await balanceChanges(source, ME, logger);
     const settled = jest.fn();
 
     const pending = iterator.next().then(settled);
@@ -70,20 +71,20 @@ describe('balanceChanges', () => {
     source.publish(event(ME, '5'));
     await pending;
     expect(settled).toHaveBeenCalledWith({
-      value: [{ currency: 'UAH', amount: '5' }],
+      value: [{ currency: 'UAH', amount: '5', version: 1 }],
       done: false,
     });
   });
 
   it('is subscribed as soon as it resolves', async () => {
     const source = new FakeSource();
-    await balanceChanges(source, ME);
+    await balanceChanges(source, ME, logger);
     expect(source.handlers.size).toBe(1);
   });
 
   it('return() unsubscribes and ends a next() that is waiting', async () => {
     const source = new FakeSource();
-    const iterator = await balanceChanges(source, ME);
+    const iterator = await balanceChanges(source, ME, logger);
 
     const pending = iterator.next();
     await iterator.return?.();
@@ -96,7 +97,7 @@ describe('balanceChanges', () => {
 
   it('unsubscribes once, however many times return() is called', async () => {
     const source = new FakeSource();
-    const iterator = await balanceChanges(source, ME);
+    const iterator = await balanceChanges(source, ME, logger);
 
     await Promise.all([iterator.return?.(), iterator.return?.()]);
     await iterator.return?.();
@@ -106,7 +107,7 @@ describe('balanceChanges', () => {
 
   it('unsubscribes when the consumer throws', async () => {
     const source = new FakeSource();
-    const iterator = await balanceChanges(source, ME);
+    const iterator = await balanceChanges(source, ME, logger);
     source.publish(event(ME, '1'));
 
     const consume = async (): Promise<void> => {
@@ -121,7 +122,7 @@ describe('balanceChanges', () => {
 
   it('unsubscribes when the consumer stops with break', async () => {
     const source = new FakeSource();
-    const iterator = await balanceChanges(source, ME);
+    const iterator = await balanceChanges(source, ME, logger);
     source.publish(event(ME, '1'));
 
     for await (const balances of iterator) {
@@ -132,9 +133,28 @@ describe('balanceChanges', () => {
     expect(source.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it('return() still finishes when the UNSUBSCRIBE fails, and logs only the reason', async () => {
+    const source = new FakeSource();
+    const failure = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:6379'), {
+      code: 'ECONNREFUSED',
+    });
+    source.unsubscribe.mockRejectedValue(failure);
+    const failureLogger = { debug: jest.fn() };
+    const iterator = await balanceChanges(source, ME, failureLogger);
+    const pending = iterator.next();
+
+    await expect(iterator.return?.()).resolves.toEqual({ value: undefined, done: true });
+
+    await expect(pending).resolves.toEqual({ value: undefined, done: true });
+    expect(failureLogger.debug).toHaveBeenCalledWith(
+      { reason: 'ECONNREFUSED', userId: ME },
+      'balance.changed unsubscribe failed',
+    );
+  });
+
   it('ignores events that arrive after return()', async () => {
     const source = new FakeSource();
-    const iterator = await balanceChanges(source, ME);
+    const iterator = await balanceChanges(source, ME, logger);
     await iterator.return?.();
 
     source.publish(event(ME, '1'));

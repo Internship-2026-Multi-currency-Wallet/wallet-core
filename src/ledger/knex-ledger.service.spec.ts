@@ -255,8 +255,8 @@ describe('KnexLedgerService balance.changed', () => {
   it('publishes one event for the user with the full new amount, after the commit', async () => {
     const { service, repository, publisher } = await setup();
     jest.spyOn(repository, 'lockAccounts').mockResolvedValue([
-      { id: FUNDING_ID, type: 'platform', balance: -500n },
-      { id: ACCOUNT_ID, type: 'user', balance: 50n },
+      { id: FUNDING_ID, type: 'platform', balance: -500n, version: 4 },
+      { id: ACCOUNT_ID, type: 'user', balance: 50n, version: 6 },
     ]);
     let committed = false;
     jest.spyOn(repository, 'transaction').mockImplementation(async (work) => {
@@ -276,7 +276,7 @@ describe('KnexLedgerService balance.changed', () => {
       v: 1,
       operationId: operation.id,
       userId: USER_ID,
-      balances: [{ currency: 'UAH', amount: '150' }],
+      balances: [{ currency: 'UAH', amount: '150', version: 7 }],
       occurredAt: operation.createdAt.toISOString(),
     });
   });
@@ -290,8 +290,8 @@ describe('KnexLedgerService balance.changed', () => {
       ]),
     );
     jest.spyOn(repository, 'lockAccounts').mockResolvedValue([
-      { id: ACCOUNT_ID, type: 'user', balance: 100n },
-      { id: OTHER_ACCOUNT_ID, type: 'user', balance: 5n },
+      { id: ACCOUNT_ID, type: 'user', balance: 100n, version: 2 },
+      { id: OTHER_ACCOUNT_ID, type: 'user', balance: 5n, version: 9 },
     ]);
 
     await service.post({
@@ -305,10 +305,13 @@ describe('KnexLedgerService balance.changed', () => {
 
     const events = publisher.publish.mock.calls.map(([, event]) => event);
     expect(events).toEqual([
-      expect.objectContaining({ userId: USER_ID, balances: [{ currency: 'UAH', amount: '70' }] }),
+      expect.objectContaining({
+        userId: USER_ID,
+        balances: [{ currency: 'UAH', amount: '70', version: 3 }],
+      }),
       expect.objectContaining({
         userId: OTHER_USER_ID,
-        balances: [{ currency: 'UAH', amount: '35' }],
+        balances: [{ currency: 'UAH', amount: '35', version: 10 }],
       }),
     ]);
   });
@@ -326,10 +329,10 @@ describe('KnexLedgerService balance.changed', () => {
       ]),
     );
     jest.spyOn(repository, 'lockAccounts').mockResolvedValue([
-      { id: FUNDING_ID, type: 'platform', balance: 0n },
-      { id: ACCOUNT_ID, type: 'user', balance: 10n },
-      { id: usdFundingId, type: 'platform', balance: 0n },
-      { id: usdAccountId, type: 'user', balance: 20n },
+      { id: FUNDING_ID, type: 'platform', balance: 0n, version: 0 },
+      { id: ACCOUNT_ID, type: 'user', balance: 10n, version: 0 },
+      { id: usdFundingId, type: 'platform', balance: 0n, version: 0 },
+      { id: usdAccountId, type: 'user', balance: 20n, version: 5 },
     ]);
 
     await service.post({
@@ -349,10 +352,64 @@ describe('KnexLedgerService balance.changed', () => {
       expect.objectContaining({
         userId: USER_ID,
         balances: [
-          { currency: 'UAH', amount: '11' },
-          { currency: 'USD', amount: '22' },
+          { currency: 'UAH', amount: '11', version: 1 },
+          { currency: 'USD', amount: '22', version: 6 },
         ],
       }),
+    );
+  });
+
+  it('leaves out a balance whose entries cancel each other', async () => {
+    const { service, repository, publisher } = await setup();
+    const usdFundingId = randomUUID();
+    const usdAccountId = randomUUID();
+    jest.spyOn(repository, 'findAccountIds').mockResolvedValue(
+      new Map([
+        [USER_KEY, ACCOUNT_ID],
+        [`platform:${PLATFORM_FUNDING}:USD`, usdFundingId],
+        [`user:${USER_ID}:USD`, usdAccountId],
+      ]),
+    );
+    jest.spyOn(repository, 'lockAccounts').mockResolvedValue([
+      { id: ACCOUNT_ID, type: 'user', balance: 40n, version: 3 },
+      { id: usdFundingId, type: 'platform', balance: 0n, version: 0 },
+      { id: usdAccountId, type: 'user', balance: 0n, version: 0 },
+    ]);
+
+    await service.post({
+      type: 'test_credit',
+      idempotencyKey: 'cancelling',
+      entries: [
+        { account: userAccount(USER_ID, 'UAH'), amount: 5n },
+        { account: userAccount(USER_ID, 'UAH'), amount: -5n },
+        { account: platformAccount(PLATFORM_FUNDING, 'USD'), amount: -2n },
+        { account: userAccount(USER_ID, 'USD'), amount: 2n },
+      ],
+    });
+
+    expect(publisher.publish).toHaveBeenCalledTimes(1);
+    expect(publisher.publish).toHaveBeenCalledWith(
+      'balance.changed',
+      expect.objectContaining({ balances: [{ currency: 'USD', amount: '2', version: 1 }] }),
+    );
+  });
+
+  it('publishes once after a deadlock retry, from the attempt that committed', async () => {
+    const { service, repository, publisher } = await setup();
+    jest
+      .spyOn(repository, 'lockAccounts')
+      .mockRejectedValueOnce(deadlock())
+      .mockResolvedValueOnce([
+        { id: FUNDING_ID, type: 'platform', balance: 0n, version: 1 },
+        { id: ACCOUNT_ID, type: 'user', balance: 0n, version: 1 },
+      ]);
+
+    await service.post(posting);
+
+    expect(publisher.publish).toHaveBeenCalledTimes(1);
+    expect(publisher.publish).toHaveBeenCalledWith(
+      'balance.changed',
+      expect.objectContaining({ balances: [{ currency: 'UAH', amount: '100', version: 2 }] }),
     );
   });
 
@@ -365,8 +422,8 @@ describe('KnexLedgerService balance.changed', () => {
       ]),
     );
     jest.spyOn(repository, 'lockAccounts').mockResolvedValue([
-      { id: FUNDING_ID, type: 'platform', balance: 0n },
-      { id: FEES_ID, type: 'platform', balance: 0n },
+      { id: FUNDING_ID, type: 'platform', balance: 0n, version: 0 },
+      { id: FEES_ID, type: 'platform', balance: 0n, version: 0 },
     ]);
 
     await service.post({
@@ -417,14 +474,17 @@ describe('KnexLedgerService balance.changed', () => {
 
   it('logs a failed publish and still returns the posted operation', async () => {
     const { service, logger, publisher } = await setup();
-    const failure = new Error('redis is down');
+    // The message holds the host; only the identifier may reach the log.
+    const failure = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:6379'), {
+      code: 'ECONNREFUSED',
+    });
     publisher.publish.mockRejectedValue(failure);
 
     const result = await service.post(posting);
 
     expect(result.replayed).toBe(false);
     expect(logger.warn).toHaveBeenCalledWith(
-      { err: failure, operationId: result.operation.id, userId: USER_ID },
+      { reason: 'ECONNREFUSED', operationId: result.operation.id, userId: USER_ID },
       'balance.changed was not published',
     );
   });

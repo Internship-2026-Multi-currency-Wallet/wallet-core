@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { Args, Mutation, Query, Resolver, Subscription } from '@nestjs/graphql';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { Currency } from '../common/currency.js';
@@ -20,6 +21,7 @@ export class LedgerResolver {
     private readonly config: AppConfig,
     private readonly ledger: LedgerService,
     private readonly subscriber: EventSubscriber,
+    @InjectPinoLogger(LedgerResolver.name) private readonly logger: PinoLogger,
   ) {}
 
   @Query(() => [Balance], {
@@ -28,7 +30,7 @@ export class LedgerResolver {
   })
   async balances(@CurrentUser() user: AuthUser): Promise<Balance[]> {
     const balances = await this.ledger.getBalances(user.id);
-    return balances.map(({ currency, amount }) => toBalance(currency, amount));
+    return balances.map(({ currency, amount, version }) => toBalance(currency, amount, version));
   }
 
   @Subscription(() => [Balance], {
@@ -36,12 +38,12 @@ export class LedgerResolver {
       "Live balance changes of the caller, one message per operation. A message lists every balance that operation changed, each with its full new amount (not a delta). Only the caller's own changes are delivered. Errors: UNAUTHENTICATED, FORBIDDEN (staff tokens have no `wallet` permission).",
     // The iterator yields the event's balances (amounts as strings); the decimals are added here.
     resolve: (changed: BalanceChangedEvent['balances']): Balance[] =>
-      changed.map(({ currency, amount }) => toBalance(currency, BigInt(amount))),
+      changed.map(({ currency, amount, version }) => toBalance(currency, BigInt(amount), version)),
   })
   balanceChanged(
     @CurrentUser() user: AuthUser,
   ): Promise<AsyncIterableIterator<BalanceChangedEvent['balances']>> {
-    return balanceChanges(this.subscriber, user.id);
+    return balanceChanges(this.subscriber, user.id, this.logger);
   }
 
   @Mutation(() => Balance, {
@@ -65,6 +67,6 @@ export class LedgerResolver {
     const balances = await this.ledger.getBalances(user.id);
     const total = balances.find((balance) => balance.currency === currency);
     if (!total) throw new Error(`getBalances returned no ${currency} balance`);
-    return toBalance(currency, total.amount);
+    return toBalance(currency, total.amount, total.version);
   }
 }
