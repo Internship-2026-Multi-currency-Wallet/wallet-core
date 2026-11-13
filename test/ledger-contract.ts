@@ -278,6 +278,20 @@ export function describeLedgerContract({
       );
     });
 
+    it('posts the operation as it was when post() was called, even if the caller changes it before it settles', async () => {
+      const userId = newUserId();
+      const posting = credit(randomUUID(), userId, 'UAH', 500n);
+      const pending = service.post(posting);
+      posting.entries[1].amount = 900n;
+
+      const { operation: posted } = await pending;
+
+      expect(sortedEntries(posted.entries)).toEqual(
+        sortedEntries(credit(posting.idempotencyKey, userId, 'UAH', 500n).entries),
+      );
+      await expect(balanceOf(service, userId, 'UAH')).resolves.toBe(500n);
+    });
+
     it('throws a plain Error for caller mistakes', async () => {
       const userId = newUserId();
       const mistakes: PostOperation[] = [

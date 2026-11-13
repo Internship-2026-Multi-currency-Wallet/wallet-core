@@ -39,7 +39,10 @@ export class KnexLedgerService extends LedgerService {
     super();
   }
 
-  async post(operation: PostOperation): Promise<PostResult> {
+  async post(input: PostOperation): Promise<PostResult> {
+    // Copied before the first check: the entries are read again after each await, and the caller's
+    // object could change by then (a different amount would bypass the zero-sum check).
+    const operation = structuredClone(input);
     assertWellFormed(operation);
     assertZeroSum(operation);
     const fingerprint = operationFingerprint(operation);
@@ -111,9 +114,8 @@ export class KnexLedgerService extends LedgerService {
     });
 
     if (posted) {
-      // Cloned: the caller's entry objects must never alias what is returned.
       return {
-        operation: { ...operation, ...posted, entries: structuredClone(operation.entries) },
+        operation: { ...operation, ...posted },
         replayed: false,
       };
     }

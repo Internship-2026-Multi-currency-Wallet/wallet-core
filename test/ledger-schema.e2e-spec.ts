@@ -132,6 +132,25 @@ describe('ledger schema (e2e, real MySQL)', () => {
     ).resolves.toBe(true);
   });
 
+  it('keeps idempotency keys that differ only in a trailing space apart', async () => {
+    const key = `space:${randomUUID()}`;
+    const insert = (idempotencyKey: string) => {
+      const id = randomUUID();
+      operationIds.push(id);
+      return db('operations').insert({
+        id,
+        type: 'test_credit',
+        idempotency_key: idempotencyKey,
+        fingerprint: 'f'.repeat(64),
+        created_at: new Date(),
+      });
+    };
+
+    await insert(key);
+
+    await expect(insert(`${key} `)).resolves.toBeDefined();
+  });
+
   it('keeps idempotency keys that differ only in case apart', async () => {
     const key = `Case:${randomUUID()}`;
     const operation = (idempotencyKey: string) => {
