@@ -47,6 +47,21 @@ export interface ConversionCompletedEvent {
   occurredAt: string;
 }
 
+/**
+ * A posting changed a user's balances. One event per user per operation (a transfer sends two).
+ * A live UI hint only: a missed message is fixed by reloading the balances.
+ */
+export interface BalanceChangedEvent {
+  v: 1;
+  /** The ledger operation, for tracing and deduplication. */
+  operationId: string;
+  userId: string;
+  /** Every balance of this user that the operation changed, with the FULL new amount. */
+  balances: { currency: Currency; amount: string }[];
+  /** When the operation was posted. */
+  occurredAt: string;
+}
+
 /** Diagnostics: a backend says "hello" to the others (used to trace a requestId across services). */
 export interface SystemPingEvent {
   v: 1;
@@ -59,6 +74,7 @@ export interface SystemPingEvent {
 export interface EventPayloads {
   'rate.tick': RateTickEvent;
   'conversion.completed': ConversionCompletedEvent;
+  'balance.changed': BalanceChangedEvent;
   'system.ping': SystemPingEvent;
 }
 
@@ -91,6 +107,7 @@ export const EVENTS = {
     stream: 'conversion.completed',
     maxLen: 100_000,
   },
+  'balance.changed': { transport: 'pubsub', channel: 'balance.changed' },
   'system.ping': { transport: 'pubsub', channel: 'system.ping' },
 } as const satisfies Record<EventName, EventDefinition>;
 

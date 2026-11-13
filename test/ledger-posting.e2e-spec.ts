@@ -5,6 +5,7 @@ import type { Knex } from 'knex';
 import type { PinoLogger } from 'nestjs-pino';
 import { CURRENCIES, type Currency } from '../src/common/currency.js';
 import { createKnex } from '../src/database/database.module.js';
+import type { EventPublisher } from '../src/events/event-bus.js';
 import { LedgerErrorCode } from '../src/ledger/ledger-errors.js';
 import { KnexLedgerService } from '../src/ledger/knex-ledger.service.js';
 import { LedgerRepository } from '../src/ledger/ledger.repository.js';
@@ -141,7 +142,11 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
 
   beforeAll(() => {
     db = createKnex(process.env.DATABASE_URL!);
-    service = new KnexLedgerService(new LedgerRepository(db), logger as unknown as PinoLogger);
+    service = new KnexLedgerService(
+      new LedgerRepository(db),
+      { publish: () => Promise.resolve(null) } as unknown as EventPublisher,
+      logger as unknown as PinoLogger,
+    );
   });
 
   beforeEach(() => {

@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { CURRENCIES } from '../common/currency.js';
+import { CURRENCIES, type Currency } from '../common/currency.js';
 import { isDeadlock } from '../database/deadlock.js';
+import type { BalanceChangedEvent } from '../events/catalog.js';
+import { EventPublisher } from '../events/event-bus.js';
 import { LEDGER_ERROR_MESSAGES, LedgerErrorCode, ledgerError } from './ledger-errors.js';
 import { assertWellFormed, assertZeroSum } from './ledger-rules.js';
 import { InsertOperationResult, LedgerRepository } from './ledger.repository.js';
@@ -12,6 +14,7 @@ import {
   type AccountRef,
   type EntryInput,
   type OperationType,
+  type PostedOperation,
   type PostOperation,
   type PostResult,
   type UserBalance,
@@ -22,18 +25,34 @@ import { operationFingerprint } from './operation-fingerprint.js';
 const MAX_ATTEMPTS = 3;
 
 interface ResolvedEntry {
+  account: AccountRef;
   accountId: string;
   amount: bigint;
+}
+
+/** The new amount of a user account, as written under the row lock. */
+interface ChangedBalance {
+  userId: string;
+  currency: Currency;
+  amount: bigint;
+}
+
+interface PostOutcome {
+  result: PostResult;
+  /** Empty for a replay. */
+  changedBalances: ChangedBalance[];
 }
 
 /**
  * `LedgerService` on MySQL. A posting is one transaction that locks its account rows in ascending id
  * order; `getBalances` only reads, and user accounts are created by the first posting that names them.
+ * After a new posting commits, `balance.changed` is published for each user whose balances it changed.
  */
 @Injectable()
 export class KnexLedgerService extends LedgerService {
   constructor(
     private readonly repository: LedgerRepository,
+    private readonly events: EventPublisher,
     @InjectPinoLogger(KnexLedgerService.name) private readonly logger: PinoLogger,
   ) {
     super();
@@ -46,13 +65,14 @@ export class KnexLedgerService extends LedgerService {
     assertWellFormed(operation);
     assertZeroSum(operation);
     const fingerprint = operationFingerprint(operation);
-    const result = await this.withDeadlockRetry(operation.type, () =>
+    const { result, changedBalances } = await this.withDeadlockRetry(operation.type, () =>
       this.postOnce(operation, fingerprint),
     );
     this.logger.info(
       { operationId: result.operation.id, type: result.operation.type, replayed: result.replayed },
       result.replayed ? 'ledger operation replayed' : 'ledger operation posted',
     );
+    if (!result.replayed) await this.publishBalanceChanges(result.operation, changedBalances);
     return result;
   }
 
@@ -64,8 +84,9 @@ export class KnexLedgerService extends LedgerService {
     }));
   }
 
-  private async postOnce(operation: PostOperation, fingerprint: string): Promise<PostResult> {
+  private async postOnce(operation: PostOperation, fingerprint: string): Promise<PostOutcome> {
     const entries = await this.resolveEntries(operation.entries);
+    const owners = userAccountOwners(entries);
 
     const posted = await this.repository.transaction(async (tx) => {
       const id = randomUUID();
@@ -108,18 +129,50 @@ export class KnexLedgerService extends LedgerService {
 
       for (const [accountId, balance] of balances) await tx.updateBalance(accountId, balance);
       await tx.insertEntries(
-        entries.map((entry) => ({ id: randomUUID(), operationId: id, ...entry })),
+        entries.map(({ accountId, amount }) => ({
+          id: randomUUID(),
+          operationId: id,
+          accountId,
+          amount,
+        })),
       );
-      return { id, createdAt };
+      // In entry order, not lock order, so the event lists currencies as the caller named them.
+      const changedBalances = [...owners].flatMap(([accountId, owner]) => {
+        const amount = balances.get(accountId);
+        // Entries of one account that cancel each other leave its balance as it was.
+        return amount !== undefined && changes.get(accountId) !== 0n ? [{ ...owner, amount }] : [];
+      });
+      return { id, createdAt, changedBalances };
     });
 
     if (posted) {
+      const { changedBalances, ...stored } = posted;
       return {
-        operation: { ...operation, ...posted },
-        replayed: false,
+        result: { operation: { ...operation, ...stored }, replayed: false },
+        changedBalances,
       };
     }
-    return this.replay(operation, fingerprint);
+    return { result: await this.replay(operation, fingerprint), changedBalances: [] };
+  }
+
+  /**
+   * A failed publish (Redis down) must not fail the posting: the money is already committed, and the
+   * event is only a live hint that a reload of the balances makes up for.
+   */
+  private async publishBalanceChanges(
+    operation: PostedOperation,
+    changedBalances: readonly ChangedBalance[],
+  ): Promise<void> {
+    for (const event of balanceChangedEvents(operation, changedBalances)) {
+      try {
+        await this.events.publish('balance.changed', event);
+      } catch (error) {
+        this.logger.warn(
+          { err: error, operationId: operation.id, userId: event.userId },
+          'balance.changed was not published',
+        );
+      }
+    }
   }
 
   // After the posting transaction has ended: a replay writes nothing, so it holds no locks while it reads.
@@ -156,7 +209,7 @@ export class KnexLedgerService extends LedgerService {
     return entries.map(({ account, amount }) => {
       const accountId = ids.get(accountKey(account));
       if (accountId === undefined) throw new Error(`Unknown ledger account ${accountKey(account)}`);
-      return { accountId, amount };
+      return { account, accountId, amount };
     });
   }
 
@@ -189,4 +242,39 @@ export class KnexLedgerService extends LedgerService {
       }
     }
   }
+}
+
+/** Account id → owner, for user accounts only: platform and external accounts never reach the events. */
+function userAccountOwners(
+  entries: readonly ResolvedEntry[],
+): Map<string, { userId: string; currency: Currency }> {
+  const owners = new Map<string, { userId: string; currency: Currency }>();
+  for (const { account, accountId } of entries) {
+    if (account.type === 'user') {
+      owners.set(accountId, { userId: account.userId, currency: account.currency });
+    }
+  }
+  return owners;
+}
+
+function balanceChangedEvents(
+  operation: PostedOperation,
+  changedBalances: readonly ChangedBalance[],
+): BalanceChangedEvent[] {
+  const byUser = new Map<string, BalanceChangedEvent>();
+  for (const { userId, currency, amount } of changedBalances) {
+    let event = byUser.get(userId);
+    if (!event) {
+      event = {
+        v: 1,
+        operationId: operation.id,
+        userId,
+        balances: [],
+        occurredAt: operation.createdAt.toISOString(),
+      };
+      byUser.set(userId, event);
+    }
+    event.balances.push({ currency, amount: amount.toString() });
+  }
+  return [...byUser.values()];
 }

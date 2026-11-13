@@ -3,7 +3,9 @@ import { jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
 import { getLoggerToken } from 'nestjs-pino';
 import { KNEX } from '../database/database.module.js';
+import { EventPublisher } from '../events/event-bus.js';
 import { KnexLedgerService } from './knex-ledger.service.js';
+import { LedgerErrorCode } from './ledger-errors.js';
 import { InsertOperationResult, LedgerRepository } from './ledger.repository.js';
 import {
   PLATFORM_FUNDING,
@@ -42,11 +44,13 @@ function lockedAccounts() {
 /** The service against a repository whose database calls are stubbed: only its own logic is under test. */
 async function setup() {
   const logger = { info: jest.fn(), warn: jest.fn() };
+  const publisher = { publish: jest.fn<EventPublisher['publish']>().mockResolvedValue(null) };
   const moduleRef = await Test.createTestingModule({
     providers: [
       KnexLedgerService,
       LedgerRepository,
       { provide: KNEX, useValue: {} },
+      { provide: EventPublisher, useValue: publisher },
       { provide: getLoggerToken(KnexLedgerService.name), useValue: logger },
     ],
   }).compile();
@@ -64,7 +68,7 @@ async function setup() {
   jest.spyOn(repository, 'updateBalance').mockResolvedValue(undefined);
   jest.spyOn(repository, 'insertEntries').mockResolvedValue(undefined);
   jest.spyOn(repository, 'lockAccounts').mockResolvedValue(lockedAccounts());
-  return { service: moduleRef.get(KnexLedgerService), repository, logger };
+  return { service: moduleRef.get(KnexLedgerService), repository, logger, publisher };
 }
 
 describe('KnexLedgerService deadlock retry', () => {
@@ -237,6 +241,191 @@ describe('KnexLedgerService logging', () => {
     expect(logger.info).toHaveBeenCalledWith(
       { operationId, type: 'test_credit', replayed: true },
       'ledger operation replayed',
+    );
+  });
+});
+
+describe('KnexLedgerService balance.changed', () => {
+  const OTHER_USER_ID = randomUUID();
+  const OTHER_ACCOUNT_ID = randomUUID();
+  const OTHER_KEY = `user:${OTHER_USER_ID}:UAH`;
+  const FEES_ID = randomUUID();
+  const FEES_KEY = 'platform:fees:UAH';
+
+  it('publishes one event for the user with the full new amount, after the commit', async () => {
+    const { service, repository, publisher } = await setup();
+    jest.spyOn(repository, 'lockAccounts').mockResolvedValue([
+      { id: FUNDING_ID, type: 'platform', balance: -500n },
+      { id: ACCOUNT_ID, type: 'user', balance: 50n },
+    ]);
+    let committed = false;
+    jest.spyOn(repository, 'transaction').mockImplementation(async (work) => {
+      const outcome = await work(repository);
+      committed = true;
+      return outcome;
+    });
+    publisher.publish.mockImplementation(() => {
+      expect(committed).toBe(true);
+      return Promise.resolve(null);
+    });
+
+    const { operation } = await service.post(posting);
+
+    expect(publisher.publish).toHaveBeenCalledTimes(1);
+    expect(publisher.publish).toHaveBeenCalledWith('balance.changed', {
+      v: 1,
+      operationId: operation.id,
+      userId: USER_ID,
+      balances: [{ currency: 'UAH', amount: '150' }],
+      occurredAt: operation.createdAt.toISOString(),
+    });
+  });
+
+  it('publishes one event per user for a transfer, each with its own balance only', async () => {
+    const { service, repository, publisher } = await setup();
+    jest.spyOn(repository, 'findAccountIds').mockResolvedValue(
+      new Map([
+        [USER_KEY, ACCOUNT_ID],
+        [OTHER_KEY, OTHER_ACCOUNT_ID],
+      ]),
+    );
+    jest.spyOn(repository, 'lockAccounts').mockResolvedValue([
+      { id: ACCOUNT_ID, type: 'user', balance: 100n },
+      { id: OTHER_ACCOUNT_ID, type: 'user', balance: 5n },
+    ]);
+
+    await service.post({
+      type: 'test_credit',
+      idempotencyKey: 'transfer',
+      entries: [
+        { account: userAccount(USER_ID, 'UAH'), amount: -30n },
+        { account: userAccount(OTHER_USER_ID, 'UAH'), amount: 30n },
+      ],
+    });
+
+    const events = publisher.publish.mock.calls.map(([, event]) => event);
+    expect(events).toEqual([
+      expect.objectContaining({ userId: USER_ID, balances: [{ currency: 'UAH', amount: '70' }] }),
+      expect.objectContaining({
+        userId: OTHER_USER_ID,
+        balances: [{ currency: 'UAH', amount: '35' }],
+      }),
+    ]);
+  });
+
+  it('lists every changed currency of one user in a single event', async () => {
+    const { service, repository, publisher } = await setup();
+    const usdFundingId = randomUUID();
+    const usdAccountId = randomUUID();
+    jest.spyOn(repository, 'findAccountIds').mockResolvedValue(
+      new Map([
+        [FUNDING_KEY, FUNDING_ID],
+        [USER_KEY, ACCOUNT_ID],
+        [`platform:${PLATFORM_FUNDING}:USD`, usdFundingId],
+        [`user:${USER_ID}:USD`, usdAccountId],
+      ]),
+    );
+    jest.spyOn(repository, 'lockAccounts').mockResolvedValue([
+      { id: FUNDING_ID, type: 'platform', balance: 0n },
+      { id: ACCOUNT_ID, type: 'user', balance: 10n },
+      { id: usdFundingId, type: 'platform', balance: 0n },
+      { id: usdAccountId, type: 'user', balance: 20n },
+    ]);
+
+    await service.post({
+      type: 'test_credit',
+      idempotencyKey: 'two-currencies',
+      entries: [
+        { account: platformAccount(PLATFORM_FUNDING, 'UAH'), amount: -1n },
+        { account: userAccount(USER_ID, 'UAH'), amount: 1n },
+        { account: platformAccount(PLATFORM_FUNDING, 'USD'), amount: -2n },
+        { account: userAccount(USER_ID, 'USD'), amount: 2n },
+      ],
+    });
+
+    expect(publisher.publish).toHaveBeenCalledTimes(1);
+    expect(publisher.publish).toHaveBeenCalledWith(
+      'balance.changed',
+      expect.objectContaining({
+        userId: USER_ID,
+        balances: [
+          { currency: 'UAH', amount: '11' },
+          { currency: 'USD', amount: '22' },
+        ],
+      }),
+    );
+  });
+
+  it('publishes nothing when only platform accounts changed', async () => {
+    const { service, repository, publisher } = await setup();
+    jest.spyOn(repository, 'findAccountIds').mockResolvedValue(
+      new Map([
+        [FUNDING_KEY, FUNDING_ID],
+        [FEES_KEY, FEES_ID],
+      ]),
+    );
+    jest.spyOn(repository, 'lockAccounts').mockResolvedValue([
+      { id: FUNDING_ID, type: 'platform', balance: 0n },
+      { id: FEES_ID, type: 'platform', balance: 0n },
+    ]);
+
+    await service.post({
+      type: 'test_credit',
+      idempotencyKey: 'platform-only',
+      entries: [
+        { account: platformAccount(PLATFORM_FUNDING, 'UAH'), amount: -5n },
+        { account: platformAccount('fees', 'UAH'), amount: 5n },
+      ],
+    });
+
+    expect(publisher.publish).not.toHaveBeenCalled();
+  });
+
+  it('publishes nothing for a replay', async () => {
+    const { service, repository, publisher } = await setup();
+    jest.spyOn(repository, 'insertOperation').mockResolvedValue(InsertOperationResult.KeyTaken);
+    jest.spyOn(repository, 'findOperationByKey').mockResolvedValue({
+      id: randomUUID(),
+      type: 'test_credit',
+      fingerprint: operationFingerprint(posting),
+      createdAt: new Date(),
+      entries: [],
+    });
+
+    const result = await service.post(posting);
+
+    expect(result.replayed).toBe(true);
+    expect(publisher.publish).not.toHaveBeenCalled();
+  });
+
+  it('publishes nothing when the posting is rejected for insufficient funds', async () => {
+    const { service, publisher } = await setup();
+
+    await expect(
+      service.post({
+        type: 'test_credit',
+        idempotencyKey: 'overdraw',
+        entries: [
+          { account: platformAccount(PLATFORM_FUNDING, 'UAH'), amount: 100n },
+          { account: userAccount(USER_ID, 'UAH'), amount: -100n },
+        ],
+      }),
+    ).rejects.toMatchObject({ extensions: { code: LedgerErrorCode.InsufficientFunds } });
+
+    expect(publisher.publish).not.toHaveBeenCalled();
+  });
+
+  it('logs a failed publish and still returns the posted operation', async () => {
+    const { service, logger, publisher } = await setup();
+    const failure = new Error('redis is down');
+    publisher.publish.mockRejectedValue(failure);
+
+    const result = await service.post(posting);
+
+    expect(result.replayed).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { err: failure, operationId: result.operation.id, userId: USER_ID },
+      'balance.changed was not published',
     );
   });
 });
