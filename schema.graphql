@@ -42,20 +42,16 @@ enum DependencyStatus {
   UP
 }
 
-"""The Google account linked to the current user."""
 type GoogleAccount {
-  """
-  Verified email of the Google account, as Google reported it when it was linked.
-  """
+  """Verified by Google, as reported when the account was linked."""
   email: String!
   linkedAt: DateTime!
 }
 
 """
-What client-web received from Google on its callback route. wallet-core exchanges the code with Google itself; nothing else about the Google user is sent or trusted.
+wallet-core exchanges the code with Google itself; nothing the browser says about the Google user is trusted.
 """
 input GoogleAuthInput {
-  """The one-time `code` query parameter Google redirected back with."""
   code: String!
 
   """
@@ -64,27 +60,20 @@ input GoogleAuthInput {
   codeVerifier: String
 
   """
-  The redirect_uri used to start the Google sign-in, exactly: an allowed client-web origin + "/auth/google/callback".
+  The redirect_uri the sign-in was started with, exactly: an allowed client-web origin + "/auth/google/callback".
   """
   redirectUri: String!
 
-  """
-  The `state` query parameter Google redirected back with: the state from startGoogleLink / startGoogleLogin.
-  """
+  """From startGoogleLink / startGoogleLogin, as Google redirected it back."""
   state: String!
 }
 
 """
-Put `state` and `nonce` into the Google authorization URL. The matching httpOnly cookie is set with this answer.
+Put `state` and `nonce` into the Google authorization URL; the matching cookie is set with this answer.
 """
 type GoogleAuthStart {
-  """Finish the sign-in before this time, or start again."""
   expiresAt: DateTime!
-
-  """The `nonce` parameter of the Google authorization URL."""
   nonce: String!
-
-  """The `state` parameter of the Google authorization URL."""
   state: String!
 }
 
