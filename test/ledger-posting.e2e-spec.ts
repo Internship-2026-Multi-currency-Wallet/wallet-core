@@ -22,13 +22,14 @@ import {
   describeLedgerContract,
   expectPlainError,
   operation,
+  removeLedgerRows,
   versionOf,
 } from './ledger-contract.js';
 
 /**
  * `KnexLedgerService` against real MySQL (`npm run infra:up && npm run migrate`). Everything the test
  * creates is removed afterwards and the funding balances are put back, so the local database is left
- * as it was.
+ * as it was and `npm run ledger:verify` stays green.
  */
 describe('KnexLedgerService (e2e, real MySQL)', () => {
   let db: Knex;
@@ -105,41 +106,7 @@ describe('KnexLedgerService (e2e, real MySQL)', () => {
   const rejections = (results: PromiseSettledResult<PostResult>[]): unknown[] =>
     results.flatMap((result) => (result.status === 'rejected' ? [result.reason as unknown] : []));
 
-  /** Undoes everything the tests wrote: entries, operations, test accounts, and the funding balances. */
-  const cleanUp = async (): Promise<void> => {
-    await db.transaction(async (trx) => {
-      const ownIds = (await trx('accounts')
-        .where((q) => {
-          void q.whereIn('user_id', userIds).orWhere((p) => {
-            void p.where('type', 'platform').whereIn('code', platformCodes);
-          });
-        })
-        .pluck('id')) as string[];
-      const operationIds = (await trx('entries')
-        .whereIn('account_id', ownIds)
-        .distinct()
-        .pluck('operation_id')) as string[];
-
-      // Every operation of a test moves money between the test's own accounts and `funding`.
-      const foreign = await trx('entries')
-        .whereIn('operation_id', operationIds)
-        .whereNotIn('account_id', ownIds)
-        .groupBy('account_id')
-        .select<{ account_id: string; total: string }[]>(
-          'account_id',
-          trx.raw('CAST(SUM(amount) AS CHAR) AS total'),
-        );
-      for (const { account_id, total } of foreign) {
-        await trx('accounts')
-          .where({ id: account_id })
-          .update({ balance: trx.raw('balance - ?', [total]) });
-      }
-
-      await trx('entries').whereIn('operation_id', operationIds).delete();
-      await trx('operations').whereIn('id', operationIds).delete();
-      await trx('accounts').whereIn('id', ownIds).delete();
-    });
-  };
+  const cleanUp = (): Promise<void> => removeLedgerRows(db, { userIds, platformCodes });
 
   beforeAll(() => {
     db = createKnex(process.env.DATABASE_URL!);

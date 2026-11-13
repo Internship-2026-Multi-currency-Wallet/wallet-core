@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { GraphQLError } from 'graphql';
+import type { Knex } from 'knex';
 import { CURRENCIES, type Currency } from '../src/common/currency.js';
 import { LedgerErrorCode } from '../src/ledger/ledger-errors.js';
 import type { LedgerService } from '../src/ledger/ledger.service.js';
@@ -69,6 +70,54 @@ export async function expectPlainError(promise: Promise<unknown>): Promise<void>
   );
   expect(error).toBeInstanceOf(Error);
   expect(error).not.toBeInstanceOf(GraphQLError);
+}
+
+/**
+ * Undoes what a test wrote: the entries and operations touching its accounts, and the accounts themselves
+ * (user accounts by `userIds`, platform accounts of its own by `platformCodes`). Every operation of a test
+ * moves money between those accounts and a shared one (`funding`), so that balance goes back by the sum of
+ * the deleted entries. The version too: each deleted operation bumped it once, and `ledger:verify` compares
+ * it with the operations left.
+ */
+export async function removeLedgerRows(
+  db: Knex,
+  { userIds, platformCodes = [] }: { userIds: string[]; platformCodes?: string[] },
+): Promise<void> {
+  await db.transaction(async (trx) => {
+    const ownIds = (await trx('accounts')
+      .where((q) => {
+        void q.whereIn('user_id', userIds).orWhere((p) => {
+          void p.where('type', 'platform').whereIn('code', platformCodes);
+        });
+      })
+      .pluck('id')) as string[];
+    const operationIds = (await trx('entries')
+      .whereIn('account_id', ownIds)
+      .distinct()
+      .pluck('operation_id')) as string[];
+
+    const shared = await trx('entries')
+      .whereIn('operation_id', operationIds)
+      .whereNotIn('account_id', ownIds)
+      .groupBy('account_id')
+      .select<{ account_id: string; total: string; operations: number }[]>(
+        'account_id',
+        trx.raw('CAST(SUM(amount) AS CHAR) AS total'),
+        trx.raw('COUNT(DISTINCT operation_id) AS operations'),
+      );
+    for (const { account_id, total, operations } of shared) {
+      await trx('accounts')
+        .where({ id: account_id })
+        .update({
+          balance: trx.raw('balance - ?', [total]),
+          version: trx.raw('version - ?', [operations]),
+        });
+    }
+
+    await trx('entries').whereIn('operation_id', operationIds).delete();
+    await trx('operations').whereIn('id', operationIds).delete();
+    await trx('accounts').whereIn('id', ownIds).delete();
+  });
 }
 
 /** The order of entries is not significant (the fingerprint ignores it), so compare them sorted. */

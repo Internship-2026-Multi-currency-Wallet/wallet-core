@@ -62,6 +62,7 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
 | `npm run test:cov`                            | Unit tests with coverage                                              |
 | `npm run schema:generate`                     | Write `schema.graphql` from the resolvers without starting the server |
 | `npm run staff:create-admin [-- email]`       | Invite the first admin or re-issue a link (link shown only locally)   |
+| `npm run ledger:verify`                       | Check the ledger invariants on the database; exit 1 on a mismatch     |
 | `npm run migrate`                             | Apply pending Knex migrations                                         |
 | `npm run migrate:make -- <name>`              | Create `migrations/<timestamp>_<name>.ts`                             |
 | `npm run migrate:rollback` / `migrate:status` | Roll back the last batch / list migrations                            |
@@ -109,8 +110,61 @@ The schema is **code-first**: resolvers and `@ObjectType`s are the source of tru
 - `npm run start:dev` and the e2e tests regenerate it; `npm run schema:generate` does it without a database.
 - A PR that changes the API must include the regenerated `schema.graphql`. That diff is what consumers review.
 
-Current API: `health { service version appEnv client db redis }` (public) and `me { id kind permissions strategy }`.
-Ledger: query `balances`, subscription `balanceChanged` (live changes of the caller) and mutation `testCredit` (local and staging only).
+Current API (`schema.graphql` has the full contract):
+
+- Service: `health` (public), `me` (the caller, client or staff).
+- Client auth: `register`, `login`, `logout`, `refreshSession`.
+- Settings: `publicSettings`; back-office `staffSettings`, `settingHistory`, `updateSetting`, `resetSetting`.
+- Staff: `staffLogin`, `staffLogout`, `staffRefreshSession`, `staffMe`, `staffMembers`, `inviteStaff`,
+  `resendStaffInvitation`, `acceptStaffInvitation`, `changeStaffRole`, `deactivateStaff`, `changeOwnStaffPassword`.
+- Ledger: `balances`, subscription `balanceChanged` (live changes of the caller), `testCredit` (`NOT_FOUND` on
+  `kvitka-uat` / `wisla-uat`).
+
+## Ledger
+
+Double-entry bookkeeping in `src/ledger/`: money only moves as an **operation**, a set of signed **entries** that sum to zero
+in every currency. Amounts are integers in minor units (`bigint` in code, text in GraphQL).
+
+| Table        | Holds                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------- |
+| `accounts`   | One row per owner and currency, with the stored `balance` and `version`                 |
+| `operations` | One row per posting: `type`, a globally unique `idempotency_key`, a content fingerprint |
+| `entries`    | The signed lines of an operation. Never updated or deleted                              |
+
+Account types: `user` (created by the first posting that names it), `platform` (`funding` is the source of top-ups and
+test credits) and `external`.
+
+A feature posts through `LedgerService` (never through SQL) and prefixes the idempotency key with the operation type:
+
+```ts
+await this.ledger.post({
+  type: 'transfer', // add the type to OperationType in ledger.types.ts
+  idempotencyKey: `transfer:${transferId}`,
+  entries: [
+    { account: userAccount(senderId, 'UAH'), amount: -amount },
+    { account: userAccount(receiverId, 'UAH'), amount },
+  ],
+});
+```
+
+- **Rules.** Each currency of an operation sums to zero (otherwise a plain `Error`: a bug in the caller). A user balance never
+  goes below zero: `INSUFFICIENT_FUNDS`. Platform and external accounts may. They must already exist
+  (created by a migration or the feature's setup), otherwise `post` throws `Unknown ledger account`.
+- **Idempotency.** The same key and the same content is a replay: `replayed: true`, nothing is written, so do not repeat side
+  effects. The same key with other content is `IDEMPOTENCY_CONFLICT`.
+- **Stored balance and `version`.** `balance` is kept equal to the sum of the account's entries in the same transaction. `version`
+  grows by 1 each time a posting writes the account.
+- **Live updates.** After a new posting commits, `balance.changed` is published per affected user (Redis pub/sub, a UI hint,
+  not a guarantee) and reaches the client as the `balanceChanged` subscription. A frontend subscribes first, then reads
+  `balances`, and keeps the value with the larger `version`.
+- **`testCredit`** mints fake money from `funding`. It is in the schema everywhere, but answers `NOT_FOUND` on `kvitka-uat` and `wisla-uat`.
+- **`npm run ledger:verify`** recomputes the invariants from the entries and exits with 1 on a mismatch: stored balance =
+  sum of entries, each currency and each operation sums to zero, `version` = number of operations on the account. It only
+  reads (one consistent snapshot, so it is safe on a running system), needs only the database and lists at most 20
+  rows per check. Run it after a migration or when a balance looks wrong. Locally: `npm run ledger:verify`. In a deployed
+  container there is no Nest CLI and no `src` (only `dist` and the production dependencies): `node dist/ledger-verify.js`.
+- **Local database drift.** A database used by the ledger e2e tests before they restored the `funding` version may show a
+  `version` mismatch; `npm run migrate:rollback && npm run migrate` resets the ledger tables.
 
 ## Rate limits
 
@@ -452,6 +506,7 @@ src/
   health/        GET /health and `health` query
   config/        env validation + AppConfig
   database/      Knex (KNEX token)    redis/   ioredis (REDIS token)
+  ledger/        LedgerService (double-entry postings, balances), `balances` / `balanceChanged`, ledger:verify
   graphql/       Apollo options
   metrics/       Prometheus registry, request metrics, GET /metrics on METRICS_PORT
 migrations/      Knex migrations (timestamped)
