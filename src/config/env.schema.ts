@@ -90,6 +90,9 @@ export const envSchema = z
     JWT_ACCESS_TTL: durationInSeconds('15m'),
     // Lifetime of a session (refresh token), counted from login.
     JWT_REFRESH_TTL: durationInSeconds('30d'),
+    // Google OAuth client (type "Web application") for "Sign in with Google". Optional until the login is built.
+    GOOGLE_CLIENT_ID: z.string().trim().min(1).optional(),
+    GOOGLE_CLIENT_SECRET: z.string().trim().min(1).optional(),
     THROTTLE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
     THROTTLE_LIMIT_ANONYMOUS: z.coerce.number().int().positive().default(120),
     THROTTLE_LIMIT_USER: z.coerce.number().int().positive().default(600),
@@ -127,6 +130,13 @@ export const envSchema = z
           message: 'must not point to a local host when NODE_ENV=production',
         });
       }
+    }
+    if (env.GOOGLE_CLIENT_SECRET !== undefined && env.GOOGLE_CLIENT_ID === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['GOOGLE_CLIENT_ID'],
+        message: 'is required when GOOGLE_CLIENT_SECRET is set',
+      });
     }
     // 0 is a random port that Alloy cannot scrape; only the e2e tests use it.
     if (env.METRICS_PORT === 0 && env.NODE_ENV !== 'test') {

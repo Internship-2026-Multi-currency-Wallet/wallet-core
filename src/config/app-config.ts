@@ -59,6 +59,8 @@ export class AppConfig {
     accessTtlSeconds: number;
     sessionTtlSeconds: number;
   };
+  /** Google OAuth client; both are undefined until configured. The secret never leaves the backend. */
+  readonly google: { clientId?: string; clientSecret?: string };
   readonly throttle: { ttlSeconds: number; limitAnonymous: number; limitUser: number };
 
   constructor(env: Env) {
@@ -91,6 +93,7 @@ export class AppConfig {
       accessTtlSeconds: env.JWT_ACCESS_TTL,
       sessionTtlSeconds: env.JWT_REFRESH_TTL,
     };
+    this.google = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET };
     this.throttle = {
       ttlSeconds: env.THROTTLE_TTL_SECONDS,
       limitAnonymous: env.THROTTLE_LIMIT_ANONYMOUS,
