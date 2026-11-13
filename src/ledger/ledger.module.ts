@@ -1,11 +1,15 @@
 import { Module } from '@nestjs/common';
-import { FakeLedgerService } from './fake-ledger.service.js';
+import { KnexLedgerService } from './knex-ledger.service.js';
+import { LedgerRepository } from './ledger.repository.js';
 import { LedgerResolver } from './ledger.resolver.js';
 import { LedgerService } from './ledger.service.js';
 
 @Module({
-  // The fake stays bound until the Knex implementation lands.
-  providers: [LedgerResolver, { provide: LedgerService, useClass: FakeLedgerService }],
+  providers: [
+    LedgerResolver,
+    LedgerRepository,
+    { provide: LedgerService, useClass: KnexLedgerService },
+  ],
   exports: [LedgerService],
 })
 export class LedgerModule {}
