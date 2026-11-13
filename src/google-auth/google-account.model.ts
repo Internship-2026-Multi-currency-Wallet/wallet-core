@@ -1,10 +1,8 @@
 import { Field, ObjectType } from '@nestjs/graphql';
 
-@ObjectType({ description: 'The Google account linked to the current user.' })
+@ObjectType()
 export class GoogleAccount {
-  @Field({
-    description: 'Verified email of the Google account, as Google reported it when it was linked.',
-  })
+  @Field({ description: 'Verified by Google, as reported when the account was linked.' })
   email: string;
 
   @Field()
@@ -13,15 +11,15 @@ export class GoogleAccount {
 
 @ObjectType({
   description:
-    'Put `state` and `nonce` into the Google authorization URL. The matching httpOnly cookie is set with this answer.',
+    'Put `state` and `nonce` into the Google authorization URL; the matching cookie is set with this answer.',
 })
 export class GoogleAuthStart {
-  @Field({ description: 'The `state` parameter of the Google authorization URL.' })
+  @Field()
   state: string;
 
-  @Field({ description: 'The `nonce` parameter of the Google authorization URL.' })
+  @Field()
   nonce: string;
 
-  @Field({ description: 'Finish the sign-in before this time, or start again.' })
+  @Field()
   expiresAt: Date;
 }

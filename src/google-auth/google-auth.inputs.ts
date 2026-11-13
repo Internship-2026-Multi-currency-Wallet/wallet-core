@@ -2,21 +2,18 @@ import { Field, InputType } from '@nestjs/graphql';
 
 @InputType({
   description:
-    'What client-web received from Google on its callback route. wallet-core exchanges the code with Google itself; nothing else about the Google user is sent or trusted.',
+    'wallet-core exchanges the code with Google itself; nothing the browser says about the Google user is trusted.',
 })
 export class GoogleAuthInput {
-  @Field({ description: 'The one-time `code` query parameter Google redirected back with.' })
+  @Field()
   code: string;
 
-  @Field({
-    description:
-      'The `state` query parameter Google redirected back with: the state from startGoogleLink / startGoogleLogin.',
-  })
+  @Field({ description: 'From startGoogleLink / startGoogleLogin, as Google redirected it back.' })
   state: string;
 
   @Field({
     description:
-      'The redirect_uri used to start the Google sign-in, exactly: an allowed client-web origin + "/auth/google/callback".',
+      'The redirect_uri the sign-in was started with, exactly: an allowed client-web origin + "/auth/google/callback".',
   })
   redirectUri: string;
 
