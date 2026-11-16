@@ -183,7 +183,7 @@ describe('metrics (e2e)', () => {
   });
 
   it('counts GraphQL errors of an operation sent over the websocket', async () => {
-    const labels = { operation: 'query me', code: 'INTERNAL_SERVER_ERROR' };
+    const labels = { operation: 'query me', code: 'UNAUTHENTICATED' };
     const before = valueOf(await scrape(), 'graphql_errors_total', labels);
     const client = createClient({ url: wsUrl, webSocketImpl: WebSocket, retryAttempts: 0 });
     await new Promise<void>((resolve, reject) => {
