@@ -95,10 +95,7 @@ export class AuthService {
     return result;
   }
 
-  /**
-   * Asks a signed-in user for their password again before a change that a stolen access token must not make.
-   * Wrong passwords count towards the same lock as failed logins.
-   */
+  /** Asks a signed-in user for their password again before a change that a stolen access token must not make. */
   async confirmPassword(userId: string, password: string, now: Date = new Date()): Promise<void> {
     if (password.length > PASSWORD_MAX_LENGTH) throw invalidCredentials();
     const user = await this.users.findById(userId);
