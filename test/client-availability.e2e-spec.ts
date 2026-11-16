@@ -159,6 +159,9 @@ async function boot(client: ClientCode): Promise<Booted> {
     JWT_SECRET: TEST_JWT_SECRET,
     LOG_LEVEL: 'warn',
     EMAIL_PREVIEW_ENABLED: 'true',
+    // e2e apps share one Redis counter per IP: use the setup-env.ts limits, not the defaults.
+    THROTTLE_LIMIT_ANONYMOUS: process.env.THROTTLE_LIMIT_ANONYMOUS,
+    THROTTLE_LIMIT_USER: process.env.THROTTLE_LIMIT_USER,
   });
   const moduleRef = await Test.createTestingModule({ imports: [AppModule, ProbeModule] })
     .overrideProvider(AppConfig)

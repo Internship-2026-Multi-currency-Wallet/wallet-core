@@ -1,8 +1,9 @@
 import { Writable } from 'node:stream';
 import { ApolloServer } from '@apollo/server';
+import { UnauthorizedException } from '@nestjs/common';
 import { GraphQLError, buildSchema, graphql } from 'graphql';
 import { type Logger, pino } from 'pino';
-import { type GraphqlLoggingOptions, graphqlLoggingPlugin } from './graphql-logging.js';
+import { graphqlLoggingPlugin } from './graphql-logging.js';
 
 type Plugin = ReturnType<typeof graphqlLoggingPlugin>;
 type StartContext = Parameters<NonNullable<Plugin['requestDidStart']>>[0];
@@ -31,9 +32,9 @@ function captureLog() {
 }
 
 /** Runs the plugin's error hook on one error and returns the JSON line it logged. */
-async function logError(error: GraphQLError, options?: GraphqlLoggingOptions): Promise<LogLine> {
+async function logError(error: GraphQLError): Promise<LogLine> {
   const { log, lines } = captureLog();
-  const listener = await graphqlLoggingPlugin(options).requestDidStart?.({} as StartContext);
+  const listener = await graphqlLoggingPlugin().requestDidStart?.({} as StartContext);
   await listener?.didEncounterErrors?.({
     contextValue: { req: { log } },
     errors: [error],
@@ -47,49 +48,61 @@ async function logError(error: GraphQLError, options?: GraphqlLoggingOptions): P
 const withCode = (code: string) =>
   new GraphQLError('Invalid email or password', { extensions: { code } });
 
+/** How graphql-js hands a resolver's error to Apollo: a located wrapper with a path. */
+const fromResolver = (original: Error, extensions?: Record<string, unknown>) =>
+  new GraphQLError(original.message, { path: ['login'], originalError: original, extensions });
+
 describe('graphqlLoggingPlugin', () => {
-  it('logs a built-in client code as warn, without err', async () => {
-    const line = await logError(withCode('UNAUTHENTICATED'));
-    expect(line).toMatchObject({ level: 'warn', code: 'UNAUTHENTICATED' });
+  it.each(['UNAUTHENTICATED', 'INVALID_CREDENTIALS', 'NOT_IN_ANY_CATALOG'])(
+    'logs a GraphQLError with the code %s as warn, without err',
+    async (code) => {
+      const line = await logError(fromResolver(withCode(code)));
+      expect(line).toMatchObject({
+        level: 'warn',
+        code,
+        path: 'login',
+        msg: 'GraphQL error: Invalid email or password',
+      });
+      expect(line.err).toBeUndefined();
+    },
+  );
+
+  it('logs a Nest 4xx exception as warn, without err', async () => {
+    const line = await logError(fromResolver(new UnauthorizedException()));
+    expect(line).toMatchObject({ level: 'warn', code: 'HTTP_401' });
     expect(line.err).toBeUndefined();
   });
 
-  it('logs a passed business code as warn, without err', async () => {
-    const line = await logError(withCode('INVALID_CREDENTIALS'), {
-      clientErrorCodes: ['INVALID_CREDENTIALS'],
+  it('logs a plain Error with a 4xx status as error with the stack', async () => {
+    const original = Object.assign(new Error('Request failed with status code 401'), {
+      status: 401,
     });
-    expect(line).toMatchObject({
-      level: 'warn',
-      code: 'INVALID_CREDENTIALS',
-      msg: 'GraphQL error: Invalid email or password',
-    });
-    expect(line.err).toBeUndefined();
+    const line = await logError(fromResolver(original));
+    expect(line).toMatchObject({ level: 'error', code: 'INTERNAL_SERVER_ERROR' });
+    expect(line.err).toMatchObject({ type: 'Error', stack: original.stack });
   });
 
-  it('logs a business code as error when the service did not pass it', async () => {
-    const line = await logError(withCode('INVALID_CREDENTIALS'));
-    expect(line).toMatchObject({ level: 'error', code: 'INVALID_CREDENTIALS' });
-    expect(line.err?.stack).toEqual(expect.any(String));
-  });
-
-  it('logs an unknown code as error with the stack', async () => {
-    const line = await logError(withCode('SOMETHING_BROKE'), {
-      clientErrorCodes: ['INVALID_CREDENTIALS'],
-    });
-    expect(line).toMatchObject({ level: 'error', code: 'SOMETHING_BROKE' });
-    expect(line.err?.stack).toEqual(expect.any(String));
+  it('logs a GraphQLError without a code as INTERNAL_SERVER_ERROR with the stack', async () => {
+    const original = new GraphQLError('resolver bug');
+    const line = await logError(fromResolver(original));
+    expect(line).toMatchObject({ level: 'error', code: 'INTERNAL_SERVER_ERROR' });
+    expect(line.err).toMatchObject({ type: 'GraphQLError', stack: original.stack });
   });
 
   it('logs an error without a code as INTERNAL_SERVER_ERROR with the stack', async () => {
     const original = new Error('connect ECONNREFUSED');
     const line = await logError(
       new GraphQLError('connect ECONNREFUSED', { originalError: original }),
-      {
-        clientErrorCodes: ['INVALID_CREDENTIALS'],
-      },
     );
     expect(line).toMatchObject({ level: 'error', code: 'INTERNAL_SERVER_ERROR' });
     expect(line.err).toMatchObject({ message: 'connect ECONNREFUSED', stack: original.stack });
+  });
+
+  it('logs a plain Error as error even when its wrapper carries a code', async () => {
+    const original = new Error('deadlock');
+    const line = await logError(fromResolver(original, { code: 'TOO_MANY_REQUESTS' }));
+    expect(line).toMatchObject({ level: 'error', code: 'TOO_MANY_REQUESTS' });
+    expect(line.err).toMatchObject({ type: 'Error', stack: original.stack });
   });
 });
 

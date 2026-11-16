@@ -72,6 +72,8 @@ describe('staffRefreshSession (e2e, real MySQL)', () => {
     await db('staff_sessions').delete();
     await db('staff_invitations').delete();
     await db('staff').delete();
+    await db('client_setting_changes').delete();
+    await db('client_settings').delete();
     await seedActive(ADMIN_ID, StaffRole.ADMIN);
     await seedActive(MEMBER_ID, StaffRole.SUPPORT);
   });
@@ -175,9 +177,10 @@ describe('staffRefreshSession (e2e, real MySQL)', () => {
 
   describe('isolation from user sessions', () => {
     const userLogin = async () => {
-      await send(
+      const registered = await send(
         'mutation { register(input: { email: "artem@test.com", password: "Qwerty1!" }) { id } }',
       ).expect(200);
+      expect((registered.body as GqlResponse).errors).toBeUndefined();
       return send(
         'mutation { login(input: { email: "artem@test.com", password: "Qwerty1!" }) { accessToken } }',
       );
