@@ -27,6 +27,7 @@ const OTHER_USER_ID = '00000000-0000-4000-8000-000000000002';
 const NOW = new Date('2026-11-13T10:00:00.000Z');
 const REDIRECT_URI = 'http://localhost:5173/auth/google/callback';
 const SUB = 'google-sub-1';
+const PASSWORD = 'Qwerty1!';
 const EMAIL = 'user@gmail.com';
 const LINKED: LinkedGoogleAccount = {
   userId: USER_ID,
@@ -95,6 +96,15 @@ function setup(options: SetupOptions = {}) {
   };
   transaction.mockImplementation((work) => work(accounts, TRX));
   const auth = {
+    confirmPassword: jest.fn((_userId: string, password: string, _now: Date) =>
+      password === PASSWORD
+        ? Promise.resolve()
+        : Promise.reject(
+            new GraphQLError('Invalid email or password', {
+              extensions: { code: 'INVALID_CREDENTIALS' },
+            }),
+          ),
+    ),
     startSession: jest.fn(
       (_user: User, _previous: string | undefined, _now: Date, _trx?: unknown) =>
         Promise.resolve(LOGIN_RESULT),
@@ -159,24 +169,45 @@ const FLOWS: [string, Flow][] = [
 ];
 
 describe('GoogleAuthService', () => {
-  describe('start', () => {
-    it('issues a link sign-in bound to the user, and a login sign-in bound to nobody', async () => {
-      const { service, states } = setup();
-      const link = await service.start(USER_ID, NOW);
+  describe('startLink', () => {
+    it("checks the user's password, then issues a link sign-in bound to the user", async () => {
+      const { service, states, auth } = setup();
+      const link = await service.startLink(USER_ID, PASSWORD, NOW);
+      expect(auth.confirmPassword).toHaveBeenCalledWith(USER_ID, PASSWORD, NOW);
       expect(link.expiresAt).toEqual(new Date(NOW.getTime() + 10 * 60 * 1000));
       expect(
         states.check(link.cookie, { purpose: 'link', userId: USER_ID, state: link.state }, NOW),
       ).toBe(link.nonce);
+    });
 
-      const login = await service.start(null, NOW);
+    it('issues nothing for a wrong password and passes its error on', async () => {
+      const error = await errorOf(setup().service.startLink(USER_ID, 'Wrong1!pass', NOW));
+      expect(error.extensions.code).toBe('INVALID_CREDENTIALS');
+    });
+
+    it('answers GOOGLE_LOGIN_DISABLED without checking the password, so no attempt is counted', async () => {
+      for (const options of [{ googleLogin: false }, { verifier: null }]) {
+        const { service, auth } = setup(options);
+        const error = await errorOf(service.startLink(USER_ID, 'Wrong1!pass', NOW));
+        expect(error.extensions.code).toBe('GOOGLE_LOGIN_DISABLED');
+        expect(auth.confirmPassword).not.toHaveBeenCalled();
+      }
+    });
+  });
+
+  describe('startLogin', () => {
+    it('issues a login sign-in bound to nobody, without asking for a password', async () => {
+      const { service, states, auth } = setup();
+      const login = await service.startLogin(NOW);
       expect(
         states.check(login.cookie, { purpose: 'login', userId: null, state: login.state }, NOW),
       ).toBe(login.nonce);
+      expect(auth.confirmPassword).not.toHaveBeenCalled();
     });
 
     it('answers GOOGLE_LOGIN_DISABLED when the setting is off or Google is not configured', async () => {
       for (const options of [{ googleLogin: false }, { verifier: null }]) {
-        const error = await errorOf(setup(options).service.start(null, NOW));
+        const error = await errorOf(setup(options).service.startLogin(NOW));
         expect(error.extensions.code).toBe('GOOGLE_LOGIN_DISABLED');
       }
     });

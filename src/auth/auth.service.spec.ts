@@ -29,7 +29,7 @@ const PHONE_REQUIRED_AT: readonly PhoneRequiredAt[] =
 interface SetupOptions {
   insert?: InsertUserResult;
   phoneRequiredAt?: PhoneRequiredAt;
-  /** What findByEmail answers. */
+  /** What findByEmail and findById answer. */
   credentials?: UserCredentials | null;
   /** What recordFailedLogin answers. */
   lockedUntil?: Date | null;
@@ -47,6 +47,7 @@ function setup(options: SetupOptions = {}) {
       Promise.resolve(options.insert ?? InsertUserResult.Created),
     ),
     findByEmail: jest.fn((_email: string) => Promise.resolve(options.credentials ?? null)),
+    findById: jest.fn((_id: string) => Promise.resolve(options.credentials ?? null)),
     recordFailedLogin: jest.fn((_userId: string, _policy: LoginLockPolicy) =>
       Promise.resolve(options.lockedUntil ?? null),
     ),
@@ -347,6 +348,95 @@ describe('AuthService.login', () => {
         expect(logged).not.toContain(result.payload.accessToken);
       }
     }
+  });
+});
+
+describe('AuthService.confirmPassword', () => {
+  const USER_ID = '0b6f3c2e-8d4a-4f7e-9c1b-2a5d6e7f8a9b';
+  const NOW = new Date('2026-11-04T10:00:00.000Z');
+  const LOCKED_UNTIL = new Date('2026-11-04T10:15:00.000Z');
+  let credentials: UserCredentials;
+
+  beforeAll(async () => {
+    credentials = {
+      id: USER_ID,
+      email: 'artem@test.com',
+      phone: null,
+      passwordHash: await hash(PASSWORD),
+      lockedUntil: null,
+    };
+  });
+
+  it("accepts the user's password, resets the failed attempts and starts no session", async () => {
+    const { service, users, sessions } = setup({ credentials });
+    await expect(service.confirmPassword(USER_ID, PASSWORD, NOW)).resolves.toBeUndefined();
+    expect(users.findById).toHaveBeenCalledWith(USER_ID);
+    expect(users.recordSuccessfulLogin).toHaveBeenCalledWith(USER_ID, NOW);
+    expect(sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('counts a wrong password like a failed login and answers INVALID_CREDENTIALS', async () => {
+    const { service, users } = setup({ credentials });
+    const error = await graphqlErrorOf(service.confirmPassword(USER_ID, 'Wrong1!pass', NOW));
+    expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+    expect(users.recordFailedLogin).toHaveBeenCalledWith(USER_ID, {
+      now: NOW,
+      maxFailedAttempts: 5,
+      lockDurationMs: 15 * 60 * 1000,
+    });
+    expect(users.recordSuccessfulLogin).not.toHaveBeenCalled();
+  });
+
+  it('answers ACCOUNT_LOCKED when the wrong password locks the account', async () => {
+    const { service } = setup({ credentials, lockedUntil: LOCKED_UNTIL });
+    const error = await graphqlErrorOf(service.confirmPassword(USER_ID, 'Wrong1!pass', NOW));
+    expect(error.extensions).toEqual({
+      code: 'ACCOUNT_LOCKED',
+      lockedUntil: '2026-11-04T10:15:00.000Z',
+    });
+  });
+
+  it('answers ACCOUNT_LOCKED while locked, even for the right password, without counting', async () => {
+    const { service, users } = setup({
+      credentials: { ...credentials, lockedUntil: LOCKED_UNTIL },
+    });
+    const error = await graphqlErrorOf(service.confirmPassword(USER_ID, PASSWORD, NOW));
+    expect(error.extensions.code).toBe('ACCOUNT_LOCKED');
+    expect(users.recordFailedLogin).not.toHaveBeenCalled();
+  });
+
+  it('answers ACCOUNT_LOCKED for the right password when parallel failures locked the account meanwhile', async () => {
+    const { service } = setup({ credentials, lockedMeanwhile: LOCKED_UNTIL });
+    const error = await graphqlErrorOf(service.confirmPassword(USER_ID, PASSWORD, NOW));
+    expect(error.extensions.code).toBe('ACCOUNT_LOCKED');
+  });
+
+  it('answers INVALID_CREDENTIALS for an empty or too long password, and for an unknown user', async () => {
+    const tooLong = setup({ credentials });
+    const error = await graphqlErrorOf(
+      tooLong.service.confirmPassword(USER_ID, `${PASSWORD}${'x'.repeat(121)}`, NOW),
+    );
+    expect(error.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+    expect(tooLong.users.findById).not.toHaveBeenCalled();
+
+    const empty = await graphqlErrorOf(
+      setup({ credentials }).service.confirmPassword(USER_ID, '', NOW),
+    );
+    expect(empty.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+
+    const unknown = await graphqlErrorOf(
+      setup({ credentials: null }).service.confirmPassword(USER_ID, PASSWORD, NOW),
+    );
+    expect(unknown.extensions).toEqual({ code: 'INVALID_CREDENTIALS' });
+  });
+
+  it('never logs the password', async () => {
+    const { service, logger } = setup({ credentials });
+    await service.confirmPassword(USER_ID, PASSWORD, NOW);
+    await service.confirmPassword(USER_ID, 'Wrong1!pass', NOW).catch(() => undefined);
+    const logged = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls]);
+    expect(logged).not.toContain(PASSWORD);
+    expect(logged).not.toContain('Wrong1!pass');
   });
 });
 

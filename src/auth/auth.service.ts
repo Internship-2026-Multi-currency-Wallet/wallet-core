@@ -17,7 +17,7 @@ import type { RegisterInput } from './register.input.js';
 import { SessionsRepository } from './sessions.repository.js';
 import { TokenService, USER_PERMISSIONS, hashRefreshToken, newRefreshToken } from './tokens.js';
 import type { User } from './user.model.js';
-import { InsertUserResult, UsersRepository } from './users.repository.js';
+import { InsertUserResult, type UserCredentials, UsersRepository } from './users.repository.js';
 
 export const MAX_FAILED_LOGINS = 5;
 export const LOGIN_LOCK_MS = 15 * 60 * 1000;
@@ -84,28 +84,7 @@ export class AuthService {
       this.logger.warn('login rejected: unknown email');
       throw invalidCredentials();
     }
-    // Checked before the password, so a locked account does not tell whether a guess was right.
-    if (user.lockedUntil && user.lockedUntil > now) {
-      this.logger.warn({ userId: user.id }, 'login rejected: account locked');
-      throw accountLocked(user.lockedUntil);
-    }
-
-    if (!(await verify(user.passwordHash, input.password))) {
-      const lockedUntil = await this.users.recordFailedLogin(user.id, {
-        now,
-        maxFailedAttempts: MAX_FAILED_LOGINS,
-        lockDurationMs: LOGIN_LOCK_MS,
-      });
-      this.logger.warn({ userId: user.id, locked: lockedUntil !== null }, 'login rejected');
-      throw lockedUntil ? accountLocked(lockedUntil) : invalidCredentials();
-    }
-
-    // Parallel wrong guesses may have locked the account while argon2 ran.
-    const lockedMeanwhile = await this.users.recordSuccessfulLogin(user.id, now);
-    if (lockedMeanwhile) {
-      this.logger.warn({ userId: user.id }, 'login rejected: account locked');
-      throw accountLocked(lockedMeanwhile);
-    }
+    await this.checkPassword(user, input.password, 'login', now);
 
     const result = await this.startSession(
       { id: user.id, email: user.email, phone: user.phone },
@@ -114,6 +93,47 @@ export class AuthService {
     );
     this.logger.info({ userId: user.id }, 'user logged in');
     return result;
+  }
+
+  /**
+   * Asks a signed-in user for their password again before a change that a stolen access token must not make.
+   * Wrong passwords count towards the same lock as failed logins.
+   */
+  async confirmPassword(userId: string, password: string, now: Date = new Date()): Promise<void> {
+    if (password.length > PASSWORD_MAX_LENGTH) throw invalidCredentials();
+    const user = await this.users.findById(userId);
+    if (!user) throw invalidCredentials();
+    await this.checkPassword(user, password, 'password confirmation', now);
+  }
+
+  private async checkPassword(
+    user: UserCredentials,
+    password: string,
+    action: 'login' | 'password confirmation',
+    now: Date,
+  ): Promise<void> {
+    // Checked before the password, so a locked account does not tell whether a guess was right.
+    if (user.lockedUntil && user.lockedUntil > now) {
+      this.logger.warn({ userId: user.id }, `${action} rejected: account locked`);
+      throw accountLocked(user.lockedUntil);
+    }
+
+    if (!(await verify(user.passwordHash, password))) {
+      const lockedUntil = await this.users.recordFailedLogin(user.id, {
+        now,
+        maxFailedAttempts: MAX_FAILED_LOGINS,
+        lockDurationMs: LOGIN_LOCK_MS,
+      });
+      this.logger.warn({ userId: user.id, locked: lockedUntil !== null }, `${action} rejected`);
+      throw lockedUntil ? accountLocked(lockedUntil) : invalidCredentials();
+    }
+
+    // Parallel wrong guesses may have locked the account while argon2 ran.
+    const lockedMeanwhile = await this.users.recordSuccessfulLogin(user.id, now);
+    if (lockedMeanwhile) {
+      this.logger.warn({ userId: user.id }, `${action} rejected: account locked`);
+      throw accountLocked(lockedMeanwhile);
+    }
   }
 
   /** The caller must already have checked the user's identity and lock. */

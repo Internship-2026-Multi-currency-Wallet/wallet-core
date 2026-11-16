@@ -67,9 +67,17 @@ export class UsersRepository {
     }
   }
 
-  async findByEmail(email: string): Promise<UserCredentials | null> {
+  findByEmail(email: string): Promise<UserCredentials | null> {
+    return this.findCredentials({ email });
+  }
+
+  findById(id: string): Promise<UserCredentials | null> {
+    return this.findCredentials({ id });
+  }
+
+  private async findCredentials(where: Partial<UserRow>): Promise<UserCredentials | null> {
     const row = await this.db<UserRow>(USERS)
-      .where({ email })
+      .where(where)
       .first('id', 'email', 'phone', 'password_hash', 'locked_until');
     if (!row) return null;
     return {
