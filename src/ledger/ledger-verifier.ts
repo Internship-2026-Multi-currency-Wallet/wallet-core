@@ -26,11 +26,17 @@ export interface VersionMismatch {
   operations: number;
 }
 
+export interface EmptyOperation {
+  operationId: string;
+  type: string;
+}
+
 export interface LedgerVerifyReport {
   balances: BalanceMismatch[];
   currencies: CurrencyMismatch[];
   operations: OperationMismatch[];
   versions: VersionMismatch[];
+  emptyOperations: EmptyOperation[];
 }
 
 // BIGINT and SUM() (a DECIMAL) are read as text: mysql2 would turn them into a lossy JS number.
@@ -72,6 +78,14 @@ const VERSIONS_SQL = `
   HAVING a.version <> COUNT(DISTINCT e.operation_id)
   ORDER BY a.currency, a.id`;
 
+// The other checks group entries, so an operation row without any entry is invisible to them.
+const EMPTY_OPERATIONS_SQL = `
+  SELECT o.id AS operation_id, o.type
+  FROM operations o
+  LEFT JOIN entries e ON e.operation_id = o.id
+  WHERE e.id IS NULL
+  ORDER BY o.created_at, o.id`;
+
 interface BalanceRow {
   account_id: string;
   currency: string;
@@ -94,9 +108,13 @@ interface VersionRow {
   version: string;
   operations: number | string;
 }
+interface EmptyOperationRow {
+  operation_id: string;
+  type: string;
+}
 
 /**
- * Relies on InnoDB's default REPEATABLE READ for one snapshot across the four checks, because knex writes invalid
+ * Relies on InnoDB's default REPEATABLE READ for one snapshot across the five checks, because knex writes invalid
  * MySQL (`ISOLATION LEVEL x READ ONLY`, no comma) when an isolation level is combined with read-only.
  */
 export async function verifyLedger(db: Knex): Promise<LedgerVerifyReport> {
@@ -110,6 +128,7 @@ export async function verifyLedger(db: Knex): Promise<LedgerVerifyReport> {
       const currencies = await rows<CurrencyRow>(CURRENCIES_SQL);
       const operations = await rows<OperationRow>(OPERATIONS_SQL);
       const versions = await rows<VersionRow>(VERSIONS_SQL);
+      const emptyOperations = await rows<EmptyOperationRow>(EMPTY_OPERATIONS_SQL);
       return {
         balances: balances.map((row) => ({
           accountId: row.account_id,
@@ -129,6 +148,10 @@ export async function verifyLedger(db: Knex): Promise<LedgerVerifyReport> {
           currency: row.currency,
           version: BigInt(row.version),
           operations: Number(row.operations),
+        })),
+        emptyOperations: emptyOperations.map((row) => ({
+          operationId: row.operation_id,
+          type: row.type,
         })),
       };
     },

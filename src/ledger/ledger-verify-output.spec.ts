@@ -6,7 +6,13 @@ import type {
   VersionMismatch,
 } from './ledger-verifier.js';
 
-const healthy: LedgerVerifyReport = { balances: [], currencies: [], operations: [], versions: [] };
+const healthy: LedgerVerifyReport = {
+  balances: [],
+  currencies: [],
+  operations: [],
+  versions: [],
+  emptyOperations: [],
+};
 
 const balance = (index: number): BalanceMismatch => ({
   accountId: `account-${index}`,
@@ -32,13 +38,13 @@ const failedBlocks = (text: string): string[] =>
   lines(text).filter((line) => line.startsWith('✗ '));
 
 describe('formatLedgerVerifyReport', () => {
-  it('prints four passed checks and a consistent verdict for a healthy ledger', () => {
+  it('prints five passed checks and a consistent verdict for a healthy ledger', () => {
     const { text, consistent } = formatLedgerVerifyReport(healthy);
     expect(consistent).toBe(true);
     const out = lines(text);
-    expect(out).toHaveLength(5);
-    expect(out.slice(0, 4).every((line) => line.startsWith('✓ '))).toBe(true);
-    expect(out[4]).toBe('Ledger is consistent.');
+    expect(out).toHaveLength(6);
+    expect(out.slice(0, 5).every((line) => line.startsWith('✓ '))).toBe(true);
+    expect(out[5]).toBe('Ledger is consistent.');
   });
 
   it('fails on a stored balance that differs from the entries, naming the account and both amounts', () => {
@@ -80,6 +86,17 @@ describe('formatLedgerVerifyReport', () => {
     expect(failedBlocks(text)).toHaveLength(1);
   });
 
+  it('fails on an operation without entries, naming the operation and its type', () => {
+    const { text, consistent } = formatLedgerVerifyReport({
+      ...healthy,
+      emptyOperations: [{ operationId: 'operation-1', type: 'test_credit' }],
+    });
+    expect(consistent).toBe(false);
+    expect(text).toContain('✗ Every operation has entries: 1 mismatch\n');
+    expect(text).toContain('  operation operation-1 (test_credit): no entries\n');
+    expect(failedBlocks(text)).toHaveLength(1);
+  });
+
   it('prints a corrupted version above 2^53 exactly', () => {
     const { text } = formatLedgerVerifyReport({
       ...healthy,
@@ -100,7 +117,7 @@ describe('formatLedgerVerifyReport', () => {
       '✗ Stored balance equals the sum of entries, per account: 1 mismatch',
       '✗ Version equals the number of operations, per account: 1 mismatch',
     ]);
-    expect(out.filter((line) => line.startsWith('✓ '))).toHaveLength(2);
+    expect(out.filter((line) => line.startsWith('✓ '))).toHaveLength(3);
     expect(text).toContain('  account account-1 UAH: stored 100, entries 101\n');
     expect(text).toContain('  account account-2 EUR: version 3, operations 2\n');
     expect(out.at(-1)).toBe('Ledger has mismatches.');

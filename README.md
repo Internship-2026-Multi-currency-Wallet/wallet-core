@@ -159,9 +159,9 @@ await this.ledger.post({
   `balances`, and keeps the value with the larger `version`.
 - **`testCredit`** mints fake money from `funding`. It is in the schema everywhere, but answers `NOT_FOUND` on `kvitka-uat` and `wisla-uat`.
 - **`npm run ledger:verify`** recomputes the invariants from the entries and exits with 1 on a mismatch: stored balance =
-  sum of entries, each currency and each operation sums to zero, `version` = number of operations on the account. It only
-  reads (one consistent snapshot, so it is safe on a running system), needs only the database and lists at most 20
-  rows per check. Run it after a migration or when a balance looks wrong. Locally: `npm run ledger:verify`. In a deployed
+  sum of entries, each currency and each operation sums to zero, `version` = number of operations on the account, every
+  operation has at least one entry. It only reads (one consistent snapshot, so it is safe on a running system), needs
+  only the database and lists at most 20 rows per check. Run it after a migration or when a balance looks wrong. Locally: `npm run ledger:verify`. In a deployed
   container there is no Nest CLI and no `src` (only `dist` and the production dependencies): `node dist/ledger-verify.js`.
 - **Local database drift.** A database used by the ledger e2e tests before they restored the `funding` version may show a
   `version` mismatch; `npm run migrate:rollback && npm run migrate` resets the ledger tables.

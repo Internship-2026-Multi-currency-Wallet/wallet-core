@@ -23,7 +23,8 @@ export function formatLedgerVerifyReport(report: LedgerVerifyReport): {
     report.balances.length === 0 &&
     report.currencies.length === 0 &&
     report.operations.length === 0 &&
-    report.versions.length === 0;
+    report.versions.length === 0 &&
+    report.emptyOperations.length === 0;
   const lines = [
     ...block(
       'Stored balance equals the sum of entries, per account',
@@ -46,6 +47,11 @@ export function formatLedgerVerifyReport(report: LedgerVerifyReport): {
       report.versions,
       (row) =>
         `account ${row.accountId} ${row.currency}: version ${row.version}, operations ${row.operations}`,
+    ),
+    ...block(
+      'Every operation has entries',
+      report.emptyOperations,
+      (row) => `operation ${row.operationId} (${row.type}): no entries`,
     ),
     consistent ? 'Ledger is consistent.' : 'Ledger has mismatches.',
   ];

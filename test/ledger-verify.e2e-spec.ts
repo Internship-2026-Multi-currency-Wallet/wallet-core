@@ -54,6 +54,7 @@ describe('verifyLedger (e2e, real MySQL)', () => {
     currencies: report.currencies,
     operations: report.operations.filter((row) => operationIds.includes(row.operationId)),
     versions: report.versions.filter((row) => accountIds.includes(row.accountId)),
+    emptyOperations: report.emptyOperations.filter((row) => operationIds.includes(row.operationId)),
   });
 
   /** A credit, a transfer and a conversion-like operation that balances in two currencies. */
@@ -114,7 +115,12 @@ describe('verifyLedger (e2e, real MySQL)', () => {
 
     const report = mine(await verifyLedger(db), accountIds, operationIds);
 
-    expect([report.balances, report.operations, report.versions]).toEqual([[], [], []]);
+    expect([report.balances, report.operations, report.versions, report.emptyOperations]).toEqual([
+      [],
+      [],
+      [],
+      [],
+    ]);
   });
 
   it('lists only the account whose stored balance is off by one in the balance check', async () => {
@@ -172,8 +178,30 @@ describe('verifyLedger (e2e, real MySQL)', () => {
     expect(report.operations).toEqual([]);
   });
 
+  it('lists an operation row that has no entries, and nothing else of the test', async () => {
+    const { accountIds, operationIds } = await postHealthyOperations();
+    const empty = randomUUID();
+    // removeLedgerRows finds operations through their entries, so this row is deleted here.
+    try {
+      await db('operations').insert({
+        id: empty,
+        type: 'test_credit',
+        idempotency_key: `test_credit:${empty}`,
+        fingerprint: '0'.repeat(64),
+        created_at: new Date(),
+      });
+
+      const report = mine(await verifyLedger(db), accountIds, [...operationIds, empty]);
+
+      expect(report.emptyOperations).toEqual([{ operationId: empty, type: 'test_credit' }]);
+      expect([report.balances, report.operations, report.versions]).toEqual([[], [], []]);
+    } finally {
+      await db('operations').where({ id: empty }).delete();
+    }
+  });
+
   // Postings in flight must not look like corruption. Not a claim about one moment: each check is one statement
-  // and consistent on its own; the shared transaction is what lines the four up.
+  // and consistent on its own; the shared transaction is what lines the five up.
   it('reports no mismatch for the test accounts while 20 postings run in parallel', async () => {
     const users = Array.from({ length: 5 }, newUserId);
     let running = true;
@@ -201,7 +229,12 @@ describe('verifyLedger (e2e, real MySQL)', () => {
     expect(operationIds).toHaveLength(20);
     for (const report of reports) {
       const own = mine(report, accountIds, operationIds);
-      expect([own.balances, own.operations, own.versions]).toEqual([[], [], []]);
+      expect([own.balances, own.operations, own.versions, own.emptyOperations]).toEqual([
+        [],
+        [],
+        [],
+        [],
+      ]);
     }
   });
 });
