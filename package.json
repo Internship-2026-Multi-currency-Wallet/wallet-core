@@ -25,6 +25,7 @@
     "test:e2e": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config test/jest-e2e.config.mjs --runInBand",
     "schema:generate": "nest build && node dist/schema-generate.js",
     "staff:create-admin": "nest build && node dist/staff-create-admin.js",
+    "ledger:verify": "nest build && node dist/ledger-verify.js",
     "migrate": "node scripts/migrate.ts latest",
     "migrate:rollback": "node scripts/migrate.ts rollback",
     "migrate:status": "node scripts/migrate.ts status",

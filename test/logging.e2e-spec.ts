@@ -4,7 +4,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import type { EventMeta, SystemPingEvent } from '../src/events/catalog.js';
 import { EventSubscriber } from '../src/events/event-bus.js';
-import { createApp } from './create-app.js';
+import { createApp, waitForRedis } from './create-app.js';
 
 describe('request id and diagnostics (e2e)', () => {
   const prefix = 'e2e-logging';
@@ -17,6 +17,7 @@ describe('request id and diagnostics (e2e)', () => {
       new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379'),
       'local',
     );
+    await waitForRedis(app);
   });
 
   afterAll(async () => {

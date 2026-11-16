@@ -4,7 +4,7 @@ import type { Redis } from 'ioredis';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { REDIS } from '../src/redis/redis.module.js';
-import { createApp } from './create-app.js';
+import { createApp, waitForRedis } from './create-app.js';
 
 const LIMITS = {
   THROTTLE_LIMIT_ANONYMOUS: '3',
@@ -47,6 +47,7 @@ describe('global rate limit (e2e)', () => {
 
   beforeAll(async () => {
     app = await createApp(LIMITS);
+    await waitForRedis(app);
   });
 
   afterAll(async () => {
