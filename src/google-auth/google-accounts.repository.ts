@@ -78,8 +78,9 @@ export class GoogleAccountsRepository {
   }
 
   /**
-   * Call inside `transaction`: holds the link until it commits, so a parallel unlink waits for the
-   * session to exist and then ends it, instead of leaving it behind.
+   * Call inside `transaction`: holds the link and the user row until it commits, so a parallel unlink
+   * ends the new session instead of leaving it behind, and a lockout by wrong passwords cannot land
+   * between the lock check and the new session.
    */
   async lockUserBySub(googleSub: string): Promise<GoogleLoginUser | null> {
     const link = await this.db<AccountRow>(ACCOUNTS)
@@ -89,6 +90,7 @@ export class GoogleAccountsRepository {
     if (!link) return null;
     const row = await this.db('users')
       .where({ id: link.user_id })
+      .forUpdate()
       .first<
         { id: string; email: string; phone: string | null; locked_until: Date | null } | undefined
       >('id', 'email', 'phone', 'locked_until');

@@ -500,6 +500,30 @@ describe('google auth (e2e)', () => {
       expect(codeOf((await loginWithGoogle('a')).body)).toBe('ACCOUNT_LOCKED');
     });
 
+    it('waits for a lockout in progress and then refuses, instead of slipping a session in', async () => {
+      const user = await registered('a@test.com');
+      await link(user, 'a');
+      await db('sessions').delete();
+      const start = await startLogin();
+
+      // Plays the wrong password that locks the account: it holds the user row while it writes the lock.
+      const lockout = await db.transaction();
+      try {
+        await lockout('users').where({ id: user.id }).forUpdate().first('id');
+        const login = gql(LOGIN, callback(start, 'a'), { cookie: start.cookie });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await lockout('users')
+          .where({ id: user.id })
+          .update({ locked_until: new Date(Date.now() + 15 * 60 * 1000) });
+        await lockout.commit();
+
+        expect(codeOf((await login).body)).toBe('ACCOUNT_LOCKED');
+        expect(await db('sessions').count({ n: '*' })).toEqual([{ n: 0 }]);
+      } finally {
+        if (!lockout.isCompleted()) await lockout.rollback();
+      }
+    });
+
     it('answers INVALID_GOOGLE_CODE when Google refuses the code', async () => {
       expect(codeOf((await loginWithGoogle('used-code')).body)).toBe('INVALID_GOOGLE_CODE');
     });
