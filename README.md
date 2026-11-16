@@ -131,8 +131,9 @@ in every currency. Amounts are integers in minor units (`bigint` in code, text i
 | `operations` | One row per posting: `type`, a globally unique `idempotency_key`, a content fingerprint |
 | `entries`    | The signed lines of an operation. Never updated or deleted                              |
 
-Account types: `user` (created by the first posting that names it), `platform` (`funding` is the source of top-ups and
-test credits) and `external`.
+Account types: `user`, `platform` (`funding` is the source of top-ups and test credits) and `external`.
+A user's five accounts are created by the first posting that names the user, not at sign-up: until then `balances`
+returns five zeros (read-only, so a read never takes a lock).
 
 A feature posts through `LedgerService` (never through SQL) and prefixes the idempotency key with the operation type:
 
@@ -157,7 +158,10 @@ await this.ledger.post({
 - **Live updates.** After a new posting commits, `balance.changed` is published per affected user (Redis pub/sub, a UI hint,
   not a guarantee) and reaches the client as the `balanceChanged` subscription. A frontend subscribes first, then reads
   `balances`, and keeps the value with the larger `version`.
-- **`testCredit`** mints fake money from `funding`. It is in the schema everywhere, but answers `NOT_FOUND` on `kvitka-uat` and `wisla-uat`.
+- **Known limit: one row per platform account.** Every posting locks the rows of its accounts, so all test credits (and
+  later all top-ups) wait for each other on the single `funding` row of the currency. Fine at our load.
+- **`testCredit`** mints fake money from `funding`. It is in the schema everywhere, but works only on `local` and
+  `staging` (an allowlist) and answers `NOT_FOUND` anywhere else.
 - **`npm run ledger:verify`** recomputes the invariants from the entries and exits with 1 on a mismatch: stored balance =
   sum of entries, each currency and each operation sums to zero, `version` = number of operations on the account, every
   operation has at least one entry. It only reads (one consistent snapshot, so it is safe on a running system), needs
