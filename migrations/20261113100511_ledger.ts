@@ -15,6 +15,7 @@ export async function up(knex: Knex): Promise<void> {
     table.uuid('user_id').nullable().collate('utf8mb4_0900_bin');
     table.string('code', 32).nullable().collate('utf8mb4_0900_bin');
     table.string('currency', 8).notNullable();
+    // The stored sum of the account's entries, written with them in one transaction; `npm run ledger:verify` checks it.
     table.bigInteger('balance').notNullable().defaultTo(0);
     // Orders the values of one balance for clients: +1 in the same locked UPDATE as `balance`, so versions follow commits.
     table.bigInteger('version').unsigned().notNullable().defaultTo(0);

@@ -12,6 +12,7 @@ import { AppConfig } from '../src/config/app-config.js';
 import { createKnex } from '../src/database/database.module.js';
 import { eventChannel } from '../src/events/event-bus.js';
 import { createApp } from './create-app.js';
+import { removeLedgerRows } from './ledger-contract.js';
 
 /**
  * Ledger GraphQL contract on the real application (real MySQL and Redis, `npm run infra:up && npm run migrate`):
@@ -88,34 +89,7 @@ describe('ledger contract (e2e)', () => {
     }
   };
 
-  const cleanUp = async (): Promise<void> => {
-    await db.transaction(async (trx) => {
-      const ownIds = (await trx('accounts').whereIn('user_id', userIds).pluck('id')) as string[];
-      const operationIds = (await trx('entries')
-        .whereIn('account_id', ownIds)
-        .distinct()
-        .pluck('operation_id')) as string[];
-
-      // Every operation of a test moves money between a test user and `funding`.
-      const foreign = await trx('entries')
-        .whereIn('operation_id', operationIds)
-        .whereNotIn('account_id', ownIds)
-        .groupBy('account_id')
-        .select<{ account_id: string; total: string }[]>(
-          'account_id',
-          trx.raw('CAST(SUM(amount) AS CHAR) AS total'),
-        );
-      for (const { account_id, total } of foreign) {
-        await trx('accounts')
-          .where({ id: account_id })
-          .update({ balance: trx.raw('balance - ?', [total]) });
-      }
-
-      await trx('entries').whereIn('operation_id', operationIds).delete();
-      await trx('operations').whereIn('id', operationIds).delete();
-      await trx('accounts').whereIn('id', ownIds).delete();
-    });
-  };
+  const cleanUp = (): Promise<void> => removeLedgerRows(db, { userIds });
 
   beforeAll(() => {
     db = createKnex(process.env.DATABASE_URL!);

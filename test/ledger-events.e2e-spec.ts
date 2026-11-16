@@ -11,7 +11,7 @@ import { LedgerErrorCode } from '../src/ledger/ledger-errors.js';
 import { KnexLedgerService } from '../src/ledger/knex-ledger.service.js';
 import { LedgerRepository } from '../src/ledger/ledger.repository.js';
 import { PLATFORM_FUNDING, platformAccount, userAccount } from '../src/ledger/ledger.types.js';
-import { credit, expectLedgerError, operation } from './ledger-contract.js';
+import { credit, expectLedgerError, operation, removeLedgerRows } from './ledger-contract.js';
 
 /**
  * `balance.changed` after real postings (`npm run infra:up && npm run migrate`): real MySQL, real Redis
@@ -55,34 +55,7 @@ describe('balance.changed (e2e, real MySQL and Redis)', () => {
     await waitFor(() => eventsOf(sentinel).length === 1);
   };
 
-  const cleanUp = async (): Promise<void> => {
-    await db.transaction(async (trx) => {
-      const ownIds = (await trx('accounts').whereIn('user_id', userIds).pluck('id')) as string[];
-      const operationIds = (await trx('entries')
-        .whereIn('account_id', ownIds)
-        .distinct()
-        .pluck('operation_id')) as string[];
-
-      // Every operation of a test moves money between the test's own accounts and `funding`.
-      const foreign = await trx('entries')
-        .whereIn('operation_id', operationIds)
-        .whereNotIn('account_id', ownIds)
-        .groupBy('account_id')
-        .select<{ account_id: string; total: string }[]>(
-          'account_id',
-          trx.raw('CAST(SUM(amount) AS CHAR) AS total'),
-        );
-      for (const { account_id, total } of foreign) {
-        await trx('accounts')
-          .where({ id: account_id })
-          .update({ balance: trx.raw('balance - ?', [total]) });
-      }
-
-      await trx('entries').whereIn('operation_id', operationIds).delete();
-      await trx('operations').whereIn('id', operationIds).delete();
-      await trx('accounts').whereIn('id', ownIds).delete();
-    });
-  };
+  const cleanUp = (): Promise<void> => removeLedgerRows(db, { userIds });
 
   beforeAll(async () => {
     db = createKnex(process.env.DATABASE_URL!);
