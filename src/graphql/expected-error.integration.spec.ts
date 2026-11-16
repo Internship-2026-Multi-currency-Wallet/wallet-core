@@ -604,7 +604,7 @@ describe('GraphQL error logging in Nest + Apollo', () => {
       expect(await countedCodes('subscription downstream401')).toEqual(['INTERNAL_SERVER_ERROR']);
     });
 
-    it('keeps an actual Nest 4xx exception from a stream unlogged, as before', async () => {
+    it('keeps an actual Nest 4xx exception from a stream unlogged, with its status code', async () => {
       const requestId = 'e1-17-ws-unauthorized-stream';
       const { results, failure, warns, wsErrors, nestErrors } = await runWs(
         'subscription Unauthorized { unauthorizedStream }',
@@ -612,7 +612,9 @@ describe('GraphQL error logging in Nest + Apollo', () => {
       );
 
       expect(results).toEqual([{ data: { unauthorizedStream: true } }]);
-      expect(failure).toEqual([{ message: 'Unauthorized' }]);
+      expect(failure).toEqual([
+        { message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } },
+      ]);
       expect(warns).toEqual([]);
       expect(wsErrors).toEqual([]);
       expect(nestErrors).toEqual([]);

@@ -13,6 +13,7 @@ import { EventsModule } from './events/events.module.js';
 import { graphqlOptions } from './graphql/graphql.config.js';
 import { GraphqlErrorsModule } from './graphql/graphql-errors.module.js';
 import { HealthModule } from './health/health.module.js';
+import { LedgerModule } from './ledger/ledger.module.js';
 import { LoggingModule } from './logging/logging.module.js';
 import { Metrics } from './metrics/metrics.js';
 import { MetricsModule } from './metrics/metrics.module.js';
@@ -55,6 +56,7 @@ import { ThrottlingModule } from './throttling/throttling.module.js';
     HealthModule,
     DiagnosticsModule,
     StaffModule,
+    LedgerModule,
   ],
 })
 export class AppModule {}

@@ -47,6 +47,24 @@ export interface ConversionCompletedEvent {
   occurredAt: string;
 }
 
+/**
+ * One event per user per operation; pub/sub is enough because a missed message is fixed by
+ * reloading the balances.
+ */
+export interface BalanceChangedEvent {
+  v: 1;
+  /** The ledger operation, for tracing and deduplication. */
+  operationId: string;
+  userId: string;
+  /**
+   * Full new amounts, each applied only if its `version` (= GraphQL `Balance.version`) is larger
+   * than the one shown, because delivery order is not commit order.
+   */
+  balances: { currency: Currency; amount: string; version: number }[];
+  /** Taken before the posting waited for its locks, so it is not an order: use `version`. */
+  occurredAt: string;
+}
+
 /** Diagnostics: a backend says "hello" to the others (used to trace a requestId across services). */
 export interface SystemPingEvent {
   v: 1;
@@ -59,6 +77,7 @@ export interface SystemPingEvent {
 export interface EventPayloads {
   'rate.tick': RateTickEvent;
   'conversion.completed': ConversionCompletedEvent;
+  'balance.changed': BalanceChangedEvent;
   'system.ping': SystemPingEvent;
 }
 
@@ -91,6 +110,7 @@ export const EVENTS = {
     stream: 'conversion.completed',
     maxLen: 100_000,
   },
+  'balance.changed': { transport: 'pubsub', channel: 'balance.changed' },
   'system.ping': { transport: 'pubsub', channel: 'system.ping' },
 } as const satisfies Record<EventName, EventDefinition>;
 

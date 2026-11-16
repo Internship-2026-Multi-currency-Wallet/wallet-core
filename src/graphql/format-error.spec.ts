@@ -43,12 +43,6 @@ describe('formatError', () => {
     expect(formatError(formatted, error)).toBe(formatted);
   });
 
-  it('keeps a Nest HttpException (already mapped to its code by Nest)', () => {
-    const error = thrownInResolver(new UnauthorizedException());
-    const formatted = { message: 'Unauthorized', extensions: { code: 'UNAUTHENTICATED' } };
-    expect(formatError(formatted, error)).toBe(formatted);
-  });
-
   it('keeps errors raised by GraphQL itself (parse, validation)', () => {
     const error = new GraphQLError('Cannot query field "nope" on type "Query".', {
       extensions: { code: 'GRAPHQL_VALIDATION_FAILED' },
@@ -74,8 +68,37 @@ describe('formatError', () => {
   });
 });
 
-describe('formatError: HTTP 404', () => {
+describe('formatError: Nest HttpException', () => {
   const location = { line: 2, column: 3 };
+
+  it.each([
+    ['400', new BadRequestException('bad'), 'BAD_REQUEST'],
+    ['401', new UnauthorizedException('Authentication required'), 'UNAUTHENTICATED'],
+    ['403', new ForbiddenException('Missing permission: wallet'), 'FORBIDDEN'],
+    ['404', new NotFoundException(), 'NOT_FOUND'],
+    ['422', new UnprocessableEntityException(), 'BAD_USER_INPUT'],
+  ])('gives a %s the code of its status', (_status, exc, code) => {
+    const error = thrownInResolver(exc);
+    // Over graphql-ws the formatted error has no code; over http it has the one @nestjs/apollo set.
+    for (const formatted of [error.toJSON(), { ...error.toJSON(), extensions: { code } }]) {
+      expect(formatError(formatted, error)).toEqual({
+        message: exc.message,
+        path: ['register'],
+        extensions: { code },
+      });
+    }
+  });
+
+  it('gives a plain HttpException the code of its status too', () => {
+    const error = thrownInResolver(new HttpException('Nope', 401));
+    expect(formatError(error.toJSON(), error).extensions?.code).toBe('UNAUTHENTICATED');
+  });
+
+  it('leaves a status without a code in the table unchanged', () => {
+    const exc = new InternalServerErrorException();
+    const formatted = { message: exc.message, extensions: { code: 'INTERNAL_SERVER_ERROR' } };
+    expect(formatError(formatted, thrownInResolver(exc))).toBe(formatted);
+  });
 
   it.each([
     ['NotFoundException', new NotFoundException('Customization not found')],
@@ -127,17 +150,6 @@ describe('formatError: HTTP 404', () => {
     expect(formatted.extensions?.code).toBe('NOT_FOUND');
   });
 
-  it.each([
-    ['400', new BadRequestException('bad'), 'BAD_REQUEST'],
-    ['401', new UnauthorizedException(), 'UNAUTHENTICATED'],
-    ['403', new ForbiddenException(), 'FORBIDDEN'],
-    ['422', new UnprocessableEntityException(), 'BAD_USER_INPUT'],
-    ['500', new InternalServerErrorException(), 'INTERNAL_SERVER_ERROR'],
-  ])('leaves a %s HttpException unchanged', (_status, exc, code) => {
-    const formatted = { message: exc.message, extensions: { code } };
-    expect(formatError(formatted, thrownInResolver(exc))).toBe(formatted);
-  });
-
   it('still masks a raw error that merely mentions 404', () => {
     const error = thrownInResolver(new Error('select * from `secrets` - 404'));
     expect(formatError({ message: error.message, path: ['register'] }, error)).toEqual({
@@ -155,6 +167,21 @@ describe('formatError: HTTP 404', () => {
 });
 
 describe('formatExecutionResult', () => {
+  it('maps a wrapped ForbiddenException to FORBIDDEN', () => {
+    const error = new GraphQLError('Missing permission: wallet', {
+      path: ['balanceChanged'],
+      originalError: new ForbiddenException('Missing permission: wallet'),
+    });
+
+    expect(formatExecutionResult({ data: null, errors: [error] })?.errors).toEqual([
+      {
+        message: 'Missing permission: wallet',
+        path: ['balanceChanged'],
+        extensions: { code: 'FORBIDDEN' },
+      },
+    ]);
+  });
+
   it('maps a wrapped NotFoundException to NOT_FOUND', () => {
     const error = new GraphQLError('Customization not found', {
       path: ['register'],

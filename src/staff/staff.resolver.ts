@@ -1,7 +1,8 @@
-import { NotImplementedException } from '@nestjs/common';
-import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Context, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
+import { STAFF_REFRESH_TOKEN_COOKIE, readRefreshToken } from '../auth/refresh-token-cookie.js';
+import type { GraphqlContext } from '../graphql/graphql.config.js';
 import { RequirePermission } from '../permissions/require-permission.decorator.js';
 import { StaffRole } from './permissions.js';
 import { ChangeOwnStaffPasswordInput, InviteStaffInput } from './staff.inputs.js';
@@ -83,7 +84,16 @@ export class StaffResolver {
     description:
       'Changes the own password after checking the current one. Ends all other sessions of this staff member (this one stays) and emails a "password changed" notice. Requires bo. Errors: UNAUTHENTICATED, FORBIDDEN, INVALID_CURRENT_PASSWORD, BAD_USER_INPUT (extensions.field).',
   })
-  changeOwnStaffPassword(@Args('input') _input: ChangeOwnStaffPasswordInput): boolean {
-    throw new NotImplementedException('changeOwnStaffPassword is not implemented yet');
+  async changeOwnStaffPassword(
+    @CurrentUser() user: AuthUser,
+    @Args('input') input: ChangeOwnStaffPasswordInput,
+    @Context() context: GraphqlContext,
+  ): Promise<boolean> {
+    await this.staff.changeOwnPassword(
+      user.id,
+      input,
+      readRefreshToken(context.req, STAFF_REFRESH_TOKEN_COOKIE),
+    );
+    return true;
   }
 }

@@ -62,6 +62,7 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
 | `npm run test:cov`                            | Unit tests with coverage                                              |
 | `npm run schema:generate`                     | Write `schema.graphql` from the resolvers without starting the server |
 | `npm run staff:create-admin [-- email]`       | Invite the first admin or re-issue a link (link shown only locally)   |
+| `npm run ledger:verify`                       | Check the ledger invariants on the database; exit 1 on a mismatch     |
 | `npm run migrate`                             | Apply pending Knex migrations                                         |
 | `npm run migrate:make -- <name>`              | Create `migrations/<timestamp>_<name>.ts`                             |
 | `npm run migrate:rollback` / `migrate:status` | Roll back the last batch / list migrations                            |
@@ -109,7 +110,65 @@ The schema is **code-first**: resolvers and `@ObjectType`s are the source of tru
 - `npm run start:dev` and the e2e tests regenerate it; `npm run schema:generate` does it without a database.
 - A PR that changes the API must include the regenerated `schema.graphql`. That diff is what consumers review.
 
-Current API: `health { service version appEnv client db redis }` (public) and `me { id kind permissions strategy }`.
+Current API (`schema.graphql` has the full contract):
+
+- Service: `health` (public), `me` (the caller, client or staff).
+- Client auth: `register`, `login`, `logout`, `refreshSession`.
+- Settings: `publicSettings`; back-office `staffSettings`, `settingHistory`, `updateSetting`, `resetSetting`.
+- Staff: `staffLogin`, `staffLogout`, `staffRefreshSession`, `staffMe`, `staffMembers`, `inviteStaff`,
+  `resendStaffInvitation`, `acceptStaffInvitation`, `changeStaffRole`, `deactivateStaff`, `changeOwnStaffPassword`.
+- Ledger: `balances`, subscription `balanceChanged` (live changes of the caller), `testCredit` (`NOT_FOUND` on
+  `kvitka-uat` / `wisla-uat`).
+
+## Ledger
+
+Double-entry bookkeeping in `src/ledger/`: money only moves as an **operation**, a set of signed **entries** that sum to zero
+in every currency. Amounts are integers in minor units (`bigint` in code, text in GraphQL).
+
+| Table        | Holds                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------- |
+| `accounts`   | One row per owner and currency, with the stored `balance` and `version`                 |
+| `operations` | One row per posting: `type`, a globally unique `idempotency_key`, a content fingerprint |
+| `entries`    | The signed lines of an operation. Never updated or deleted                              |
+
+Account types: `user`, `platform` (`funding` is the source of top-ups and test credits) and `external`.
+A user's five accounts are created by the first posting that names the user, not at sign-up: until then `balances`
+returns five zeros (read-only, so a read never takes a lock).
+
+A feature posts through `LedgerService` (never through SQL) and prefixes the idempotency key with the operation type:
+
+```ts
+await this.ledger.post({
+  type: 'transfer', // add the type to OperationType in ledger.types.ts
+  idempotencyKey: `transfer:${transferId}`,
+  entries: [
+    { account: userAccount(senderId, 'UAH'), amount: -amount },
+    { account: userAccount(receiverId, 'UAH'), amount },
+  ],
+});
+```
+
+- **Rules.** Each currency of an operation sums to zero (otherwise a plain `Error`: a bug in the caller). A user balance never
+  goes below zero: `INSUFFICIENT_FUNDS`. Platform and external accounts may. They must already exist
+  (created by a migration or the feature's setup), otherwise `post` throws `Unknown ledger account`.
+- **Idempotency.** The same key and the same content is a replay: `replayed: true`, nothing is written, so do not repeat side
+  effects. The same key with other content is `IDEMPOTENCY_CONFLICT`.
+- **Stored balance and `version`.** `balance` is kept equal to the sum of the account's entries in the same transaction. `version`
+  grows by 1 each time a posting writes the account.
+- **Live updates.** After a new posting commits, `balance.changed` is published per affected user (Redis pub/sub, a UI hint,
+  not a guarantee) and reaches the client as the `balanceChanged` subscription. A frontend subscribes first, then reads
+  `balances`, and keeps the value with the larger `version`.
+- **Known limit: one row per platform account.** Every posting locks the rows of its accounts, so all test credits (and
+  later all top-ups) wait for each other on the single `funding` row of the currency. Fine at our load.
+- **`testCredit`** mints fake money from `funding`. It is in the schema everywhere, but works only on `local` and
+  `staging` (an allowlist) and answers `NOT_FOUND` anywhere else.
+- **`npm run ledger:verify`** recomputes the invariants from the entries and exits with 1 on a mismatch: stored balance =
+  sum of entries, each currency and each operation sums to zero, `version` = number of operations on the account, every
+  operation has at least one entry. It only reads (one consistent snapshot, so it is safe on a running system), needs
+  only the database and lists at most 20 rows per check. Run it after a migration or when a balance looks wrong. Locally: `npm run ledger:verify`. In a deployed
+  container there is no Nest CLI and no `src` (only `dist` and the production dependencies): `node dist/ledger-verify.js`.
+- **Local database drift.** A database used by the ledger e2e tests before they restored the `funding` version may show a
+  `version` mismatch; `npm run migrate:rollback && npm run migrate` resets the ledger tables.
 
 ## Rate limits
 
@@ -210,7 +269,13 @@ every 15 s and Grafana shows them on the _Server_ and _Services_ dashboards (see
 - **Who can reach it**: run directly on a machine, the server listens on `127.0.0.1` only (`METRICS_HOST`). The
   Docker image sets `METRICS_HOST=0.0.0.0`: the port is not published, so only containers on the same Docker
   network (Alloy, on the server: other apps on `dokploy-network`) reach it, never the internet. Traefik routes the
-  public domain to `PORT` only. Metrics carry no ids, amounts or secrets.
+  public domain to `PORT` only. Metrics carry no user ids, amounts or secrets; the only id is the `requestId` in
+  exemplars (below).
+- **Format**: OpenMetrics, because the plain Prometheus format has no exemplars.
+- **Exemplars**: `http_request_duration_seconds` and `graphql_errors_total` (over HTTP) keep the `requestId` of a
+  recent request as `trace_id`. Grafana draws them as dots on the _Services_ graphs; clicking one opens the _Logs_
+  dashboard for that request. An exemplar is not a label and adds no time series. Request ids longer than 120
+  characters get no exemplar, because OpenMetrics caps exemplar labels at 128 characters.
 - **Labels on every series**: `service` (`wallet-core`) and `env` (`APP_ENV`).
 
 | Metric                          | Type      | Labels              | Meaning                                                                   |
@@ -331,6 +396,8 @@ the user's `refresh_token`. Lockout works as for users: 5 wrong passwords in a r
 (`ACCOUNT_LOCKED`). `staffLogout` ends the cookie's session and clears the cookie.
 `staffRefreshSession` rotates the cookie and issues an access token with the current role; it does not extend the session, and a user `refresh_token` cookie never works on it (nor the staff cookie on `refreshSession`).
 
+A role change or a deactivation ends all of the member's sessions; a password change ends all sessions except the one of the `staff_refresh_token` cookie sent with the request (without that cookie all sessions end). An access token that was already issued is not checked against sessions and stays valid until it expires (`JWT_ACCESS_TTL`, 15 minutes by default); the permission cache planned in E1-12 will shorten this.
+
 ### Client settings — `src/settings`
 
 ```ts
@@ -418,6 +485,7 @@ sample data). No authentication; with the flag off both answer 404.
 | ---------------------- | ------------------------------- | ----------------------------- |
 | `rate.tick`            | Redis pub/sub (fire-and-forget) | channel `rate.tick`           |
 | `conversion.completed` | Redis Stream (must not be lost) | stream `conversion.completed` |
+| `balance.changed`      | Redis pub/sub (live UI hint)    | channel `balance.changed`     |
 | `system.ping`          | Redis pub/sub (diagnostics)     | channel `system.ping`         |
 
 ```ts
@@ -450,6 +518,7 @@ src/
   health/        GET /health and `health` query
   config/        env validation + AppConfig
   database/      Knex (KNEX token)    redis/   ioredis (REDIS token)
+  ledger/        LedgerService (double-entry postings, balances), `balances` / `balanceChanged`, ledger:verify
   graphql/       Apollo options
   metrics/       Prometheus registry, request metrics, GET /metrics on METRICS_PORT
 migrations/      Knex migrations (timestamped)
