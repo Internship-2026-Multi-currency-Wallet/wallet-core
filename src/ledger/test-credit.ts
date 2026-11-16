@@ -10,9 +10,9 @@ import {
 } from './ledger.types.js';
 import { parsePositiveAmount } from './money.js';
 
-/** `testCredit` mints fake money, so it exists only outside client UAT environments (local and staging). */
+/** `testCredit` mints fake money, so it is an allowlist: an environment added later stays closed until someone opens it. */
 export function isTestCreditAllowed(appEnv: AppEnv): boolean {
-  return !appEnv.endsWith('-uat');
+  return appEnv === 'local' || appEnv === 'staging';
 }
 
 /** Whole units of a currency one call may credit, so a single call cannot push a balance near the BIGINT limit. */
