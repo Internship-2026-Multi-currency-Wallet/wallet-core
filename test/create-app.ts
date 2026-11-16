@@ -54,7 +54,7 @@ export async function createApp(env: Record<string, string> = {}): Promise<INest
  * For tests whose first request needs Redis: the client connects in the background after init, and
  * until then health reports it DOWN and the rate limit fails open.
  */
-export async function waitForRedis(app: INestApplication, timeoutMs = 5000): Promise<void> {
+export async function waitForRedis(app: INestApplication, timeoutMs = 10000): Promise<void> {
   const redis = app.get<Redis>(REDIS);
   if (redis.status === 'ready') return;
   let onReady = (): void => undefined;
