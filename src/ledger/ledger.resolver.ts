@@ -47,7 +47,7 @@ export class LedgerResolver {
 
   @Mutation(() => Balance, {
     description:
-      'Moves money from the platform funding account to the caller. Exists only on local and staging. `amount` is a positive integer string in minor units, at most 1,000,000 units of the currency per call. Returns the new TOTAL balance of that currency. Errors: BAD_USER_INPUT (extensions.field), UNAUTHENTICATED, FORBIDDEN (staff tokens have no `wallet` permission), NOT_FOUND (on kvitka-uat and wisla-uat, for authenticated callers: an anonymous caller gets UNAUTHENTICATED first).',
+      'Moves money from the platform funding account to the caller. Exists only on local and staging. `amount` is a positive integer string in minor units, at most 1,000,000 units of the currency per call. Returns the new TOTAL balance of that currency. Errors: BAD_USER_INPUT (extensions.field), UNAUTHENTICATED, FORBIDDEN (staff tokens have no `wallet` permission), NOT_FOUND (in every environment except local and staging, for authenticated callers: an anonymous caller gets UNAUTHENTICATED first).',
   })
   async testCredit(
     @CurrentUser() user: AuthUser,
