@@ -443,10 +443,10 @@ describe('GoogleAuthService', () => {
       expect(auth.endOtherSessions.mock.calls[0]).toContain(TRX);
     });
 
-    it('still ends the other sessions when nothing was linked, so a retry after a failure works', async () => {
+    it('leaves the sessions alone when nothing was linked', async () => {
       const { service, auth } = setup({ deleted: false });
-      await expect(service.unlink(USER_ID, undefined, NOW)).resolves.toBe(true);
-      expect(auth.endOtherSessions).toHaveBeenCalledWith(USER_ID, undefined, NOW, TRX);
+      await expect(service.unlink(USER_ID, 'current', NOW)).resolves.toBe(true);
+      expect(auth.endOtherSessions).not.toHaveBeenCalled();
     });
 
     it('works while Google login is disabled', async () => {

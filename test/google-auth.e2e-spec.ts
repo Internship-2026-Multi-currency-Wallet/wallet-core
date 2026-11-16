@@ -361,6 +361,15 @@ describe('google auth (e2e)', () => {
       });
     });
 
+    it('ends no sessions when nothing was linked', async () => {
+      const user = await registered('a@test.com');
+      const otherDevice = await passwordLogin('a@test.com');
+
+      await gql(UNLINK, {}, { auth: user.auth, cookie: `refresh_token=${user.refreshToken}` });
+
+      expect((await refresh(otherDevice.refreshToken)).body.errors).toBeUndefined();
+    });
+
     it('frees the Google account for another user', async () => {
       const a = await registered('a@test.com');
       const b = await registered('b@test.com');

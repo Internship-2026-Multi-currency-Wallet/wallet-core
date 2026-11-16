@@ -98,10 +98,10 @@ export class GoogleAuthService {
     now: Date = new Date(),
   ): Promise<boolean> {
     const unlinked = await this.accounts.transaction(async (accounts, trx) => {
-      const removed = await accounts.deleteByUser(userId);
+      if (!(await accounts.deleteByUser(userId))) return false;
       // Same transaction: the link can never be gone while its sessions stay usable.
       await this.auth.endOtherSessions(userId, currentRefreshToken, now, trx);
-      return removed;
+      return true;
     });
     if (unlinked) this.logger.info({ userId }, 'google account unlinked');
     return true;
