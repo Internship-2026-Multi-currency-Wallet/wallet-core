@@ -35,8 +35,7 @@ export const registerInputSchema = z.object({
     .regex(/\p{Lu}/u, REGISTER_INPUT_MESSAGES.passwordNoUppercase)
     .regex(/[^\p{L}\p{N}]/u, REGISTER_INPUT_MESSAGES.passwordNoSpecial),
   // E.164: "+", then 7–15 digits, the first one not 0 (7 = the shortest plans, e.g. Niue).
-  // A blank phone means no phone (a form sends ""), so a required one answers PHONE_REQUIRED. Any
-  // other value is checked as sent, never trimmed: " +380501234567 " stays invalid.
+  // Normalize blank form values so missing required phones reach the PHONE_REQUIRED check.
   phone: z.preprocess(
     (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
     z
