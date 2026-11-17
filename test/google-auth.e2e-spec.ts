@@ -654,6 +654,33 @@ describe('google auth (e2e)', () => {
       expect((await gql(UNLINK, {}, { auth: user.auth })).body.data).toEqual({
         unlinkGoogleAccount: true,
       });
+      expect((await gql(ACCOUNT, {}, { auth: user.auth })).body.data).toEqual({
+        googleAccount: null,
+      });
+    });
+
+    it('still shows the link, and the user still logs in with the password', async () => {
+      const user = await registered('a@test.com');
+      await link(user, 'a');
+      await setGoogleLogin(false);
+
+      const { body } = await gql(ACCOUNT, {}, { auth: user.auth });
+      expect(body.errors).toBeUndefined();
+      expect(body.data).toEqual({
+        googleAccount: { email: 'a@gmail.com', linkedAt: expect.any(String) },
+      });
+      expect((await passwordLogin('a@test.com')).id).toBe(user.id);
+    });
+
+    it('works again once the setting is back on, with the links kept', async () => {
+      const user = await registered('a@test.com');
+      await link(user, 'a');
+      await setGoogleLogin(false);
+      await setGoogleLogin(true);
+
+      const { body } = await loginWithGoogle('a');
+      expect(body.errors).toBeUndefined();
+      expect(body.data).toMatchObject({ loginWithGoogle: { user: { id: user.id } } });
     });
   });
 });
