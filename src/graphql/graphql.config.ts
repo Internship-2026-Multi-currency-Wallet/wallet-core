@@ -146,9 +146,7 @@ export function graphqlOptions(
     formatError,
     // Nest runs no guards on field resolvers, so field restrictions are applied to the schema.
     transformSchema: restrictClientFields(config.client),
-    // HTTP requests carry headers; websocket requests carry connectionParams.
-    // Both end up as `context.req.headers`, which the auth guard reads. graphql-ws passes its
-    // connection context here, which holds the connection's requestId.
+    // graphql-ws supplies connectionParams and extra rather than an HTTP req.
     context: ({ req, res, connectionParams, extra }: ContextInput): GraphqlContext =>
       req
         ? { req, res }
