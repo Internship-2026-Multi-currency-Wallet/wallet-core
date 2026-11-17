@@ -52,6 +52,9 @@ describe('register (e2e)', () => {
   });
 
   afterAll(async () => {
+    // Later suites register users and must not inherit auth.phoneRequiredAt = signup.
+    await db('client_setting_changes').delete();
+    await db('client_settings').delete();
     await db.destroy();
     await app.close();
   });
@@ -101,25 +104,67 @@ describe('register (e2e)', () => {
     await expect(users()).resolves.toHaveLength(0);
   });
 
-  it('requires a phone when the client asks for it at signup', async () => {
-    const setting = await gql(
-      'mutation { updateSetting(key: "auth.phoneRequiredAt", value: "signup") { key } }',
+  const setPhoneRequiredAt = async (value: string) => {
+    const res = await gql(
+      `mutation { updateSetting(key: "auth.phoneRequiredAt", value: "${value}") { key } }`,
       {},
       STAFF,
     );
-    expect(setting.errors).toBeUndefined();
+    expect(res.errors).toBeUndefined();
+  };
+  // Every way a request can carry no phone: omitted, null, empty, blank.
+  const NO_PHONE = [{}, { phone: null }, { phone: '' }, { phone: '  ' }];
 
-    const withoutPhone = await register({ email: 'artem@test.com', password: PASSWORD });
-    expect(withoutPhone.errors?.[0]).toMatchObject({
-      message: 'Phone is required',
-      extensions: { code: 'BAD_USER_INPUT', field: 'phone' },
-    });
+  it('answers PHONE_REQUIRED without a phone when the client requires one at signup', async () => {
+    await setPhoneRequiredAt('signup');
+
+    for (const phone of NO_PHONE) {
+      const res = await register({ email: 'artem@test.com', password: PASSWORD, ...phone });
+      expect(res.data).toBeNull();
+      expect(res.errors?.[0]).toMatchObject({
+        message: 'Phone is required',
+        extensions: { code: 'PHONE_REQUIRED', field: 'phone' },
+      });
+    }
+    await expect(users()).resolves.toHaveLength(0);
 
     const withPhone = await register({
       email: 'artem@test.com',
       password: PASSWORD,
       phone: '+380501234567',
     });
+    expect(withPhone.errors).toBeUndefined();
     expect(withPhone.data?.register.phone).toBe('+380501234567');
+    await expect(users()).resolves.toMatchObject([{ phone: '+380501234567' }]);
   });
+
+  it('answers BAD_USER_INPUT for an invalid phone, even when a phone is required', async () => {
+    await setPhoneRequiredAt('signup');
+
+    for (const phone of ['0501234567', ' +380501234567 ']) {
+      const res = await register({ email: 'artem@test.com', password: PASSWORD, phone });
+      expect(res.data).toBeNull();
+      expect(res.errors?.[0]).toMatchObject({
+        message: 'Phone must be in international format, e.g. +380501234567',
+        extensions: { code: 'BAD_USER_INPUT', field: 'phone' },
+      });
+    }
+    await expect(users()).resolves.toHaveLength(0);
+  });
+
+  it.each(['never', 'firstTransfer'])(
+    'registers without a phone and stores null when auth.phoneRequiredAt is %s',
+    async (value) => {
+      await setPhoneRequiredAt(value);
+
+      for (const [i, phone] of NO_PHONE.entries()) {
+        const res = await register({ email: `user${i}@test.com`, password: PASSWORD, ...phone });
+        expect(res.errors).toBeUndefined();
+        expect(res.data?.register.phone).toBeNull();
+      }
+      const rows = await users();
+      expect(rows).toHaveLength(NO_PHONE.length);
+      for (const row of rows) expect(row.phone).toBeNull();
+    },
+  );
 });

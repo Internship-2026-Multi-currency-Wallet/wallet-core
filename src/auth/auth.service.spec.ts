@@ -8,6 +8,7 @@ import type { ClientSettingsService } from '../settings/client-settings.service.
 import { type ClientSettings, settingsCatalog } from '../settings/settings.schema.js';
 import { accessTokenPayloadSchema } from './access-token.js';
 import { AuthService } from './auth.service.js';
+import { REGISTER_INPUT_MESSAGES } from './register.schema.js';
 import type { ActiveSession, NewSession, SessionsRepository } from './sessions.repository.js';
 import { TokenService, hashRefreshToken } from './tokens.js';
 import type { User } from './user.model.js';
@@ -136,33 +137,75 @@ describe('AuthService.register', () => {
     expect(users.insert).not.toHaveBeenCalled();
   });
 
+  // Every way a request can carry no phone: omitted, null, empty, blank.
+  const NO_PHONE: { phone?: string | null }[] = [
+    {},
+    { phone: null },
+    { phone: '' },
+    { phone: ' \t' },
+  ];
+
   describe('when the client requires a phone at signup', () => {
-    it('rejects a registration without a phone', async () => {
+    it.each(NO_PHONE)('answers PHONE_REQUIRED without a phone: %j', async (phone) => {
       const { service, users, settings } = setup({ phoneRequiredAt: 'signup' });
       const error = await graphqlErrorOf(
-        service.register({ email: 'artem@test.com', password: PASSWORD }),
+        service.register({ email: 'artem@test.com', password: PASSWORD, ...phone }),
       );
       expect(settings.get).toHaveBeenCalledWith('auth.phoneRequiredAt');
       expect(error.message).toBe('Phone is required');
-      expect(error.extensions).toEqual({ code: 'BAD_USER_INPUT', field: 'phone' });
+      expect(error.extensions).toEqual({ code: 'PHONE_REQUIRED', field: 'phone' });
+      expect(users.insert).not.toHaveBeenCalled();
+    });
+
+    it.each(['0501234567', ' +380501234567 '])(
+      'answers BAD_USER_INPUT for an invalid phone %j, not PHONE_REQUIRED',
+      async (phone) => {
+        const { service, users } = setup({ phoneRequiredAt: 'signup' });
+        const error = await graphqlErrorOf(
+          service.register({ email: 'artem@test.com', password: PASSWORD, phone }),
+        );
+        expect(error.message).toBe(REGISTER_INPUT_MESSAGES.phoneInvalid);
+        expect(error.extensions).toEqual({ code: 'BAD_USER_INPUT', field: 'phone' });
+        expect(users.insert).not.toHaveBeenCalled();
+      },
+    );
+
+    it('reports a broken email or password before the missing phone', async () => {
+      const { service, users, settings } = setup({ phoneRequiredAt: 'signup' });
+      const error = await graphqlErrorOf(service.register({ email: 'nope', password: PASSWORD }));
+      expect(error.extensions).toEqual({ code: 'BAD_USER_INPUT', field: 'email' });
+      expect(settings.get).not.toHaveBeenCalled();
       expect(users.insert).not.toHaveBeenCalled();
     });
 
     it('accepts a registration with a phone', async () => {
-      const { service } = setup({ phoneRequiredAt: 'signup' });
+      const { service, users } = setup({ phoneRequiredAt: 'signup' });
       await expect(
         service.register({ email: 'artem@test.com', password: PASSWORD, phone: '+380501234567' }),
       ).resolves.toMatchObject({ phone: '+380501234567' });
+      expect(inserted(users).phone).toBe('+380501234567');
     });
   });
 
-  it.each(PHONE_REQUIRED_AT.filter((value) => value !== 'signup'))(
-    'does not require a phone when auth.phoneRequiredAt is %s',
-    async (phoneRequiredAt) => {
-      const { service } = setup({ phoneRequiredAt });
-      await expect(
-        service.register({ email: 'artem@test.com', password: PASSWORD }),
-      ).resolves.toMatchObject({ phone: null });
+  describe.each(PHONE_REQUIRED_AT.filter((value) => value !== 'signup'))(
+    'when auth.phoneRequiredAt is %s',
+    (phoneRequiredAt) => {
+      it.each(NO_PHONE)('registers without a phone and stores null: %j', async (phone) => {
+        const { service, users } = setup({ phoneRequiredAt });
+        await expect(
+          service.register({ email: 'artem@test.com', password: PASSWORD, ...phone }),
+        ).resolves.toMatchObject({ phone: null });
+        expect(inserted(users).phone).toBeNull();
+      });
+
+      it('still rejects an invalid phone', async () => {
+        const { service, users } = setup({ phoneRequiredAt });
+        const error = await graphqlErrorOf(
+          service.register({ email: 'artem@test.com', password: PASSWORD, phone: '0501234567' }),
+        );
+        expect(error.extensions).toEqual({ code: 'BAD_USER_INPUT', field: 'phone' });
+        expect(users.insert).not.toHaveBeenCalled();
+      });
     },
   );
 

@@ -29,6 +29,10 @@ describe('parseRegisterInput', () => {
     expect(parseRegisterInput({ ...valid, phone: null })).toEqual({ ...valid, phone: null });
   });
 
+  it.each(['', ' ', ' \t\n'])('reads a blank phone %j as no phone', (phone) => {
+    expect(parseRegisterInput({ ...valid, phone })).toEqual({ ...valid, phone: null });
+  });
+
   it('trims and lower-cases the email', () => {
     expect(parseRegisterInput({ ...valid, email: '  Artem@Test.COM ' }).email).toBe(
       'artem@test.com',
@@ -86,12 +90,18 @@ describe('parseRegisterInput', () => {
       expect(parseRegisterInput({ ...valid, phone })).toEqual({ ...valid, phone });
     });
 
-    it.each(['0501234567', '+0501234567', '+380 50 123 45 67', '+683400', '+3805012345678901'])(
-      'rejects %j',
-      (phone) => {
-        expectRejected({ ...valid, phone }, 'phone', REGISTER_INPUT_MESSAGES.phoneInvalid);
-      },
-    );
+    it.each([
+      '0501234567',
+      '+0501234567',
+      '+380 50 123 45 67',
+      '+683400',
+      '+3805012345678901',
+      // Never trimmed: only a blank phone counts as none.
+      ' +380501234567 ',
+      '+380501234567\n',
+    ])('rejects %j', (phone) => {
+      expectRejected({ ...valid, phone }, 'phone', REGISTER_INPUT_MESSAGES.phoneInvalid);
+    });
   });
 
   it('reports only the first broken rule, in field order', () => {

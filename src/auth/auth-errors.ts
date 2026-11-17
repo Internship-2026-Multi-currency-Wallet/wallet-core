@@ -3,6 +3,7 @@ import { GraphQLError } from 'graphql';
 /** Error codes of the auth API (see the contract), reported as GraphQL `extensions.code`. */
 export const AuthErrorCode = {
   BadUserInput: 'BAD_USER_INPUT',
+  PhoneRequired: 'PHONE_REQUIRED',
   EmailAlreadyRegistered: 'EMAIL_ALREADY_REGISTERED',
   InvalidCredentials: 'INVALID_CREDENTIALS',
   AccountLocked: 'ACCOUNT_LOCKED',

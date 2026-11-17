@@ -40,10 +40,14 @@ export const registerInputSchema = z.object({
     // "Special" = anything that is not a letter or a digit.
     .regex(/[^\p{L}\p{N}]/u, REGISTER_INPUT_MESSAGES.passwordNoSpecial),
   // E.164: "+", then 7–15 digits, the first one not 0 (7 = the shortest plans, e.g. Niue).
-  phone: z
-    .string()
-    .regex(/^\+[1-9]\d{6,14}$/, REGISTER_INPUT_MESSAGES.phoneInvalid)
-    .nullish(),
+  // Normalize blank form values so missing required phones reach the PHONE_REQUIRED check.
+  phone: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+    z
+      .string()
+      .regex(/^\+[1-9]\d{6,14}$/, REGISTER_INPUT_MESSAGES.phoneInvalid)
+      .nullish(),
+  ),
 });
 
 export type RegisterData = z.infer<typeof registerInputSchema>;

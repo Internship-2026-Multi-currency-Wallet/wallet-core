@@ -15,7 +15,8 @@ export class RegisterInput {
 
   @Field(() => String, {
     nullable: true,
-    description: 'Optional phone number in international format, e.g. "+380501234567".',
+    description:
+      'Phone number in international format, e.g. "+380501234567". Required when the client setting auth.phoneRequiredAt is "signup" (otherwise optional); null, "" and whitespace count as no phone.',
   })
   phone?: string | null;
 }

@@ -51,7 +51,7 @@ export class AuthService {
     const data = parseRegisterInput(input);
     const phone = data.phone ?? null;
     if (phone === null && (await this.settings.get('auth.phoneRequiredAt')) === 'signup') {
-      throw authError(AuthErrorCode.BadUserInput, REGISTER_INPUT_MESSAGES.phoneRequired, {
+      throw authError(AuthErrorCode.PhoneRequired, REGISTER_INPUT_MESSAGES.phoneRequired, {
         field: 'phone',
       });
     }
