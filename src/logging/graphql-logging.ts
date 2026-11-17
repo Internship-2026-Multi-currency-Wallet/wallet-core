@@ -1,12 +1,6 @@
 /**
- * GraphQL logging. Keep this file and `graphql/expected-error.filter.ts` IDENTICAL in
- * wallet-core, rates-service and treasury-service.
- *
- * - HTTP operations: the Apollo plugin stores the operation (`query Me`) on the request, so the
- *   access log line names it, and logs resolver errors with the request's `requestId`.
- * - graphql-ws: one `requestId` per websocket connection, taken from `x-request-id` in the
- *   connection params or the upgrade request, else generated. Subscription start/end and errors
- *   are logged with it, and `inWsLoggingContext` binds it to every log of an operation.
+ * Keep this file and `graphql/expected-error.filter.ts` IDENTICAL in wallet-core, rates-service
+ * and treasury-service.
  */
 import type { ApolloServerPlugin } from '@apollo/server';
 import { unwrapResolverError } from '@apollo/server/errors';
@@ -140,12 +134,7 @@ export function wsRequestId(ctx: WsContext): string {
   return extra.requestId;
 }
 
-/**
- * graphql-ws results bypass the Apollo plugin, so they are logged here at the same levels: expected
- * errors and Nest 4xx exceptions (`HTTP_<status>`, as over HTTP) at warn, other server failures at
- * error with the stack. `serverOriginal` returns the error the server threw (the one formatError
- * classifies), or `undefined` for a client error, logged only if expected.
- */
+/** graphql-ws results bypass Apollo's logging plugin. */
 export function logWsErrors(
   logger: PinoLogger,
   ctx: WsContext,
@@ -176,11 +165,8 @@ export function logWsErrors(
 }
 
 /**
- * graphql-ws `execute` / `subscribe`: a websocket operation has no HTTP request, so nestjs-pino has
- * no context and guards, strategies and resolvers would log without `requestId`. Runs the operation
- * in one bound to the connection's id (`requestId` of the GraphQL context), as `EventSubscriber`
- * does for event handlers. graphql-ws pulls a subscription's events from its own loop, outside this
- * call, so the iterator's `next`, `return` and `throw` are run in the same context.
+ * graphql-ws consumes subscription iterators outside execution, so both execution and iterator
+ * methods need the connection's logging context.
  */
 export function inWsLoggingContext<T>(
   logger: PinoLogger,
