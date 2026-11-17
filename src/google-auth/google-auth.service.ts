@@ -54,9 +54,20 @@ export class GoogleAuthService {
     return account && toModel(account);
   }
 
-  async start(userId: string | null, now: Date = new Date()): Promise<GoogleAuthStateIssued> {
+  /** The password keeps a stolen access token from linking the thief's Google account for a 30-day login. */
+  async startLink(
+    userId: string,
+    password: string,
+    now: Date = new Date(),
+  ): Promise<GoogleAuthStateIssued> {
     await this.ensureEnabled();
-    return this.states.issue(userId === null ? 'login' : 'link', userId, now);
+    await this.auth.confirmPassword(userId, password, now);
+    return this.states.issue('link', userId, now);
+  }
+
+  async startLogin(now: Date = new Date()): Promise<GoogleAuthStateIssued> {
+    await this.ensureEnabled();
+    return this.states.issue('login', null, now);
   }
 
   async link(

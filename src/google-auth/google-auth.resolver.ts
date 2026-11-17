@@ -37,14 +37,15 @@ export class GoogleAuthResolver {
   @RequirePermission('wallet')
   @Mutation(() => GoogleAuthStart, {
     description:
-      'Starts linking for the current user (client token): sets the httpOnly google_auth_state cookie that linkGoogleAccount needs, valid 10 minutes and for this user only. Errors: GOOGLE_LOGIN_DISABLED.',
+      'Starts linking for the current user (client token) after checking their password again: sets the httpOnly google_auth_state cookie that linkGoogleAccount needs, valid 10 minutes and for this user only. Errors: GOOGLE_LOGIN_DISABLED, INVALID_CREDENTIALS (wrong password; counts towards the lock like a failed login), ACCOUNT_LOCKED (extensions.lockedUntil).',
   })
   async startGoogleLink(
     @CurrentUser() user: AuthUser,
+    @Args('password', { description: "The current user's password." }) password: string,
     @Context() context: GraphqlContext,
   ): Promise<GoogleAuthStart> {
     const res = httpResponseOf(context);
-    return this.withStateCookie(res, await this.google.start(user.id));
+    return this.withStateCookie(res, await this.google.startLink(user.id, password));
   }
 
   @RequirePermission('wallet')
@@ -84,7 +85,7 @@ export class GoogleAuthResolver {
   })
   async startGoogleLogin(@Context() context: GraphqlContext): Promise<GoogleAuthStart> {
     const res = httpResponseOf(context);
-    return this.withStateCookie(res, await this.google.start(null));
+    return this.withStateCookie(res, await this.google.startLogin());
   }
 
   @Public()

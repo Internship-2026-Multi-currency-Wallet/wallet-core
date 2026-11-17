@@ -79,7 +79,8 @@ describe('google auth (e2e)', () => {
   const cookieValue = (cookies: string[], name: string) =>
     cookies.map((c) => new RegExp(`^${name}=([^;]*);`).exec(c)?.[1]).find(Boolean);
 
-  const START_LINK = 'mutation { startGoogleLink { state nonce expiresAt } }';
+  const START_LINK =
+    'mutation ($password: String!) { startGoogleLink(password: $password) { state nonce expiresAt } }';
   const START_LOGIN = 'mutation { startGoogleLogin { state nonce expiresAt } }';
   const LINK =
     'mutation ($input: GoogleAuthInput!) { linkGoogleAccount(input: $input) { email linkedAt } }';
@@ -89,15 +90,20 @@ describe('google auth (e2e)', () => {
     'mutation ($input: GoogleAuthInput!) { loginWithGoogle(input: $input) { accessToken accessTokenExpiresAt user { id email phone } } }';
   const REFRESH = 'mutation { refreshSession { user { id } } }';
 
-  const started = async (query: string, caller: Caller = {}): Promise<Started> => {
-    const { body, cookies } = await gql(query, {}, caller);
+  const started = async (
+    query: string,
+    caller: Caller = {},
+    variables: Record<string, unknown> = {},
+  ): Promise<Started> => {
+    const { body, cookies } = await gql(query, variables, caller);
     expect(body.errors).toBeUndefined();
     const start = Object.values(body.data!)[0] as Omit<Started, 'cookie' | 'setCookie'>;
     const setCookie = cookies.find((c) => c.startsWith('google_auth_state='))!;
     const value = cookieValue(cookies, 'google_auth_state')!;
     return { ...start, cookie: `google_auth_state=${value}`, setCookie };
   };
-  const startLink = (user: User) => started(START_LINK, { auth: user.auth });
+  const startLink = (user: User) =>
+    started(START_LINK, { auth: user.auth }, { password: PASSWORD });
   const startLogin = () => started(START_LOGIN);
 
   const callback = (start: Started, who: string, extra: Record<string, unknown> = {}) => ({
@@ -170,6 +176,7 @@ describe('google auth (e2e)', () => {
     ])('%s needs a client token', async (_name, query) => {
       const variables = {
         input: { code: 'a|n', state: 's', redirectUri: REDIRECT_URI },
+        password: PASSWORD,
       };
       expect(codeOf((await gql(query, variables)).body)).toBe('UNAUTHENTICATED');
       expect(codeOf((await gql(query, variables, { auth: 'Dev 1:bo' })).body)).toBe('FORBIDDEN');
@@ -550,6 +557,78 @@ describe('google auth (e2e)', () => {
     });
   });
 
+  describe('the password before linking', () => {
+    const startLinkWith = (user: User, password: string) =>
+      gql(START_LINK, { password }, { auth: user.auth });
+    const failedAttempts = async (user: User) =>
+      (await db('users').where({ id: user.id }).first('failed_login_attempts'))
+        .failed_login_attempts as number;
+
+    it('answers INVALID_CREDENTIALS for a wrong password and starts no sign-in', async () => {
+      const user = await registered('a@test.com');
+      const { body, cookies } = await startLinkWith(user, 'Wrong1!pass');
+      expect(errorOf(body)).toMatchObject({ extensions: { code: 'INVALID_CREDENTIALS' } });
+      expect(body.data).toBeNull();
+      expect(cookieValue(cookies, 'google_auth_state')).toBeUndefined();
+      expect(await failedAttempts(user)).toBe(1);
+    });
+
+    it('refuses a call without the password before anything runs', async () => {
+      const user = await registered('a@test.com');
+      const res = await request(app.getHttpServer() as App)
+        .post('/graphql')
+        .set('Authorization', user.auth)
+        .send({ query: 'mutation { startGoogleLink { state } }' })
+        .expect(400);
+      expect(codeOf(res.body as GqlResponse)).toBe('GRAPHQL_VALIDATION_FAILED');
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
+
+    it('locks the account after 5 wrong passwords, for linking and for logging in', async () => {
+      const user = await registered('a@test.com');
+      for (let attempt = 1; attempt < 5; attempt++) {
+        expect(codeOf((await startLinkWith(user, 'Wrong1!pass')).body)).toBe('INVALID_CREDENTIALS');
+      }
+      const locked = (await startLinkWith(user, 'Wrong1!pass')).body;
+      expect(errorOf(locked)?.extensions).toMatchObject({
+        code: 'ACCOUNT_LOCKED',
+        lockedUntil: expect.any(String),
+      });
+      expect(codeOf((await startLinkWith(user, PASSWORD)).body)).toBe('ACCOUNT_LOCKED');
+      const { body } = await gql(
+        'mutation ($input: LoginInput!) { login(input: $input) { accessToken } }',
+        { input: { email: 'a@test.com', password: PASSWORD } },
+      );
+      expect(codeOf(body)).toBe('ACCOUNT_LOCKED');
+    });
+
+    it('counts wrong passwords of linking and of logging in together', async () => {
+      const user = await registered('a@test.com');
+      await gql('mutation ($input: LoginInput!) { login(input: $input) { accessToken } }', {
+        input: { email: 'a@test.com', password: 'Wrong1!pass' },
+      });
+      await startLinkWith(user, 'Wrong1!pass');
+      expect(await failedAttempts(user)).toBe(2);
+    });
+
+    it('accepts the right password, clears the failed attempts and links as before', async () => {
+      const user = await registered('a@test.com');
+      await startLinkWith(user, 'Wrong1!pass');
+      const { body } = await link(user, 'a');
+      expect(body.errors).toBeUndefined();
+      expect(body.data).toEqual({
+        linkGoogleAccount: { email: 'a@gmail.com', linkedAt: expect.any(String) },
+      });
+      expect(await failedAttempts(user)).toBe(0);
+    });
+
+    it('asks no password for logging in with Google', async () => {
+      const user = await registered('a@test.com');
+      await link(user, 'a');
+      expect((await loginWithGoogle('a')).body.errors).toBeUndefined();
+    });
+  });
+
   describe('auth.googleLogin = false', () => {
     it('refuses starting, linking and logging in, but still allows unlinking', async () => {
       const user = await registered('a@test.com');
@@ -560,7 +639,7 @@ describe('google auth (e2e)', () => {
       googleCalls.length = 0;
 
       const attempts = [
-        gql(START_LINK, {}, { auth: user.auth }),
+        gql(START_LINK, { password: PASSWORD }, { auth: user.auth }),
         gql(START_LOGIN),
         gql(LINK, callback(linkStart, 'b'), { auth: user.auth, cookie: linkStart.cookie }),
         gql(LOGIN, callback(loginStart, 'a'), { cookie: loginStart.cookie }),
