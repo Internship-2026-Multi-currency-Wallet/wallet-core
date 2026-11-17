@@ -2,6 +2,7 @@ import { GraphQLError } from 'graphql';
 
 export const AuthErrorCode = {
   BadUserInput: 'BAD_USER_INPUT',
+  PhoneRequired: 'PHONE_REQUIRED',
   EmailAlreadyRegistered: 'EMAIL_ALREADY_REGISTERED',
   InvalidCredentials: 'INVALID_CREDENTIALS',
   AccountLocked: 'ACCOUNT_LOCKED',

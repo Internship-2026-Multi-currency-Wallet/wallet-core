@@ -42,7 +42,7 @@ describe('login (e2e)', () => {
   const errorOf = (body: unknown) => (body as LoginResponse).errors?.[0];
 
   beforeAll(async () => {
-    app = await createApp();
+    app = await createApp({ DEV_AUTH: 'true' });
     db = createKnex(process.env.DATABASE_URL!);
   });
 
@@ -90,6 +90,22 @@ describe('login (e2e)', () => {
       sub: body.data?.login.user.id,
       permissions: ['wallet'],
     });
+  });
+
+  it('still logs in a user without a phone after the client starts requiring one at signup', async () => {
+    const setting = await post(
+      'mutation { updateSetting(key: "auth.phoneRequiredAt", value: "signup") { key } }',
+      {},
+    )
+      .set('Authorization', 'Dev 42:bo:settings,bo:settings:modify')
+      .expect(200);
+    expect(errorOf(setting.body)).toBeUndefined();
+    const [user] = await db('users').select('phone');
+    expect(user.phone).toBeNull();
+
+    const body = (await login().expect(200)).body as LoginResponse;
+    expect(body.errors).toBeUndefined();
+    expect(body.data?.login.user.email).toBe('artem@test.com');
   });
 
   it('answers INVALID_CREDENTIALS for an unknown email or a wrong password, without a cookie', async () => {

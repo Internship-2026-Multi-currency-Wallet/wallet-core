@@ -206,7 +206,7 @@ type Mutation {
   refreshSession: AuthPayload!
 
   """
-  Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT, EMAIL_ALREADY_REGISTERED.
+  Creates an account. Does not log in: call login afterwards. Errors: BAD_USER_INPUT (extensions.field), PHONE_REQUIRED (extensions.field = "phone"; the client requires a phone at sign-up and none was given), EMAIL_ALREADY_REGISTERED.
   """
   register(input: RegisterInput!): User!
 
@@ -335,7 +335,9 @@ input RegisterInput {
   """
   password: String!
 
-  """Optional phone number in international format, e.g. "+380501234567"."""
+  """
+  Phone number in international format, e.g. "+380501234567". Required when the client setting auth.phoneRequiredAt is "signup" (otherwise optional); null, "" and whitespace count as no phone.
+  """
   phone: String
 }
 
