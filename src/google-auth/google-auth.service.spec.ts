@@ -498,6 +498,14 @@ describe('GoogleAuthService', () => {
     it('returns null when nothing is linked', async () => {
       await expect(setup().service.get(USER_ID)).resolves.toBeNull();
     });
+
+    it('works while Google login is disabled', async () => {
+      const { service } = setup({ linked: LINKED, googleLogin: false, verifier: null });
+      await expect(service.get(USER_ID)).resolves.toEqual({
+        email: LINKED.email,
+        linkedAt: LINKED.linkedAt,
+      });
+    });
   });
 
   describe('login', () => {
