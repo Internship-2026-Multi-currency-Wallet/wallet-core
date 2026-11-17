@@ -216,12 +216,20 @@ async function gql(app: INestApplication, query: string, authorization?: string)
 
 type WsResult = FormattedExecutionResult<Record<string, unknown>, unknown>;
 
-async function ws(url: string, query: string, authorization?: string): Promise<WsResult[]> {
+async function ws(
+  url: string,
+  query: string,
+  authorization?: string,
+  requestId?: string,
+): Promise<WsResult[]> {
   const client = createClient({
     url,
     webSocketImpl: WebSocket,
     retryAttempts: 0,
-    connectionParams: authorization ? { Authorization: authorization } : {},
+    connectionParams: {
+      ...(authorization && { Authorization: authorization }),
+      ...(requestId && { 'x-request-id': requestId }),
+    },
   });
   try {
     return await new Promise<WsResult[]>((resolve, reject) => {
@@ -479,10 +487,67 @@ describe.each(CLIENTS)('client availability on the real AppModule, CLIENT=%s', (
       }
     });
 
-    it('formats a websocket denial without logging it per error, and Nest does not log it', async () => {
-      await ws(booted.wsUrl, '{ probeAccount { id wislaNote } }');
-      await ws(booted.wsUrl, 'subscription { wislaTicks }');
-      expect(pinoLog.filter((line) => line.level === 'warn' || line.level === 'error')).toEqual([]);
+    it('logs each websocket denial once, as warn with its HTTP code, path and requestId; Nest does not log it', async () => {
+      const field = await ws(
+        booted.wsUrl,
+        '{ probeAccount { id wislaNote } }',
+        undefined,
+        `ws-field-${client}`,
+      );
+      const subscription = await ws(
+        booted.wsUrl,
+        'subscription { wislaTicks }',
+        undefined,
+        `ws-subscription-${client}`,
+      );
+
+      if (wislaOnlyDenied) {
+        expect(field).toEqual([
+          {
+            data: { probeAccount: { id: 'p1', wislaNote: null } },
+            errors: [
+              {
+                ...NOT_FOUND,
+                locations: expect.any(Array) as unknown,
+                path: ['probeAccount', 'wislaNote'],
+              },
+            ],
+          },
+        ]);
+        expect(subscription).toEqual([
+          {
+            errors: [
+              { ...NOT_FOUND, locations: expect.any(Array) as unknown, path: ['wislaTicks'] },
+            ],
+          },
+        ]);
+      } else {
+        expect(field).toEqual([{ data: { probeAccount: { id: 'p1', wislaNote: 'wisla-note' } } }]);
+        expect(subscription).toEqual([
+          {
+            errors: [
+              {
+                message: 'Authentication required',
+                locations: expect.any(Array) as unknown,
+                path: ['wislaTicks'],
+                extensions: { code: 'UNAUTHENTICATED' },
+              },
+            ],
+          },
+        ]);
+      }
+      const problems = pinoLog.filter((line) => line.level === 'warn' || line.level === 'error');
+      expect(
+        problems.map((line) => [line.level, line.context, line.requestId, line.code, line.path]),
+      ).toEqual(
+        wislaOnlyDenied
+          ? [
+              ['warn', 'GraphQL', `ws-field-${client}`, 'HTTP_404', 'probeAccount.wislaNote'],
+              ['warn', 'GraphQL', `ws-subscription-${client}`, 'HTTP_404', 'wislaTicks'],
+            ]
+          : [['warn', 'GraphQL', `ws-subscription-${client}`, 'HTTP_401', 'wislaTicks']],
+      );
+      for (const line of problems) expect(line).not.toHaveProperty('err');
       expect(booted.nestLog).toEqual([]);
     });
 

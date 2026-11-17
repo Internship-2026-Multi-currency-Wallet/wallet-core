@@ -18,10 +18,11 @@ describe('graphqlOptions context', () => {
     expect(context({ req, res })).toEqual({ req, res });
   });
 
-  it('builds the request from websocket connection params, without a response', () => {
-    expect(context({ connectionParams: { Authorization: 'Dev 1:wallet' } })).toEqual({
-      req: { headers: { authorization: 'Dev 1:wallet' } },
-      res: undefined,
+  it('builds the request from websocket connection params, with the connection requestId', () => {
+    const connectionParams = { Authorization: 'Dev 1:wallet', 'X-Request-Id': 'ws-1' };
+    expect(context({ connectionParams, extra: {} })).toEqual({
+      req: { headers: { authorization: 'Dev 1:wallet', 'x-request-id': 'ws-1' } },
+      requestId: 'ws-1',
     });
   });
 });
