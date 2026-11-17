@@ -28,7 +28,7 @@ export class GoogleAuthResolver {
   @RequirePermission('wallet')
   @Query(() => GoogleAccount, {
     nullable: true,
-    description: 'Requires a client token.',
+    description: 'Requires a client token. Works also when Google login is off.',
   })
   googleAccount(@CurrentUser() user: AuthUser): Promise<GoogleAccount | null> {
     return this.google.get(user.id);
