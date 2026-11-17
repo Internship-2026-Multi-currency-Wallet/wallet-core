@@ -113,7 +113,7 @@ export class UsersRepository {
       await trx(USERS)
         .where({ id: userId })
         .update({
-// Counting starts again after the lock.
+          // Counting starts again after the lock.
           failed_login_attempts: lockUntil ? 0 : attempts,
           locked_until: lockUntil,
           updated_at: policy.now,
