@@ -35,10 +35,15 @@ export const registerInputSchema = z.object({
     .regex(/\p{Lu}/u, REGISTER_INPUT_MESSAGES.passwordNoUppercase)
     .regex(/[^\p{L}\p{N}]/u, REGISTER_INPUT_MESSAGES.passwordNoSpecial),
   // E.164: "+", then 7–15 digits, the first one not 0 (7 = the shortest plans, e.g. Niue).
-  phone: z
-    .string()
-    .regex(/^\+[1-9]\d{6,14}$/, REGISTER_INPUT_MESSAGES.phoneInvalid)
-    .nullish(),
+  // A blank phone means no phone (a form sends ""), so a required one answers PHONE_REQUIRED. Any
+  // other value is checked as sent, never trimmed: " +380501234567 " stays invalid.
+  phone: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+    z
+      .string()
+      .regex(/^\+[1-9]\d{6,14}$/, REGISTER_INPUT_MESSAGES.phoneInvalid)
+      .nullish(),
+  ),
 });
 
 export type RegisterData = z.infer<typeof registerInputSchema>;
