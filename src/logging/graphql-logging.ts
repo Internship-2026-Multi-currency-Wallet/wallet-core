@@ -6,12 +6,12 @@
  *   access log line names it, and logs resolver errors with the request's `requestId`.
  * - graphql-ws: one `requestId` per websocket connection, taken from `x-request-id` in the
  *   connection params or the upgrade request, else generated. Subscription start/end and errors
- *   are logged with it.
+ *   are logged with it, and `inWsLoggingContext` binds it to every log of an operation.
  */
 import type { ApolloServerPlugin } from '@apollo/server';
 import { unwrapResolverError } from '@apollo/server/errors';
 import { HttpException } from '@nestjs/common';
-import type { GraphQLError } from 'graphql';
+import type { ExecutionArgs, GraphQLError } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Logger } from 'pino';
 import { isExpectedGraphqlError } from '../graphql/expected-error.filter.js';
@@ -58,7 +58,7 @@ function httpStatusOf(thrown: unknown): number | undefined {
   return thrown instanceof HttpException ? thrown.getStatus() : undefined;
 }
 
-function isClientStatus(status: number | undefined): boolean {
+function isClientStatus(status: number | undefined): status is number {
   return status !== undefined && status >= 400 && status < 500;
 }
 
@@ -142,9 +142,9 @@ export function wsRequestId(ctx: WsContext): string {
 
 /**
  * graphql-ws results bypass the Apollo plugin, so they are logged here at the same levels: expected
- * errors at warn, other server failures at error with the stack. `serverOriginal` returns the error
- * the server threw (the one formatError classifies), or `undefined` for a client error, logged only
- * if expected. Nest 4xx exceptions are not logged; resolver exceptions are also logged by Nest.
+ * errors and Nest 4xx exceptions (`HTTP_<status>`, as over HTTP) at warn, other server failures at
+ * error with the stack. `serverOriginal` returns the error the server threw (the one formatError
+ * classifies), or `undefined` for a client error, logged only if expected.
  */
 export function logWsErrors(
   logger: PinoLogger,
@@ -156,21 +156,65 @@ export function logWsErrors(
     const thrown = serverOriginal(error);
     const original = thrown ?? error;
     const expected = isExpectedGraphqlError(original);
-    if (!expected && (thrown === undefined || isClientStatus(httpStatusOf(thrown)))) continue;
+    if (!expected && thrown === undefined) continue;
+    const status = httpStatusOf(thrown);
+    const refusal = isClientStatus(status) ? `HTTP_${status}` : undefined;
     const fields = {
       requestId: wsRequestId(ctx),
-      // The code the client gets: an unexpected error is masked, whatever its wrapper carries.
-      code: expected ? original.extensions.code : 'INTERNAL_SERVER_ERROR',
+      // An unexpected error is masked for the client, whatever its wrapper carries.
+      code: expected ? original.extensions.code : (refusal ?? 'INTERNAL_SERVER_ERROR'),
       path: error.path?.join('.'),
     };
     const msg = `GraphQL error: ${withoutValue(error.message)}`;
-    if (expected) logger.warn(fields, msg);
+    if (expected || refusal) logger.warn(fields, msg);
     else
       logger.error(
         { ...fields, err: loggableError(original instanceof Error ? original : error) },
         msg,
       );
   }
+}
+
+/**
+ * graphql-ws `execute` / `subscribe`: a websocket operation has no HTTP request, so nestjs-pino has
+ * no context and guards, strategies and resolvers would log without `requestId`. Runs the operation
+ * in one bound to the connection's id (`requestId` of the GraphQL context), as `EventSubscriber`
+ * does for event handlers. graphql-ws pulls a subscription's events from its own loop, outside this
+ * call, so the iterator's `next`, `return` and `throw` are run in the same context.
+ */
+export function inWsLoggingContext<T>(
+  logger: PinoLogger,
+  run: (args: ExecutionArgs) => T,
+): (args: ExecutionArgs) => T {
+  return (args) => {
+    const { requestId } = (args.contextValue ?? {}) as { requestId?: string };
+    const inContext = <R>(fn: () => R): R => logger.runInContext(fn, { bindings: { requestId } });
+    const result = inContext(() => run(args));
+    const bind = (value: unknown): unknown =>
+      isAsyncIterable(value) ? boundIterator(value[Symbol.asyncIterator](), inContext) : value;
+    return (result instanceof Promise ? result.then(bind) : bind(result)) as T;
+  };
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return typeof (value as AsyncIterable<unknown> | null)?.[Symbol.asyncIterator] === 'function';
+}
+
+/** `return` and `throw` only if the iterator has them: graphql-ws calls `return` only then. */
+function boundIterator<T>(
+  iterator: AsyncIterator<T>,
+  inContext: <R>(fn: () => R) => R,
+): AsyncIterableIterator<T> {
+  const stop = iterator.return?.bind(iterator);
+  const fail = iterator.throw?.bind(iterator);
+  return {
+    next: (...value: [] | [unknown]) => inContext(() => iterator.next(...value)),
+    ...(stop && { return: (value?: unknown) => inContext(() => stop(value)) }),
+    ...(fail && { throw: (error?: unknown) => inContext(() => fail(error)) }),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  };
 }
 
 function operationOf(payload: WsSubscribePayload): string {
