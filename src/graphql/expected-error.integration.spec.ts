@@ -308,8 +308,6 @@ describe('GraphQL error logging in Nest + Apollo', () => {
           },
         );
       });
-      // Every record names its operation (ws-subscription-errors.integration.spec.ts covers how);
-      // the tests below compare the rest.
       const records = (level: string) =>
         wsLog
           .filter((e) => e.level === level && e.fields.requestId === requestId)

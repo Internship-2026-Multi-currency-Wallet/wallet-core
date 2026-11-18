@@ -149,7 +149,7 @@ export function logWsErrors(
     try {
       logWsError(logger, ctx, operation, error, serverOriginal);
     } catch {
-      // Dropped: what failed is most likely the logger, so it cannot be logged either.
+      // Not logged: the logger is what most likely failed.
     }
   }
 }

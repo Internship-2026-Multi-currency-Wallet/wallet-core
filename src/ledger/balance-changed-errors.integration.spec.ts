@@ -24,11 +24,7 @@ import { PermissionGuard } from '../permissions/permission.guard.js';
 import { LedgerResolver } from './ledger.resolver.js';
 import { LedgerService } from './ledger.service.js';
 
-/**
- * The case the logging gap was found with: a malformed `balance.changed` event reaching a running
- * `balanceChanged` subscription, over a real graphql-ws connection with the real resolver, guards,
- * production logger and metrics. Redis is replaced by a subscriber the test publishes to.
- */
+/** The case the logging gap was found with. */
 
 const config = AppConfig.fromEnv({ NODE_ENV: 'test' });
 const USER_ID = '3c7e1a9b-5d2f-4b8e-9a6c-1f0d2e3b4a5c';
