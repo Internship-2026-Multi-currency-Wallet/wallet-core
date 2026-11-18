@@ -95,11 +95,10 @@ describe('GraphQL document limits (e2e)', () => {
     const codeOf = (errors: unknown): unknown =>
       (errors as { extensions?: { code?: unknown } }[])[0]?.extensions?.code;
 
-    it('refuses a document over the token limit with GRAPHQL_PARSE_FAILED', async () => {
+    it('refuses a document over the token limit with GRAPHQL_PARSE_FAILED, keeping the connection', async () => {
       const errors = await run(`{ ${aliases(9)} __typename __typename }`);
 
       expect(codeOf(errors)).toBe('GRAPHQL_PARSE_FAILED');
-      // The operation fails, not the connection.
       expect((await run('{ __typename }')) as GqlBody).toEqual({ data: { __typename: 'Query' } });
     });
 

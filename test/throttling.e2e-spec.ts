@@ -207,7 +207,6 @@ describe('GraphQL requests counted before Apollo (e2e)', () => {
     await app.close();
   });
 
-  /** The first three requests count against the anonymous limit whatever Apollo answers, the fourth is refused. */
   async function expectCounted(query: string): Promise<void> {
     const headers = { 'X-Forwarded-For': randomIp() };
     for (let i = 0; i < 3; i++) {

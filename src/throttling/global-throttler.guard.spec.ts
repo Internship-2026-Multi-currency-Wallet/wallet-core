@@ -175,7 +175,6 @@ describe('GlobalThrottlerGuard', () => {
   describe('refusal', () => {
     it('answers REST with 429 and a Retry-After header, and warns once', async () => {
       const { guard, storage, logger, res } = await readyGuard();
-      // limitAnonymous is 3, so the 4th hit is the first refusal in the window.
       storage.increment.mockResolvedValue({ ...BLOCKED, totalHits: 4 });
       const context = httpContext(request({ path: '/diagnostics/ping' }), res);
 
