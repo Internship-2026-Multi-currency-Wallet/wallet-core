@@ -484,20 +484,37 @@ describe(`errors in a running subscription (${SERVICE})`, () => {
     expect(nest).toEqual([]);
   });
 
-  it('a client that sends an operationName gets that name', async () => {
+  it('names the operation the operationName selects, not the first one', async () => {
     const before = lines.length;
     const client = connect('sub-err-operation-name');
     try {
       await collect(
         client,
-        'subscription Other { events(script: ["ok"]) } subscription Chosen { events(script: ["crash"]) }',
+        'query Other { alive } subscription Chosen { events(script: ["crash"]) }',
         'Chosen',
       );
     } finally {
       await client.dispose();
     }
-    expect(errorRecords(lines.slice(before))).toEqual([
+    const logs = lines.slice(before);
+    expect(errorRecords(logs)).toEqual([
       expect.objectContaining({ operation: 'subscription Chosen' }),
+    ]);
+    expect(logs.map((line) => line.msg)).toEqual(
+      expect.arrayContaining(['subscription Chosen started', 'subscription Chosen completed']),
+    );
+  });
+
+  it('finds the name after a leading comment', async () => {
+    const { logs } = await runWs(
+      [
+        '# sent by a client that keeps comments',
+        'subscription Commented { events(script: ["crash"]) }',
+      ].join('\n'),
+      'sub-err-comment',
+    );
+    expect(errorRecords(logs)).toEqual([
+      expect.objectContaining({ operation: 'subscription Commented' }),
     ]);
   });
 

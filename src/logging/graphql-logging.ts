@@ -5,7 +5,7 @@
 import type { ApolloServerPlugin } from '@apollo/server';
 import { unwrapResolverError } from '@apollo/server/errors';
 import { HttpException } from '@nestjs/common';
-import type { ExecutionArgs, GraphQLError } from 'graphql';
+import { type ExecutionArgs, getOperationAST, type GraphQLError, Kind, parse } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Logger } from 'pino';
 import { isExpectedGraphqlError } from '../graphql/expected-error.filter.js';
@@ -135,9 +135,8 @@ export function wsRequestId(ctx: WsContext): string {
 }
 
 /**
- * graphql-ws results bypass Apollo's logging plugin. One record per error, named like the
- * operation's started/completed lines. Never throws: graphql-ws would pass the failure to
- * `onError`, which logs and counts the error again and ends the subscription.
+ * Never throws: graphql-ws would pass the failure to `onError`, which logs and counts it again
+ * and ends the subscription.
  */
 export function logWsErrors(
   logger: PinoLogger,
@@ -224,17 +223,31 @@ function boundIterator<T>(
   };
 }
 
+const operationNames = new WeakMap<WsSubscribePayload, string>();
+
 /**
- * Read from the text: the lifecycle lines are written before graphql-ws parses the document.
- * graphql-ws clients (ours included) often send no `operationName`, so the document's own name
- * comes next, then the first field.
+ * Parsed here because the lifecycle hooks run before graphql-ws parses, once per operation:
+ * graphql-ws passes the same payload to all of its hooks.
  */
 function operationOf(payload: WsSubscribePayload): string {
-  const query = payload.query ?? '';
-  const head = /^\s*(query|mutation|subscription)\b\s*(\w*)/.exec(query);
-  const type = head?.[1] ?? (/^\s*\{/.test(query) ? 'query' : 'subscription');
-  const field = /\{\s*(\w+)/.exec(query)?.[1];
-  return `${type} ${payload.operationName || head?.[2] || field || '(anonymous)'}`;
+  let name = operationNames.get(payload);
+  if (name === undefined) {
+    name = nameOperation(payload);
+    operationNames.set(payload, name);
+  }
+  return name;
+}
+
+function nameOperation({ query, operationName }: WsSubscribePayload): string {
+  let operation;
+  try {
+    operation = getOperationAST(parse(query ?? '', { noLocation: true }), operationName);
+  } catch {
+    return `operation ${operationName || '(invalid document)'}`;
+  }
+  if (!operation) return `operation ${operationName || '(unknown)'}`;
+  const field = operation.selectionSet.selections.find((node) => node.kind === Kind.FIELD);
+  return `${operation.operation} ${operation.name?.value ?? field?.name.value ?? '(anonymous)'}`;
 }
 
 /** graphql-ws server hooks that log the subscription lifecycle. Spread into `'graphql-ws'` options. */
