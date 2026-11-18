@@ -162,8 +162,8 @@ export function graphqlOptions(
           }
           return formatted;
         },
-        // Nest's config type omits these but passes every option on to graphql-ws, so this works;
-        // the spread keeps the type check from rejecting it.
+        // Nest's config type omits these, the spread keeps the type check from rejecting them. Nest uses
+        // `server` instead of creating its own WebSocketServer and passes the rest on to graphql-ws.
         ...{
           server: new WebSocketServer({
             noServer: true,
@@ -181,7 +181,6 @@ export function graphqlOptions(
     },
     // Names the operation in the access log and logs resolver errors with the requestId.
     plugins: [graphqlLoggingPlugin(), ...(metrics ? [graphqlMetricsPlugin(metrics)] : [])],
-    // A document over the token limit is not parsed at all (400 GRAPHQL_PARSE_FAILED).
     parseOptions,
     validationRules,
     // Unexpected errors reach the client as a bare INTERNAL_SERVER_ERROR (no SQL, no internals).

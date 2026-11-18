@@ -18,10 +18,7 @@ interface ThrottledRequest extends RequestLike {
   ip?: string;
 }
 
-/**
- * Counts REST requests; must run after `AuthGuard` so caller keys use the authenticated identity.
- * GraphQL is counted before Apollo by `GraphqlThrottlerMiddleware`.
- */
+/** REST only (GraphQL: `GraphqlThrottlerMiddleware`). Must run after `AuthGuard` so keys use the authenticated identity. */
 @Injectable()
 export class GlobalThrottlerGuard extends ThrottlerGuard {
   constructor(

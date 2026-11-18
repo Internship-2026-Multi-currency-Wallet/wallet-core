@@ -1,13 +1,9 @@
 import { GraphQLError, Kind, type SelectionSetNode, type ValidationRule } from 'graphql';
 
-/**
- * Refuses an operation whose fields nest deeper than `maxDepth`. A leaf field counts 1, a field
- * with a selection set 1 plus its deepest selection; fragments add no depth of their own.
- */
+/** A leaf field counts 1; fragments add no depth of their own. */
 export function maxDepthRule(maxDepth: number): ValidationRule {
   return (context) => {
-    // Per fragment, so a document that spreads fragments in a chain is measured in linear time.
-    // A fragment still being measured counts 0: that stops cycles, which NoFragmentCycles reports.
+    // Memoized so fragment chains stay linear; 0 while a fragment is measured stops cycles (NoFragmentCycles reports them).
     const fragmentDepths = new Map<string, number>();
 
     const depthOf = (selectionSet: SelectionSetNode): number => {

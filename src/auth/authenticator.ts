@@ -3,18 +3,13 @@ import { AUTH_STRATEGIES, type AuthStrategy } from './auth-strategy.js';
 import type { AuthUser } from './auth-user.js';
 import type { RequestLike } from './request-context.js';
 
-/**
- * Runs the `AuthStrategy` list in order; the first one that returns a user wins. The result is kept
- * per request object, so the rate limit middleware and `AuthGuard` (once per top-level GraphQL
- * field) authenticate a request only once.
- */
+/** Kept per request: otherwise the rate limit middleware and `AuthGuard` (once per top-level field) each authenticate. */
 @Injectable()
 export class Authenticator {
   private readonly results = new WeakMap<RequestLike, Promise<AuthUser | null>>();
 
   constructor(@Inject(AUTH_STRATEGIES) private readonly strategies: AuthStrategy[]) {}
 
-  /** Rejects with the strategy's error when the credentials are invalid. */
   authenticate(request: RequestLike): Promise<AuthUser | null> {
     let result = this.results.get(request);
     if (!result) {

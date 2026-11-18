@@ -10,10 +10,7 @@ import { Authenticator } from './authenticator.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
 import { getRequest } from './request-context.js';
 
-/**
- * Global guard. Authenticates with the registered `AuthStrategy` list (see `Authenticator`).
- * Without a user the request is rejected with 401, unless the handler is `@Public()`.
- */
+/** Without a user the request is rejected with 401, unless the handler is `@Public()`. */
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(

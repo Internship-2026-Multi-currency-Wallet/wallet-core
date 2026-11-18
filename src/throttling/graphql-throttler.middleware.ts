@@ -14,11 +14,7 @@ import {
 } from './throttle-caller.js';
 import { tooManyRequestsError } from './throttle-errors.js';
 
-/**
- * Counts every HTTP request to /graphql before Apollo parses it, so documents that fail to parse
- * or validate, introspection and requests refused by the guards are counted too. Websocket
- * operations are not (no Express request). Same counters and headers as `GlobalThrottlerGuard`.
- */
+/** Before Apollo, because documents that fail to parse or validate never reach a guard. */
 @Injectable()
 export class GraphqlThrottlerMiddleware implements NestMiddleware {
   constructor(
@@ -26,7 +22,7 @@ export class GraphqlThrottlerMiddleware implements NestMiddleware {
     private readonly authenticator: Authenticator,
     private readonly config: AppConfig,
     private readonly metrics: Metrics,
-    // Plain `PinoLogger`, as in `GlobalThrottlerGuard`.
+    // Plain `PinoLogger`, not `@InjectPinoLogger`: that provider only exists if this file loads before LoggingModule.
     private readonly pinoLogger: PinoLogger,
   ) {
     pinoLogger.setContext(GraphqlThrottlerMiddleware.name);
