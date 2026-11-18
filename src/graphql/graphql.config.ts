@@ -5,12 +5,16 @@ import type { Response } from 'express';
 import {
   type DocumentNode,
   execute,
-  type GraphQLError,
+  GraphQLError,
   type GraphQLFormattedError,
+  type GraphQLSchema,
   parse,
+  specifiedRules,
   subscribe,
+  validate,
 } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
+import { WebSocketServer } from 'ws';
 import { AppConfig } from '../config/app-config.js';
 import { type RequestLike, requestFromConnectionParams } from '../auth/request-context.js';
 import { restrictClientFields } from '../customizations/client-field-availability.js';
@@ -38,6 +42,9 @@ import { maxDepthRule } from './max-depth.rule.js';
 
 /** Path of the committed GraphQL contract. Other repositories consume this file. */
 export const SCHEMA_FILE = join(process.cwd(), 'schema.graphql');
+
+// The same bound as Nest's JSON body limit over HTTP; ws itself allows 100 MiB per message.
+const WS_MAX_PAYLOAD_BYTES = 100 * 1024;
 
 interface ContextInput {
   req?: RequestLike;
@@ -74,6 +81,8 @@ export function graphqlOptions(
   logger.setContext('GraphQL');
   const wsLogging = subscriptionLoggingHooks(logger);
   const countedSockets = new WeakSet<object>();
+  const parseOptions = { maxTokens: config.graphql.maxTokens };
+  const validationRules = [maxDepthRule(config.graphql.maxDepth)];
   const onProtocolError = (
     ctx: WsContext,
     _id: string,
@@ -113,6 +122,27 @@ export function graphqlOptions(
             metrics.graphqlWsConnections.inc();
           }
         },
+        onSubscribe: (ctx, id, payload) => {
+          wsLogging.onSubscribe(ctx, id, payload);
+          // Apollo's parse options do not apply here, and graphql-ws closes the whole connection with 4500
+          // when its own parse throws, so the document is checked here and refused like any operation error.
+          try {
+            parse(payload.query, parseOptions);
+          } catch (error) {
+            if (error instanceof GraphQLError) {
+              const { source, positions } = error;
+              return [
+                new GraphQLError(error.message, {
+                  source,
+                  positions,
+                  extensions: { code: 'GRAPHQL_PARSE_FAILED' },
+                }),
+              ];
+            }
+            throw error;
+          }
+          return undefined;
+        },
         onClose: (ctx) => {
           if (countedSockets.delete(ctx)) metrics?.graphqlWsConnections.dec();
         },
@@ -135,6 +165,14 @@ export function graphqlOptions(
         // Nest's config type omits these but passes every option on to graphql-ws, so this works;
         // the spread keeps the type check from rejecting it.
         ...{
+          server: new WebSocketServer({
+            noServer: true,
+            path: '/graphql',
+            maxPayload: WS_MAX_PAYLOAD_BYTES,
+          }),
+          // graphql-ws does not use Apollo's validation rules: apply the same ones.
+          validate: (schema: GraphQLSchema, document: DocumentNode) =>
+            validate(schema, document, [...specifiedRules, ...validationRules]),
           onError: onProtocolError,
           execute: inWsLoggingContext(logger, execute),
           subscribe: inWsLoggingContext(logger, subscribe),
@@ -144,8 +182,8 @@ export function graphqlOptions(
     // Names the operation in the access log and logs resolver errors with the requestId.
     plugins: [graphqlLoggingPlugin(), ...(metrics ? [graphqlMetricsPlugin(metrics)] : [])],
     // A document over the token limit is not parsed at all (400 GRAPHQL_PARSE_FAILED).
-    parseOptions: { maxTokens: config.graphql.maxTokens },
-    validationRules: [maxDepthRule(config.graphql.maxDepth)],
+    parseOptions,
+    validationRules,
     // Unexpected errors reach the client as a bare INTERNAL_SERVER_ERROR (no SQL, no internals).
     formatError,
     // Nest runs no guards on field resolvers, so field restrictions are applied to the schema.

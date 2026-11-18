@@ -276,6 +276,31 @@ describe('GraphQL requests counted before Apollo (e2e)', () => {
     expect(anonymous.headers['x-ratelimit-remaining']).toBe('2');
   });
 
+  it('counts every path Apollo answers on (trailing slash, other case, query string)', async () => {
+    const ip = randomIp();
+    for (const path of ['/graphql/', '/GRAPHQL', '/graphql?x=1']) {
+      const res = await request(app.getHttpServer() as App)
+        .post(path)
+        .set('X-Forwarded-For', ip)
+        .send({ query: ANONYMOUS_QUERY });
+      expect(codeOf(res.body)).toBeUndefined();
+    }
+
+    expect(codeOf((await gql(ANONYMOUS_QUERY, { 'X-Forwarded-For': ip })).body)).toBe(
+      'TOO_MANY_REQUESTS',
+    );
+  });
+
+  it('lets no more than the limit through when requests arrive at the same time', async () => {
+    const ip = randomIp();
+
+    const responses = await Promise.all(
+      Array.from({ length: 10 }, () => gql(ANONYMOUS_QUERY, { 'X-Forwarded-For': ip })),
+    );
+
+    expect(responses.filter((res) => codeOf(res.body) !== 'TOO_MANY_REQUESTS')).toHaveLength(3);
+  });
+
   it('does not count a CORS preflight', async () => {
     const res = await request(app.getHttpServer() as App)
       .options('/graphql')
