@@ -4,6 +4,8 @@ import type { NextFunction, Request, Response } from 'express';
 import { PinoLogger } from 'nestjs-pino';
 import { Authenticator } from '../auth/authenticator.js';
 import { AppConfig } from '../config/app-config.js';
+import { Metrics } from '../metrics/metrics.js';
+import { countGraphqlErrors } from '../metrics/request-metrics.js';
 import {
   throttledCallerFields,
   throttleKey,
@@ -23,6 +25,7 @@ export class GraphqlThrottlerMiddleware implements NestMiddleware {
     @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
     private readonly authenticator: Authenticator,
     private readonly config: AppConfig,
+    private readonly metrics: Metrics,
     // Plain `PinoLogger`, as in `GlobalThrottlerGuard`.
     private readonly pinoLogger: PinoLogger,
   ) {
@@ -48,7 +51,10 @@ export class GraphqlThrottlerMiddleware implements NestMiddleware {
         this.pinoLogger.warn(throttledCallerFields(user, req.ip), 'request throttled');
       }
       res.setHeader('Retry-After', timeToBlockExpire);
-      res.status(200).json({ errors: [tooManyRequestsError(timeToBlockExpire).toJSON()] });
+      const error = tooManyRequestsError(timeToBlockExpire).toJSON();
+      // Apollo's metrics plugin never sees this request, so the refusal is counted here.
+      countGraphqlErrors(this.metrics, undefined, [error], req.id);
+      res.status(200).json({ errors: [error] });
       return;
     }
     res.setHeader('X-RateLimit-Limit', limit);

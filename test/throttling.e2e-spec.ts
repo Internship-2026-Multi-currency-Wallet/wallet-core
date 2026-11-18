@@ -3,6 +3,7 @@ import type { INestApplication } from '@nestjs/common';
 import type { Redis } from 'ioredis';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
+import { MetricsServer } from '../src/metrics/metrics-server.js';
 import { REDIS } from '../src/redis/redis.module.js';
 import { createApp, waitForRedis } from './create-app.js';
 
@@ -122,6 +123,25 @@ describe('global rate limit (e2e)', () => {
       retryAfterSeconds: expect.any(Number),
     });
     expect([1, 2]).toContain(extensions?.retryAfterSeconds);
+  });
+
+  it('counts a GraphQL refusal in graphql_errors_total', async () => {
+    const metricsUrl = `http://127.0.0.1:${app.get(MetricsServer).port}/metrics`;
+    const refusals = async (): Promise<number> => {
+      const line = (await (await fetch(metricsUrl)).text())
+        .split('\n')
+        .find(
+          (l) => l.startsWith('graphql_errors_total{') && l.includes('code="TOO_MANY_REQUESTS"'),
+        );
+      return line ? Number(line.split(' ')[1]) : 0;
+    };
+    const ip = randomIp();
+    for (let i = 0; i < 3; i++) await anonymous(ip);
+    const before = await refusals();
+
+    await anonymous(ip);
+
+    expect(await refusals()).toBe(before + 1);
   });
 
   it('answers a REST refusal with 429 and a Retry-After header', async () => {
