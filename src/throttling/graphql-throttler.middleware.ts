@@ -1,0 +1,59 @@
+import { Injectable, type NestMiddleware } from '@nestjs/common';
+import { InjectThrottlerStorage, type ThrottlerStorage } from '@nestjs/throttler';
+import type { NextFunction, Request, Response } from 'express';
+import { PinoLogger } from 'nestjs-pino';
+import { Authenticator } from '../auth/authenticator.js';
+import { AppConfig } from '../config/app-config.js';
+import {
+  throttledCallerFields,
+  throttleKey,
+  throttleLimit,
+  throttleTracker,
+} from './throttle-caller.js';
+import { tooManyRequestsError } from './throttle-errors.js';
+
+/**
+ * Counts every HTTP request to /graphql before Apollo parses it, so documents that fail to parse
+ * or validate, introspection and requests refused by the guards are counted too. Websocket
+ * operations are not (no Express request). Same counters and headers as `GlobalThrottlerGuard`.
+ */
+@Injectable()
+export class GraphqlThrottlerMiddleware implements NestMiddleware {
+  constructor(
+    @InjectThrottlerStorage() private readonly storage: ThrottlerStorage,
+    private readonly authenticator: Authenticator,
+    private readonly config: AppConfig,
+    // Plain `PinoLogger`, as in `GlobalThrottlerGuard`.
+    private readonly pinoLogger: PinoLogger,
+  ) {
+    pinoLogger.setContext(GraphqlThrottlerMiddleware.name);
+  }
+
+  async use(req: Request, res: Response, next: NextFunction): Promise<void> {
+    if (req.method === 'OPTIONS') return next();
+    // Bad credentials count as anonymous; AuthGuard refuses them later.
+    const user = (await this.authenticator.authenticate(req).catch(() => null)) ?? undefined;
+    const limit = throttleLimit(this.config, user);
+    const { totalHits, timeToExpire, isBlocked, timeToBlockExpire } = await this.storage.increment(
+      throttleKey(this.config, throttleTracker(user, req.ip)),
+      this.config.throttle.ttlSeconds * 1000,
+      limit,
+      0,
+      'default',
+    );
+
+    if (isBlocked) {
+      // Only the first refusal in a window is logged, so a flood of refused requests does not flood the logs.
+      if (totalHits === limit + 1) {
+        this.pinoLogger.warn(throttledCallerFields(user, req.ip), 'request throttled');
+      }
+      res.setHeader('Retry-After', timeToBlockExpire);
+      res.status(200).json({ errors: [tooManyRequestsError(timeToBlockExpire).toJSON()] });
+      return;
+    }
+    res.setHeader('X-RateLimit-Limit', limit);
+    res.setHeader('X-RateLimit-Remaining', Math.max(0, limit - totalHits));
+    res.setHeader('X-RateLimit-Reset', timeToExpire);
+    next();
+  }
+}

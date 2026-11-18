@@ -2,6 +2,7 @@ import { type ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { AuthStrategy } from './auth-strategy.js';
 import { AuthGuard } from './auth.guard.js';
+import { Authenticator } from './authenticator.js';
 import { DevAuthStrategy } from './dev-auth.strategy.js';
 import { Public } from './public.decorator.js';
 import type { RequestLike } from './request-context.js';
@@ -27,7 +28,7 @@ describe('AuthGuard', () => {
   const reflector = new Reflector();
 
   describe('with DEV_AUTH enabled (dev strategy registered)', () => {
-    const guard = new AuthGuard(reflector, [new DevAuthStrategy()]);
+    const guard = new AuthGuard(reflector, new Authenticator([new DevAuthStrategy()]));
 
     it('authenticates a dev header and stores the user on the request', async () => {
       const request: RequestLike = { headers: { authorization: 'Dev 5:wallet' } };
@@ -65,7 +66,7 @@ describe('AuthGuard', () => {
   });
 
   describe('with DEV_AUTH disabled and no real strategy', () => {
-    const guard = new AuthGuard(reflector, []);
+    const guard = new AuthGuard(reflector, new Authenticator([]));
 
     it('rejects even a valid dev header', async () => {
       const request = { headers: { authorization: 'Dev 1:wallet' } };
@@ -87,7 +88,7 @@ describe('AuthGuard', () => {
           ? { id: 'u1', kind: UserKind.CLIENT, permissions: [], strategy: 'jwt' }
           : null,
     };
-    const guard = new AuthGuard(reflector, [jwtLike, new DevAuthStrategy()]);
+    const guard = new AuthGuard(reflector, new Authenticator([jwtLike, new DevAuthStrategy()]));
 
     const jwtRequest: RequestLike = { headers: { authorization: 'Bearer good' } };
     await guard.canActivate(httpContext('closed', jwtRequest));

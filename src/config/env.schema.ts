@@ -95,6 +95,9 @@ export const envSchema = z
     THROTTLE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
     THROTTLE_LIMIT_ANONYMOUS: z.coerce.number().int().positive().default(120),
     THROTTLE_LIMIT_USER: z.coerce.number().int().positive().default(600),
+    GRAPHQL_MAX_TOKENS: z.coerce.number().int().positive().default(1000),
+    // The standard introspection query has depth 15; frontends use at most 3.
+    GRAPHQL_MAX_DEPTH: z.coerce.number().int().positive().default(15),
   })
   .superRefine((env, ctx) => {
     // Every deployed image runs with NODE_ENV=production, so a server cannot fall back to the
