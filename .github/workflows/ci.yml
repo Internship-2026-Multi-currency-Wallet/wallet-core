@@ -1,10 +1,4 @@
-# CI: every pull request and every push to main runs the same checks as README "CI" describes.
-#
-# Repository-specific values (change them when copying this file to another backend):
-#   - the database name `wallet_core` in DATABASE_URL and in services.mysql.env.MYSQL_DATABASE
-#     (the services block cannot read `env`, so it is written twice).
-#
-# No secrets: MySQL and Redis are throwaway service containers with local-only credentials.
+# The services block cannot read `env`; keep its database name synchronized with `DATABASE_URL`.
 name: CI
 
 on:
@@ -14,8 +8,7 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # A new push to a pull request cancels its running check. On main a running check is never cancelled,
-  # but a newer push replaces one that is still waiting in the queue.
+  # GitHub replaces an existing pending run even when cancellation of running checks is disabled.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
