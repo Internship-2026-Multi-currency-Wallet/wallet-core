@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { GraphQLError } from 'graphql';
+import { type DocumentNode, type ExecutionResult, GraphQLError, parse } from 'graphql';
 import type { Response } from 'express';
 import type { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
@@ -115,5 +115,78 @@ describe('graphqlOptions websocket protocol errors', () => {
     const result = onError({ extra: {} }, '1', { query: 'subscription S { ticks }' }, [wrapped]);
     expect(result).toMatchObject([{ extensions: { code: 'INTERNAL_SERVER_ERROR' } }]);
     expect(JSON.stringify(result)).not.toContain('artem@test.com');
+  });
+});
+
+describe('graphqlOptions websocket results', () => {
+  type OnNext = (
+    ctx: object,
+    id: string,
+    payload: { query: string },
+    args: { document: DocumentNode; operationName?: string },
+    result: ExecutionResult,
+  ) => unknown;
+
+  const SERVICE = 'wallet-core';
+  const query = 'subscription Ticks { ticks }';
+  const crashed = (): ExecutionResult => {
+    const failure = new Error('Duplicate entry for redis://internal-host:6379');
+    return {
+      data: { ticks: null },
+      errors: [new GraphQLError(failure.message, { path: ['ticks'], originalError: failure })],
+    };
+  };
+  const quietLogger = () => ({
+    setContext: jest.fn(),
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  });
+
+  function send(log: object, metrics: Metrics, result: ExecutionResult): unknown {
+    const options = graphqlOptions(AppConfig.fromEnv({}), log as unknown as PinoLogger, metrics);
+    const { onNext } = options.subscriptions?.['graphql-ws'] as unknown as { onNext: OnNext };
+    return onNext({ extra: {} }, '1', { query }, { document: parse(query) }, result);
+  }
+
+  const errorCount = async (metrics: Metrics) =>
+    (await metrics.graphqlErrors.get()).values.find(
+      (v) =>
+        v.labels.operation === 'subscription ticks' && v.labels.code === 'INTERNAL_SERVER_ERROR',
+    )?.value ?? 0;
+
+  it('masks and counts as before when logging fails, without throwing', async () => {
+    const metrics = new Metrics({ service: SERVICE, env: 'local' });
+    const failingLogger = {
+      ...quietLogger(),
+      error: jest.fn(() => {
+        throw new Error('log stream closed');
+      }),
+    };
+    const sent = send(failingLogger, metrics, crashed());
+    expect(failingLogger.error).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual({
+      data: { ticks: null },
+      errors: [
+        {
+          message: 'Internal server error',
+          path: ['ticks'],
+          extensions: { code: 'INTERNAL_SERVER_ERROR' },
+        },
+      ],
+    });
+    expect(await errorCount(metrics)).toBe(1);
+  });
+
+  it('logs and masks without changing the result it was given', () => {
+    const log = quietLogger();
+    const result = crashed();
+    const [error] = result.errors ?? [];
+    const before = { message: error.message, extensions: { ...error.extensions } };
+    send(log, new Metrics({ service: SERVICE, env: 'local' }), result);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(result.errors).toEqual([error]);
+    expect({ message: error.message, extensions: error.extensions }).toEqual(before);
   });
 });
