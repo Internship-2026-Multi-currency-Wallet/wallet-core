@@ -136,6 +136,22 @@ describe('client settings (e2e)', () => {
     expect(Date.parse(rows[0].changedAt)).toBeGreaterThan(Date.parse(rows[1].changedAt));
   });
 
+  it('stamps a change when it gets the key, not when it was requested', async () => {
+    await update('auth.phoneRequiredAt', '"signup"');
+    // Another writer holds the key while the change below is waiting for it.
+    const trx = await db.transaction();
+    await trx('client_settings').where({ key: 'auth.phoneRequiredAt' }).forUpdate().first();
+    const pending = update('auth.phoneRequiredAt', '"firstTransfer"');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const released = new Date();
+    await trx.commit();
+    await pending;
+
+    const [latest] = await history('(key: "auth.phoneRequiredAt", limit: 1)');
+    expect(latest.newValue).toBe('firstTransfer');
+    expect(Date.parse(latest.changedAt)).toBeGreaterThanOrEqual(released.getTime());
+  });
+
   it('pages history with `before` and `limit`', async () => {
     for (const value of ['"signup"', '"firstTransfer"', '"never"']) {
       await update('auth.phoneRequiredAt', value);

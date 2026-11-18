@@ -32,7 +32,8 @@ export interface ApplyChangeInput {
    */
   isValid: (value: unknown) => boolean;
   changedBy: string;
-  at: Date;
+  /** Defaults to the time the key's lock is taken, so history follows the order of the changes. */
+  at?: Date;
 }
 
 /**
@@ -60,11 +61,12 @@ export class SettingsRepository {
   async applyChange(
     input: ApplyChangeInput,
   ): Promise<{ oldValue: unknown; newValue: unknown } | null> {
-    const { key, next, fallback, isValid, changedBy, at } = input;
+    const { key, next, fallback, isValid, changedBy } = input;
     return this.db.transaction(async (trx) => {
       const current = (await trx(OVERRIDES).select('value').where({ key }).forUpdate().first()) as
         { value: unknown } | undefined;
       if (!next && !current) return null;
+      const at = input.at ?? new Date();
 
       const oldValue = current && isValid(current.value) ? current.value : fallback;
       const newValue = next ? next.value : fallback;

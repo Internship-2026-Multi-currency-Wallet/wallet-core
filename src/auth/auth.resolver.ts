@@ -16,8 +16,7 @@ import { User } from './user.model.js';
 import { AuthService, type LoginResult } from './auth.service.js';
 
 /**
- * Registration, login and sessions. `login`, `refreshSession` and `logout` are contract only and
- * throw until they are implemented. The refresh token travels in an httpOnly cookie, never in
+ * Registration, login and sessions. The refresh token travels in an httpOnly cookie, never in
  * arguments or results.
  */
 @Resolver()

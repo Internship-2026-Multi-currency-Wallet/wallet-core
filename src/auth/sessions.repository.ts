@@ -57,7 +57,10 @@ export class SessionsRepository {
         .forUpdate()
         .first('id', 'user_id', 'expires_at');
       if (!row) return null;
-      await trx(SESSIONS).where({ id: row.id }).update({ refresh_token_hash: newRefreshTokenHash });
+      await trx(SESSIONS).where({ id: row.id }).update({
+        refresh_token_hash: newRefreshTokenHash,
+        previous_refresh_token_hash: refreshTokenHash,
+      });
       const user = await trx<User>('users')
         .where({ id: row.user_id })
         .first('id', 'email', 'phone');
@@ -67,9 +70,15 @@ export class SessionsRepository {
     });
   }
 
+  // Also matches the token from before the last rotation: a logout racing a refresh still carries
+  // it. Only `revoke` accepts it; `rotate` does not, so a replayed token cannot refresh.
   async revoke(refreshTokenHash: string, now: Date): Promise<void> {
     await this.db(SESSIONS)
-      .where({ refresh_token_hash: refreshTokenHash })
+      .where((w) => {
+        void w
+          .where({ refresh_token_hash: refreshTokenHash })
+          .orWhere({ previous_refresh_token_hash: refreshTokenHash });
+      })
       .whereNull('revoked_at')
       .update({ revoked_at: now });
   }

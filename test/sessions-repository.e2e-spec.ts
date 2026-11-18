@@ -49,6 +49,7 @@ describe('SessionsRepository (e2e, real MySQL)', () => {
         expires_at: new Date('2026-12-04T10:00:00.000Z'),
         revoked_at: null,
         created_at: new Date('2026-11-04T10:00:00.000Z'),
+        previous_refresh_token_hash: null,
       },
     ]);
   });
@@ -103,6 +104,13 @@ describe('SessionsRepository (e2e, real MySQL)', () => {
       await expect(hashes()).resolves.toEqual([OLD]);
     });
 
+    it('refuses the token the session had before the last refresh', async () => {
+      await repo.create(session());
+      await repo.rotate(OLD, NEW, NOW);
+      await expect(repo.rotate(OLD, 'c'.repeat(64), NOW)).resolves.toBeNull();
+      await expect(hashes()).resolves.toEqual([NEW]);
+    });
+
     it('lets only one of two parallel refreshes with the same token win', async () => {
       await repo.create(session());
       const results = await Promise.all([
@@ -123,6 +131,28 @@ describe('SessionsRepository (e2e, real MySQL)', () => {
       await repo.revoke('a'.repeat(64), NOW);
       await repo.revoke('a'.repeat(64), new Date('2026-11-11T10:00:00.000Z'));
       await expect(db('sessions').first('revoked_at')).resolves.toEqual({ revoked_at: NOW });
+    });
+
+    it('closes the session with the token it had before the last refresh', async () => {
+      const [old, next, after] = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)];
+      await repo.create(session());
+      await repo.rotate(old, next, NOW);
+
+      await repo.revoke(old, NOW);
+
+      await expect(db('sessions').first('revoked_at')).resolves.toEqual({ revoked_at: NOW });
+      await expect(repo.rotate(next, after, NOW)).resolves.toBeNull();
+    });
+
+    it('does not close the session with a token two refreshes old', async () => {
+      const [first, second, third] = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)];
+      await repo.create(session());
+      await repo.rotate(first, second, NOW);
+      await repo.rotate(second, third, NOW);
+
+      await repo.revoke(first, NOW);
+
+      await expect(db('sessions').first('revoked_at')).resolves.toEqual({ revoked_at: null });
     });
   });
 });

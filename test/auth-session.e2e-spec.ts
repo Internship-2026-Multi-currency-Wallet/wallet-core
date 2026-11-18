@@ -99,6 +99,16 @@ describe('refreshSession and logout (e2e)', () => {
     expect(codeOf(await refresh(token))).toBe('INVALID_REFRESH_TOKEN');
   });
 
+  it('ends the session on logout sent with the cookie from before a parallel refresh', async () => {
+    const token = await login();
+    const refreshed = tokenOf(await refresh(token));
+
+    expect((await logout(token)).body).toEqual({ data: { logout: true } });
+
+    await expect(activeSessions()).resolves.toEqual([{ count: 0 }]);
+    expect(codeOf(await refresh(refreshed))).toBe('INVALID_REFRESH_TOKEN');
+  });
+
   it('answers true on logout without a session', async () => {
     expect((await logout()).body).toEqual({ data: { logout: true } });
     expect((await logout('x'.repeat(43))).body).toEqual({ data: { logout: true } });

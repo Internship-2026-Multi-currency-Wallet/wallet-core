@@ -146,7 +146,6 @@ describe('ClientSettingsService', () => {
         fallback: 'never',
         isValid: expect.any(Function),
         changedBy: '7',
-        at: expect.any(Date),
       });
       expect(logger.info).toHaveBeenCalledWith(
         { key: 'auth.phoneRequiredAt', changedBy: '7', oldValue: 'never', newValue: 'signup' },
@@ -203,7 +202,6 @@ describe('ClientSettingsService', () => {
         fallback: 'never',
         isValid: expect.any(Function),
         changedBy: '7',
-        at: expect.any(Date),
       });
       expect(logger.info).toHaveBeenCalledWith(
         { key: 'auth.phoneRequiredAt', changedBy: '7', oldValue: 'signup', newValue: 'never' },

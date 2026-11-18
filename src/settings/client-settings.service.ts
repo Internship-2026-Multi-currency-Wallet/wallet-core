@@ -77,7 +77,6 @@ export class ClientSettingsService {
         fallback,
         isValid: (stored) => schema.safeParse(stored).success,
         changedBy,
-        at: new Date(),
       }),
     );
     this.logger.info(
@@ -90,7 +89,7 @@ export class ClientSettingsService {
   /**
    * Removes the override (staff), so the default applies again. Recorded in history as
    * old → default. Without an override nothing changes and nothing is recorded.
-   * No deadlock retry needed: a reset never inserts a row.
+   * No deadlock retry needed: a reset never inserts an override row.
    *
    * Errors: `UNKNOWN_KEY` (GraphQL `extensions.code`).
    */
@@ -103,7 +102,6 @@ export class ClientSettingsService {
       fallback,
       isValid: (stored) => schema.safeParse(stored).success,
       changedBy,
-      at: new Date(),
     });
     if (change) {
       this.logger.info(
