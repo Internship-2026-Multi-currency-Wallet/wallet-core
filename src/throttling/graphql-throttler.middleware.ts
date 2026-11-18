@@ -42,7 +42,6 @@ export class GraphqlThrottlerMiddleware implements NestMiddleware {
     );
 
     if (isBlocked) {
-      // Only the first refusal in a window is logged, so a flood of refused requests does not flood the logs.
       if (totalHits === limit + 1) {
         this.pinoLogger.warn(throttledCallerFields(user, req.ip), 'request throttled');
       }

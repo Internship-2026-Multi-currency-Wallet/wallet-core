@@ -162,15 +162,14 @@ export function graphqlOptions(
           }
           return formatted;
         },
-        // Nest's config type omits these, the spread keeps the type check from rejecting them. Nest uses
-        // `server` instead of creating its own WebSocketServer and passes the rest on to graphql-ws.
+        // Spread because Nest's config type omits these, though its runtime takes `server` as the WebSocketServer and passes the rest to graphql-ws.
         ...{
           server: new WebSocketServer({
             noServer: true,
             path: '/graphql',
             maxPayload: WS_MAX_PAYLOAD_BYTES,
           }),
-          // graphql-ws does not use Apollo's validation rules: apply the same ones.
+          // Apollo's validation rules do not apply to graphql-ws.
           validate: (schema: GraphQLSchema, document: DocumentNode) =>
             validate(schema, document, [...specifiedRules, ...validationRules]),
           onError: onProtocolError,
