@@ -12,6 +12,7 @@ import { LoggerModule, PinoLogger } from 'nestjs-pino';
 import WebSocket from 'ws';
 import { AUTH_STRATEGIES } from '../auth/auth-strategy.js';
 import { AuthGuard } from '../auth/auth.guard.js';
+import { Authenticator } from '../auth/authenticator.js';
 import { JwtAuthStrategy } from '../auth/jwt-auth.strategy.js';
 import { AppConfig } from '../config/app-config.js';
 import type { BalanceChangedEvent } from '../events/catalog.js';
@@ -114,6 +115,7 @@ describe('balanceChanged: a malformed event', () => {
         { provide: LedgerService, useValue: {} },
         { provide: EventSubscriber, useValue: subscriber },
         { provide: AppConfig, useValue: config },
+        Authenticator,
         JwtAuthStrategy,
         {
           provide: AUTH_STRATEGIES,
@@ -141,7 +143,7 @@ describe('balanceChanged: a malformed event', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
   });
 
   const token = new JwtService().sign(
