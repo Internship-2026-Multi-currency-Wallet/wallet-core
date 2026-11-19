@@ -5,7 +5,7 @@
 import type { ApolloServerPlugin } from '@apollo/server';
 import { unwrapResolverError } from '@apollo/server/errors';
 import { HttpException } from '@nestjs/common';
-import type { ExecutionArgs, GraphQLError } from 'graphql';
+import { type ExecutionArgs, getOperationAST, type GraphQLError, Kind, parse } from 'graphql';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Logger } from 'pino';
 import { isExpectedGraphqlError } from '../graphql/expected-error.filter.js';
@@ -115,7 +115,7 @@ export interface WsContext {
   extra: unknown;
 }
 
-interface WsSubscribePayload {
+export interface WsSubscribePayload {
   operationName?: string | null;
   query?: string;
 }
@@ -134,34 +134,54 @@ export function wsRequestId(ctx: WsContext): string {
   return extra.requestId;
 }
 
-/** graphql-ws results bypass Apollo's logging plugin. */
+/**
+ * Never throws: graphql-ws would pass the failure to `onError`, which logs and counts it again
+ * and ends the subscription.
+ */
 export function logWsErrors(
   logger: PinoLogger,
   ctx: WsContext,
+  operation: { id: string; payload: WsSubscribePayload },
   errors: readonly GraphQLError[] | undefined,
   serverOriginal: (error: GraphQLError) => unknown,
 ): void {
   for (const error of errors ?? []) {
-    const thrown = serverOriginal(error);
-    const original = thrown ?? error;
-    const expected = isExpectedGraphqlError(original);
-    if (!expected && thrown === undefined) continue;
-    const status = httpStatusOf(thrown);
-    const refusal = isClientStatus(status) ? `HTTP_${status}` : undefined;
-    const fields = {
-      requestId: wsRequestId(ctx),
-      // An unexpected error is masked for the client, whatever its wrapper carries.
-      code: expected ? original.extensions.code : (refusal ?? 'INTERNAL_SERVER_ERROR'),
-      path: error.path?.join('.'),
-    };
-    const msg = `GraphQL error: ${withoutValue(error.message)}`;
-    if (expected || refusal) logger.warn(fields, msg);
-    else
-      logger.error(
-        { ...fields, err: loggableError(original instanceof Error ? original : error) },
-        msg,
-      );
+    try {
+      logWsError(logger, ctx, operation, error, serverOriginal);
+    } catch {
+      // Not logged: the logger is what most likely failed.
+    }
   }
+}
+
+function logWsError(
+  logger: PinoLogger,
+  ctx: WsContext,
+  { id, payload }: { id: string; payload: WsSubscribePayload },
+  error: GraphQLError,
+  serverOriginal: (error: GraphQLError) => unknown,
+): void {
+  const thrown = serverOriginal(error);
+  const original = thrown ?? error;
+  const expected = isExpectedGraphqlError(original);
+  if (!expected && thrown === undefined) return;
+  const status = httpStatusOf(thrown);
+  const refusal = isClientStatus(status) ? `HTTP_${status}` : undefined;
+  const fields = {
+    requestId: wsRequestId(ctx),
+    subscriptionId: id,
+    operation: operationOf(payload),
+    // An unexpected error is masked for the client, whatever its wrapper carries.
+    code: expected ? original.extensions.code : (refusal ?? 'INTERNAL_SERVER_ERROR'),
+    path: error.path?.join('.'),
+  };
+  const msg = `GraphQL error: ${withoutValue(error.message)}`;
+  if (expected || refusal) logger.warn(fields, msg);
+  else
+    logger.error(
+      { ...fields, err: loggableError(original instanceof Error ? original : error) },
+      msg,
+    );
 }
 
 /**
@@ -203,9 +223,31 @@ function boundIterator<T>(
   };
 }
 
+const operationNames = new WeakMap<WsSubscribePayload, string>();
+
+/**
+ * Parsed here because the lifecycle hooks run before graphql-ws parses, once per operation:
+ * graphql-ws passes the same payload to all of its hooks.
+ */
 function operationOf(payload: WsSubscribePayload): string {
-  const field = /\{\s*(\w+)/.exec(payload.query ?? '')?.[1];
-  return `subscription ${payload.operationName ?? field ?? '(anonymous)'}`;
+  let name = operationNames.get(payload);
+  if (name === undefined) {
+    name = nameOperation(payload);
+    operationNames.set(payload, name);
+  }
+  return name;
+}
+
+function nameOperation({ query, operationName }: WsSubscribePayload): string {
+  let operation;
+  try {
+    operation = getOperationAST(parse(query ?? '', { noLocation: true }), operationName);
+  } catch {
+    return `operation ${operationName || '(invalid document)'}`;
+  }
+  if (!operation) return `operation ${operationName || '(unknown)'}`;
+  const field = operation.selectionSet.selections.find((node) => node.kind === Kind.FIELD);
+  return `${operation.operation} ${operation.name?.value ?? field?.name.value ?? '(anonymous)'}`;
 }
 
 /** graphql-ws server hooks that log the subscription lifecycle. Spread into `'graphql-ws'` options. */

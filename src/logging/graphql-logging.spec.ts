@@ -3,7 +3,8 @@ import { ApolloServer } from '@apollo/server';
 import { UnauthorizedException } from '@nestjs/common';
 import { GraphQLError, buildSchema, graphql } from 'graphql';
 import { type Logger, pino } from 'pino';
-import { graphqlLoggingPlugin } from './graphql-logging.js';
+import type { PinoLogger } from 'nestjs-pino';
+import { graphqlLoggingPlugin, subscriptionLoggingHooks } from './graphql-logging.js';
 
 type Plugin = ReturnType<typeof graphqlLoggingPlugin>;
 type StartContext = Parameters<NonNullable<Plugin['requestDidStart']>>[0];
@@ -199,5 +200,23 @@ describe('graphqlLoggingPlugin, a variable of a wrong shape from the client', ()
     });
     expect(JSON.stringify(line)).not.toContain(secret);
     expect(JSON.stringify(line)).not.toContain('user@example.com');
+  });
+});
+
+describe('subscriptionLoggingHooks, the operation name', () => {
+  it.each([
+    ['subscription Ticks { ticks }', undefined, 'subscription Ticks'],
+    ['subscription { ticks }', undefined, 'subscription ticks'],
+    ['{ alive }', undefined, 'query alive'],
+    ['query Snapshot { alive } subscription Updates { ticks }', 'Updates', 'subscription Updates'],
+    ['# a comment\nsubscription Commented { ticks }', undefined, 'subscription Commented'],
+    ['subscription Ticks { ticks }', 'Missing', 'operation Missing'],
+    ['subscription {', undefined, 'operation (invalid document)'],
+    [undefined, undefined, 'operation (invalid document)'],
+  ])('%j with operationName %j: %s', (query, operationName, expected) => {
+    const logged: unknown[] = [];
+    const logger = { info: (fields: unknown) => logged.push(fields) } as unknown as PinoLogger;
+    subscriptionLoggingHooks(logger).onSubscribe({ extra: {} }, '1', { query, operationName });
+    expect(logged).toEqual([expect.objectContaining({ operation: expected })]);
   });
 });

@@ -308,11 +308,21 @@ describe('GraphQL error logging in Nest + Apollo', () => {
           },
         );
       });
+      const records = (level: string) =>
+        wsLog
+          .filter((e) => e.level === level && e.fields.requestId === requestId)
+          .map(({ fields: { operation, subscriptionId, ...fields }, ...entry }) => {
+            expect({ operation, subscriptionId }).toEqual({
+              operation: /^\w+ \w+/.exec(query)?.[0],
+              subscriptionId: expect.any(String),
+            });
+            return { ...entry, fields };
+          });
       return {
         results,
         failure,
-        warns: wsLog.filter((e) => e.level === 'warn' && e.fields.requestId === requestId),
-        wsErrors: wsLog.filter((e) => e.level === 'error' && e.fields.requestId === requestId),
+        warns: records('warn'),
+        wsErrors: records('error'),
         nestErrors: nestLog.slice(before).filter((entry) => entry.level === 'error'),
       };
     } finally {
