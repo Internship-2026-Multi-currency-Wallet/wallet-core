@@ -1,20 +1,20 @@
-# The services block cannot read `env`; keep its database name synchronized with `DATABASE_URL`.
 name: CI
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'client/**']
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # GitHub replaces an existing pending run even when cancellation of running checks is disabled.
+  # Pushes get a group per run: in a shared group GitHub would replace a pending run with a newer one.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 env:
+  # The services block cannot read `env`, so keep its database name synchronized with DATABASE_URL.
   # 127.0.0.1, not localhost: Node may resolve localhost to ::1 first.
   DATABASE_URL: mysql://wallet:wallet@127.0.0.1:3306/wallet_core
   REDIS_URL: redis://127.0.0.1:6379
@@ -47,7 +47,7 @@ jobs:
         ports:
           - 6379:6379
         options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "redis-cli -h 127.0.0.1 ping"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
