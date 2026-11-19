@@ -67,6 +67,32 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
 | `npm run migrate:make -- <name>`              | Create `migrations/<timestamp>_<name>.ts`                             |
 | `npm run migrate:rollback` / `migrate:status` | Roll back the last batch / list migrations                            |
 
+## CI
+
+Every pull request and every push to `main` runs `.github/workflows/ci.yml`: one job, `checks`, with MySQL 8.4
+and Redis as service containers and a 10-minute limit. A failing step makes the check red.
+
+To run the same steps locally: `npm run migrate` and `npm run test:e2e` change the database they point to;
+`test:e2e` deletes rows and writes Redis keys. Never point them at production, staging, UAT or a database that
+another worktree or person is using at the same time. The `ops` stack is one MySQL and one Redis for every checkout
+on your machine, so stop other e2e runs first. Set both URLs explicitly in the shell: values inherited from your
+shell (an earlier `export`, direnv, a sourced `.env`) may point elsewhere.
+
+```sh
+nvm use
+npm run infra:up    # MySQL + Redis; `npm run infra -- info` prints the ports and URLs again
+export DATABASE_URL=mysql://wallet:wallet@127.0.0.1:3306/wallet_core   # port and database from `info`
+export REDIS_URL=redis://127.0.0.1:6379                                # port from `info`
+npm ci
+npm run format:check
+npm run lint
+npm run typecheck
+npm test
+npm run migrate
+npm run test:e2e
+npm run build
+```
+
 ## Environment variables
 
 Validated at startup (`src/config/env.schema.ts`); an invalid value stops the service with a clear message.

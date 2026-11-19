@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'client/**']
+
+concurrency:
+  # Pushes get a group per run: in a shared group GitHub would replace a pending run with a newer one.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # The services block cannot read `env`, so keep its database name synchronized with DATABASE_URL.
+  # 127.0.0.1, not localhost: Node may resolve localhost to ::1 first.
+  DATABASE_URL: mysql://wallet:wallet@127.0.0.1:3306/wallet_core
+  REDIS_URL: redis://127.0.0.1:6379
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: wallet_core
+          MYSQL_USER: wallet
+          MYSQL_PASSWORD: wallet
+        ports:
+          - 3306:3306
+        # Ping over TCP: during first-start initialization MySQL runs without networking, so the
+        # check only passes once the final server (with the user and database) accepts connections.
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -proot --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 20s
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli -h 127.0.0.1 ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run migrate
+      - run: npm run test:e2e
+      - run: npm run build
