@@ -5,6 +5,7 @@ import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { AUTH_STRATEGIES, type AuthStrategy } from './auth-strategy.js';
 import { AuthGuard } from './auth.guard.js';
+import { Authenticator } from './authenticator.js';
 import { AuthResolver } from './auth.resolver.js';
 import { AuthService } from './auth.service.js';
 import { DevAuthStrategy } from './dev-auth.strategy.js';
@@ -40,6 +41,7 @@ import { PermissionGuard } from '../permissions/permission.guard.js';
         return strategies;
       },
     },
+    Authenticator,
     // Order matters: authenticate first, then check permissions.
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: PermissionGuard },
@@ -50,6 +52,6 @@ import { PermissionGuard } from '../permissions/permission.guard.js';
     SessionsRepository,
     TokenService,
   ],
-  exports: [AUTH_STRATEGIES, TokenService, AuthService],
+  exports: [AUTH_STRATEGIES, Authenticator, TokenService, AuthService],
 })
 export class AuthModule {}

@@ -3,6 +3,7 @@ import type { INestApplication } from '@nestjs/common';
 import type { Redis } from 'ioredis';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
+import { MetricsServer } from '../src/metrics/metrics-server.js';
 import { REDIS } from '../src/redis/redis.module.js';
 import { createApp, waitForRedis } from './create-app.js';
 
@@ -124,6 +125,25 @@ describe('global rate limit (e2e)', () => {
     expect([1, 2]).toContain(extensions?.retryAfterSeconds);
   });
 
+  it('counts a GraphQL refusal in graphql_errors_total', async () => {
+    const metricsUrl = `http://127.0.0.1:${app.get(MetricsServer).port}/metrics`;
+    const refusals = async (): Promise<number> => {
+      const line = (await (await fetch(metricsUrl)).text())
+        .split('\n')
+        .find(
+          (l) => l.startsWith('graphql_errors_total{') && l.includes('code="TOO_MANY_REQUESTS"'),
+        );
+      return line ? Number(line.split(' ')[1]) : 0;
+    };
+    const ip = randomIp();
+    for (let i = 0; i < 3; i++) await anonymous(ip);
+    const before = await refusals();
+
+    await anonymous(ip);
+
+    expect(await refusals()).toBe(before + 1);
+  });
+
   it('answers a REST refusal with 429 and a Retry-After header', async () => {
     const auth = devAuth(randomUUID(), 'wallet');
     for (let i = 0; i < 5; i++) await whoami(auth).expect(200);
@@ -170,6 +190,122 @@ describe('global rate limit (e2e)', () => {
     const fourth = await gql(twoFields, { 'X-Forwarded-For': ip });
 
     expect(codeOf(fourth.body)).toBe('TOO_MANY_REQUESTS');
+  });
+});
+
+describe('GraphQL requests counted before Apollo (e2e)', () => {
+  let app: INestApplication;
+
+  const gql = (query: string, headers: Record<string, string>) => gqlOn(app, query, headers);
+
+  beforeAll(async () => {
+    app = await createApp(LIMITS);
+    await waitForRedis(app);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  async function expectCounted(query: string): Promise<void> {
+    const headers = { 'X-Forwarded-For': randomIp() };
+    for (let i = 0; i < 3; i++) {
+      expect(codeOf((await gql(query, headers)).body)).not.toBe('TOO_MANY_REQUESTS');
+    }
+
+    const refused = await gql(query, headers);
+
+    expect(refused.status).toBe(200);
+    expect((refused.body as GqlBody).errors?.[0].extensions).toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      retryAfterSeconds: expect.any(Number),
+    });
+    expect([1, 2]).toContain(Number(refused.headers['retry-after']));
+  }
+
+  it.each([
+    ['cannot be parsed', '{ publicSettings { key '],
+    ['fails validation', '{ noSuchField }'],
+    ['is an introspection query', '{ __schema { queryType { name } } }'],
+    ['is refused by AuthGuard (401)', USER_QUERY],
+  ])('counts a document that %s', async (_name, query) => {
+    await expectCounted(query);
+  });
+
+  it('counts a request refused by PermissionGuard (403)', async () => {
+    const headers = { 'X-Forwarded-For': randomIp(), ...devAuth(randomUUID(), 'wallet') };
+    const staffQuery = '{ staffMembers { id } }';
+    for (let i = 0; i < 5; i++) {
+      expect(codeOf((await gql(staffQuery, headers)).body)).toBe('FORBIDDEN');
+    }
+
+    expect(codeOf((await gql(staffQuery, headers)).body)).toBe('TOO_MANY_REQUESTS');
+  });
+
+  it('counts a request with invalid credentials by IP, as anonymous', async () => {
+    const headers = { 'X-Forwarded-For': randomIp(), Authorization: 'Dev :wallet' };
+
+    for (let i = 0; i < 3; i++) await gql(ANONYMOUS_QUERY, headers);
+
+    expect(codeOf((await gql(ANONYMOUS_QUERY, headers)).body)).toBe('TOO_MANY_REQUESTS');
+  });
+
+  it('sets the rate limit headers and counts several top-level fields once', async () => {
+    const headers = { 'X-Forwarded-For': randomIp() };
+    const twoFields = '{ publicSettings { key } health { service } }';
+
+    const first = await gql(twoFields, headers);
+    const second = await gql(twoFields, headers);
+
+    expect(first.headers['x-ratelimit-limit']).toBe('3');
+    expect(first.headers['x-ratelimit-remaining']).toBe('2');
+    expect(second.headers['x-ratelimit-remaining']).toBe('1');
+    expect([1, 2]).toContain(Number(second.headers['x-ratelimit-reset']));
+  });
+
+  it('counts a logged-in user under the user key, not the IP', async () => {
+    const ip = randomIp();
+    const auth = devAuth(randomUUID(), 'wallet');
+
+    const user = await gql(USER_QUERY, { 'X-Forwarded-For': ip, ...auth });
+    const anonymous = await gql(ANONYMOUS_QUERY, { 'X-Forwarded-For': ip });
+
+    expect(user.headers['x-ratelimit-limit']).toBe('5');
+    expect(user.headers['x-ratelimit-remaining']).toBe('4');
+    expect(anonymous.headers['x-ratelimit-remaining']).toBe('2');
+  });
+
+  it('counts every path Apollo answers on (trailing slash, other case, query string)', async () => {
+    const ip = randomIp();
+    for (const path of ['/graphql/', '/GRAPHQL', '/graphql?x=1']) {
+      const res = await request(app.getHttpServer() as App)
+        .post(path)
+        .set('X-Forwarded-For', ip)
+        .send({ query: ANONYMOUS_QUERY });
+      expect(codeOf(res.body)).toBeUndefined();
+    }
+
+    expect(codeOf((await gql(ANONYMOUS_QUERY, { 'X-Forwarded-For': ip })).body)).toBe(
+      'TOO_MANY_REQUESTS',
+    );
+  });
+
+  it('lets no more than the limit through when requests arrive at the same time', async () => {
+    const ip = randomIp();
+
+    const responses = await Promise.all(
+      Array.from({ length: 10 }, () => gql(ANONYMOUS_QUERY, { 'X-Forwarded-For': ip })),
+    );
+
+    expect(responses.filter((res) => codeOf(res.body) !== 'TOO_MANY_REQUESTS')).toHaveLength(3);
+  });
+
+  it('does not count a CORS preflight', async () => {
+    const res = await request(app.getHttpServer() as App)
+      .options('/graphql')
+      .set('X-Forwarded-For', randomIp());
+
+    expect(res.headers['x-ratelimit-limit']).toBeUndefined();
   });
 });
 

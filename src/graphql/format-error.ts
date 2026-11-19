@@ -92,12 +92,7 @@ function validationFailed(error: GraphQLError): GraphQLFormattedError {
   };
 }
 
-/**
- * What a running subscription threw. graphql-ws wraps it in a pathless GraphQLError
- * (`originalError`, or `cause` with graphql 17) that copies its `extensions`, and
- * `unwrapResolverError` keeps that wrapper.
- * `undefined`: a client validation error.
- */
+/** graphql-ws wraps what a running subscription threw in `originalError` (`cause` with graphql 17); a document error is not wrapped. */
 export function serverProtocolOriginal(error: GraphQLError): unknown {
   return error.originalError ?? (error as { cause?: unknown }).cause ?? undefined;
 }
@@ -110,12 +105,6 @@ export function formatProtocolErrors(
     const thrown = serverProtocolOriginal(error);
     return thrown !== undefined
       ? { error: formatOriginal(error.toJSON(), thrown), fromClient: false }
-      : {
-          error: {
-            ...error.toJSON(),
-            extensions: { ...error.extensions, code: 'GRAPHQL_VALIDATION_FAILED' },
-          },
-          fromClient: true,
-        };
+      : { error: validationFailed(error), fromClient: true };
   });
 }

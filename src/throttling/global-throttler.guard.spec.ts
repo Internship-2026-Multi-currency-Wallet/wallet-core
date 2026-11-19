@@ -2,7 +2,6 @@ import { jest } from '@jest/globals';
 import { type ExecutionContext, HttpStatus } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { SkipThrottle, ThrottlerException, type ThrottlerStorage } from '@nestjs/throttler';
-import { GraphQLError } from 'graphql';
 import type { Redis } from 'ioredis';
 import type { PinoLogger } from 'nestjs-pino';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -90,8 +89,7 @@ function httpContext(
   } as unknown as ExecutionContext;
 }
 
-/** `res` is left out for websocket operations, like the real GraphQL context does. */
-function graphqlContext(req: FakeRequest, res?: object): ExecutionContext {
+function graphqlContext(req: FakeRequest, res: object): ExecutionContext {
   return baseContext('graphql', [{}, {}, { req, res }, {}], TestController);
 }
 
@@ -129,7 +127,7 @@ describe('GlobalThrottlerGuard', () => {
     it('counts a client user under user:<id>, prefixed with APP_ENV and the service name', async () => {
       const { guard, storage, res } = await readyGuard();
       const req = request({ user: user('42', UserKind.CLIENT) });
-      await expect(guard.canActivate(graphqlContext(req, res))).resolves.toBe(true);
+      await expect(guard.canActivate(httpContext(req, res))).resolves.toBe(true);
       expect(storage.increment).toHaveBeenCalledTimes(1);
       expect(storage.increment.mock.calls[0]?.[0]).toBe('staging:throttle:wallet-core:user:42');
     });
@@ -137,13 +135,13 @@ describe('GlobalThrottlerGuard', () => {
     it('counts staff under staff:<id>', async () => {
       const { guard, storage, res } = await readyGuard();
       const req = request({ user: user('7', UserKind.STAFF) });
-      await guard.canActivate(graphqlContext(req, res));
+      await guard.canActivate(httpContext(req, res));
       expect(storage.increment.mock.calls[0]?.[0]).toBe('staging:throttle:wallet-core:staff:7');
     });
 
     it('counts an anonymous caller under ip:<ip>', async () => {
       const { guard, storage, res } = await readyGuard();
-      await guard.canActivate(graphqlContext(request(), res));
+      await guard.canActivate(httpContext(request(), res));
       expect(storage.increment.mock.calls[0]?.[0]).toBe(
         'staging:throttle:wallet-core:ip:203.0.113.5',
       );
@@ -152,7 +150,7 @@ describe('GlobalThrottlerGuard', () => {
     it('uses one counter for every endpoint', async () => {
       const { guard, storage, res } = await readyGuard();
       await guard.canActivate(httpContext(request({ path: '/a' }), res));
-      await guard.canActivate(graphqlContext(request(), res));
+      await guard.canActivate(httpContext(request({ path: '/b' }), res));
       const [first, second] = storage.increment.mock.calls;
       expect(first?.[0]).toBe(second?.[0]);
     });
@@ -161,68 +159,23 @@ describe('GlobalThrottlerGuard', () => {
   describe('limit', () => {
     it('allows a user limitUser requests and an anonymous caller limitAnonymous', async () => {
       const { guard, storage, res } = await readyGuard();
-      await guard.canActivate(graphqlContext(request({ user: user('1', UserKind.CLIENT) }), res));
-      await guard.canActivate(graphqlContext(request(), res));
+      await guard.canActivate(httpContext(request({ user: user('1', UserKind.CLIENT) }), res));
+      await guard.canActivate(httpContext(request(), res));
       expect(storage.increment.mock.calls[0]?.[2]).toBe(7);
       expect(storage.increment.mock.calls[1]?.[2]).toBe(3);
     });
 
     it('turns the window from seconds into milliseconds', async () => {
       const { guard, storage, res } = await readyGuard();
-      await guard.canActivate(graphqlContext(request(), res));
+      await guard.canActivate(httpContext(request(), res));
       expect(storage.increment.mock.calls[0]?.[1]).toBe(config.throttle.ttlSeconds * 1000);
     });
   });
 
-  describe('one count per HTTP request', () => {
-    it('counts once when GraphQL runs the guard for several fields at the same time', async () => {
-      const { guard, storage, res } = await readyGuard();
-      const req = request();
-      const results = await Promise.all([
-        guard.canActivate(graphqlContext(req, res)),
-        guard.canActivate(graphqlContext(req, res)),
-      ]);
-      expect(results).toEqual([true, true]);
-      expect(storage.increment).toHaveBeenCalledTimes(1);
-    });
-
-    it('counts each separate request', async () => {
-      const { guard, storage, res } = await readyGuard();
-      await guard.canActivate(graphqlContext(request(), res));
-      await guard.canActivate(graphqlContext(request(), res));
-      expect(storage.increment).toHaveBeenCalledTimes(2);
-    });
-  });
-
   describe('refusal', () => {
-    it('throws a TOO_MANY_REQUESTS GraphQL error with retryAfterSeconds, and warns once per request', async () => {
+    it('answers REST with 429 and a Retry-After header, and warns once', async () => {
       const { guard, storage, logger, res } = await readyGuard();
-      // limitUser is 7, so the 8th hit is the first refusal in the window.
-      storage.increment.mockResolvedValue({ ...BLOCKED, totalHits: 8 });
-      const req = request({ user: user('42', UserKind.CLIENT) });
-
-      const outcomes = await Promise.allSettled([
-        guard.canActivate(graphqlContext(req, res)),
-        guard.canActivate(graphqlContext(req, res)),
-      ]);
-
-      for (const outcome of outcomes) {
-        expect(outcome.status).toBe('rejected');
-        const reason = (outcome as PromiseRejectedResult).reason as GraphQLError;
-        expect(reason).toBeInstanceOf(GraphQLError);
-        expect(reason.extensions).toEqual({ code: 'TOO_MANY_REQUESTS', retryAfterSeconds: 42 });
-      }
-      expect(logger.warn).toHaveBeenCalledTimes(1);
-      expect(logger.warn).toHaveBeenCalledWith(
-        { keyType: 'user', userId: '42' },
-        'request throttled',
-      );
-      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(TOKEN);
-    });
-
-    it('answers REST with 429 and a Retry-After header', async () => {
-      const { guard, storage, logger, res } = await readyGuard();
-      storage.increment.mockResolvedValue(BLOCKED);
+      storage.increment.mockResolvedValue({ ...BLOCKED, totalHits: 4 });
       const context = httpContext(request({ path: '/diagnostics/ping' }), res);
 
       const error: unknown = await guard.canActivate(context).catch((e: unknown) => e);
@@ -237,22 +190,36 @@ describe('GlobalThrottlerGuard', () => {
       expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(TOKEN);
     });
 
+    it('logs the user of a refused request by id', async () => {
+      const { guard, storage, logger, res } = await readyGuard();
+      storage.increment.mockResolvedValue({ ...BLOCKED, totalHits: 8 });
+      const req = request({ user: user('42', UserKind.CLIENT) });
+
+      await expect(guard.canActivate(httpContext(req, res))).rejects.toBeInstanceOf(
+        ThrottlerException,
+      );
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        { keyType: 'user', userId: '42' },
+        'request throttled',
+      );
+    });
+
     it('refuses later requests in the same window without warning again', async () => {
       const { guard, storage, logger, res } = await readyGuard();
-      // limitAnonymous is 3: the 4th hit was the first refusal and was logged then.
       storage.increment.mockResolvedValue({ ...BLOCKED, totalHits: 5 });
 
-      await expect(guard.canActivate(graphqlContext(request(), res))).rejects.toBeInstanceOf(
-        GraphQLError,
+      await expect(guard.canActivate(httpContext(request(), res))).rejects.toBeInstanceOf(
+        ThrottlerException,
       );
       expect(logger.warn).not.toHaveBeenCalled();
     });
   });
 
   describe('skipped requests', () => {
-    it('does not count GraphQL over websocket (no response object)', async () => {
-      const { guard, storage } = await readyGuard();
-      await expect(guard.canActivate(graphqlContext(request()))).resolves.toBe(true);
+    it('does not count GraphQL: the middleware counts it before Apollo', async () => {
+      const { guard, storage, res } = await readyGuard();
+      await expect(guard.canActivate(graphqlContext(request(), res))).resolves.toBe(true);
       expect(storage.increment).not.toHaveBeenCalled();
     });
 
